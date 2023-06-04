@@ -1,0 +1,11 @@
+1 2
+3.4 2.0e+10
+// this is a comment
+/*
+    this is a
+    multiline comment
+*/
+"a string"
+'another string'
+true // another one
+false /* dj khaled */
