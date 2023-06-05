@@ -5,6 +5,7 @@ use colored::Colorize;
 use lib::tokenizer::tokens::*;
 use lib::tokenizer::*;
 use crate::lib::grammar::{Grammar, GrammarRule};
+use crate::lib::parsers::GrammarParserLL1;
 
 mod lib;
 
@@ -63,4 +64,7 @@ fn main() {
         }
     ]);
     println!("\n{}", grammar);
+
+    let parser = GrammarParserLL1::from_grammar(&grammar);
+    println!("LL(1) - {}", parser.is_ll1());
 }
