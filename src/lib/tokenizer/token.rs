@@ -8,6 +8,7 @@ pub struct TokenType {
     pub regex: Regex,
 }
 
+#[derive(Clone)]
 pub struct TokenInstance {
     pub token: String,
     pub value: String,
@@ -23,5 +24,27 @@ impl Display for TokenType {
 impl Display for TokenInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{} [{}]", self.loc, self.value.replace("\n", "\\n"))
+    }
+}
+
+impl TokenInstance {
+    pub fn new() -> Self {
+        Self {
+            token: String::from(""),
+            value: String::from(""),
+            loc: SourceLocation {
+                file: String::from("inline"),
+                line: 1,
+                col: 1
+            }
+        }
+    }
+
+    pub fn from(token: &str, value: &str, loc: &SourceLocation) ->Self {
+        Self {
+            token: String::from(token),
+            value: String::from(value),
+            loc: loc.clone()
+        }
     }
 }

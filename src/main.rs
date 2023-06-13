@@ -1,70 +1,46 @@
-#![allow(dead_code, special_module_name)]
+#![allow(dead_code, special_module_name, unstable_name_collisions)]
 
-use colored::Colorize;
+use std::time::Instant;
+use prettytable::{format, row, Table};
 
-use lib::tokenizer::tokens::*;
-use lib::tokenizer::*;
-use crate::lib::grammar::{Grammar, GrammarRule};
-use crate::lib::parsers::GrammarParserLL1;
+use crate::lib::grammar::{Grammar};
+use crate::lib::parsers::{GrammarParserLL1, GrammarParserLR, GrammarParserLR0, GrammarParserSLR1};
 
 mod lib;
 
 fn main() {
-    let tokenizer = Tokenizer::from_file(
-        "./tests/source.txt",
-        vec![
-            TokenType { name: String::from(""), regex: WHITESPACE.clone() },
-            TokenType { name: String::from(""), regex: SINGLE_LINE_COMMENT.clone() },
-            TokenType { name: String::from(""), regex: MULTI_LINE_COMMENT.clone() },
-            TokenType { name: String::from("int"), regex: INTEGER.clone() },
-            TokenType { name: String::from("float"), regex: FLOAT.clone() },
-            TokenType { name: String::from("bool"), regex: BOOLEAN.clone() },
-            TokenType { name: String::from("string"), regex: SINGLE_QUOTED_STRING.clone() },
-            TokenType { name: String::from("string"), regex: DOUBLE_QUOTED_STRING.clone() },
-        ],
-    );
-    while tokenizer.has_next() {
-        match tokenizer.next() {
-            Ok(token) => {
-                println!("{}", token);
-            }
-            Err(e) => {
-                eprintln!("{}", e.to_string().red());
-                break;
-            }
-        }
-    }
-
-    let grammar: Grammar = Grammar::from_rules(vec![
-        GrammarRule {
-            left: String::from("S"),
-            right: vec![
-                String::from("A"),
-                String::from("A")
-            ]
-        },
-        GrammarRule {
-            left: String::from("A"),
-            right: vec![
-                String::from("'a'"),
-                String::from("A")
-            ]
-        },
-        GrammarRule {
-            left: String::from("A"),
-            right: vec![
-                String::from("'b'")
-            ]
-        },
-        GrammarRule {
-            left: String::from("'b'"),
-            right: vec![
-                String::from("abcasldk")
-            ]
-        }
-    ]);
+    let grammar: Grammar = Grammar::from_json_file("grammars/grm.json").unwrap();
     println!("\n{}", grammar);
+    println!("\n{}\n", grammar.to_jsmachine_string());
 
-    let parser = GrammarParserLL1::from_grammar(&grammar);
-    println!("LL(1) - {}", parser.is_ll1());
+    let parser_ll1 = GrammarParserLL1::from_grammar(&grammar);
+    println!("LL(1) - {}", parser_ll1.is_ll1());
+
+    let last = Instant::now();
+    let parser_lr0 = GrammarParserSLR1::from_grammar(&grammar);
+    println!("Parser generated ({}ms)", last.elapsed().as_millis());
+
+    let mut pt = Table::new();
+    pt.set_format(*format::consts::FORMAT_BOX_CHARS);
+    parser_lr0.get_parse_table().to_prettytable(&mut pt);
+    pt.printstd();
+
+    let mut trace = Table::new();
+    trace.set_format(*format::consts::FORMAT_BOX_CHARS);
+    trace.set_titles(row![cFyb => "Step", "Stack", "Lookahead", "Action"]);
+    let res = parser_lr0.parse_from_string_trace(&grammar, "A -> 'a';", Some(&mut trace));
+    if let Err(e) = res {
+        println!("{}", e);
+    }
+    trace.printstd();
+
+    // let parser_slr1 = GrammarParserSLR1::from_grammar(&grammar);
+    // trace = Table::new();
+    // trace.set_format(*format::consts::FORMAT_BOX_CHARS);
+    // trace.set_titles(row![cFyb => "Step", "Stack", "Lookahead", "Action"]);
+    // res = parser_slr1.parse_from_string_trace(&grammar, "2 + 2 * 2", Some(&mut trace));
+    // if let Err(e) = res {
+    //     println!("{}", e);
+    // }
+    // trace.printstd();
 }

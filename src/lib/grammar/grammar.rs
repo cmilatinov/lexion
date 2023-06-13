@@ -1,16 +1,18 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter, Result};
+use std::fs::File;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::Regex;
 use crate::lib::tokenizer::*;
 use crate::lib::tokenizer::tokens::*;
+use serde::{Serialize, Deserialize};
 
 lazy_static! {
     pub static ref TERMINAL: Regex = Regex::new(r"^'.*'$").unwrap();
 }
 
-#[derive(Clone)]
+#[derive(Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
 pub struct GrammarRule {
     pub left: String,
     pub right: Vec<String>,
@@ -32,7 +34,7 @@ pub struct Grammar {
     terminals: StringSet,
     first_sets: StringSetMap,
     follow_sets: StringSetMap,
-    non_terminal_properties: RefCell<HashMap<String, NonTerminalProps>>,
+    nullable_non_terminals: StringSet
 }
 
 impl Display for GrammarRule {
@@ -62,23 +64,41 @@ impl Display for Grammar {
             self.start_symbol,
             self.rules.iter()
                 .map(|r| format!("    {}", r))
-                .collect::<Vec<String>>()
-                .join("\n"),
+                .intersperse(String::from("\n"))
+                .collect::<String>(),
             self.non_terminals.iter()
                 .map(|t| format!("    {}", t))
-                .collect::<Vec<String>>()
-                .join("\n"),
+                .intersperse(String::from("\n"))
+                .collect::<String>(),
             self.get_token_types().iter()
                 .filter(|t| !t.name.is_empty())
                 .map(|t| format!("    {}", t))
-                .collect::<Vec<String>>()
-                .join("\n")
+                .intersperse(String::from("\n"))
+                .collect::<String>()
+        )
+    }
+}
+
+impl GrammarRule {
+    pub fn to_jsmachine_string(&self) -> String {
+        format!(
+            "{} -> {}",
+            self.left,
+            self.right.iter()
+                .map(|s| Grammar::stringify_jsmachine(s))
+                .intersperse(String::from(" "))
+                .collect::<String>()
         )
     }
 }
 
 impl Grammar {
-    pub fn from_rules(rules: Vec<GrammarRule>) -> Grammar {
+    pub fn from_json_file(file: &str) -> serde_json::Result<Self> {
+        let rules: Vec<GrammarRule> = serde_json::from_reader(File::open(file).unwrap())?;
+        Ok(Grammar::from_rules(rules))
+    }
+
+    pub fn from_rules(rules: Vec<GrammarRule>) -> Self {
         let mut grammar = Grammar {
             rules: rules.iter()
                 .filter(|r| Grammar::is_non_terminal(&r.left))
@@ -94,7 +114,7 @@ impl Grammar {
             non_terminals: HashSet::new(),
             first_sets: HashMap::new(),
             follow_sets: HashMap::new(),
-            non_terminal_properties: RefCell::new(HashMap::new()),
+            nullable_non_terminals: HashSet::new()
         };
         grammar.build_symbols();
         grammar.build_props();
@@ -119,6 +139,15 @@ impl Grammar {
         }
         String::from(&symbol[1..symbol.len() - 1])
     }
+
+    pub fn stringify_jsmachine(symbol: &str) -> String {
+        if symbol == "'->'" {
+            return String::from("-=>");
+        } else if symbol == EPSILON {
+            return String::from("''");
+        }
+        return Grammar::stringify(symbol)
+    }
 }
 
 impl Grammar {
@@ -129,6 +158,7 @@ impl Grammar {
             }
             self.non_terminals.insert(rule.left.clone());
             for symbol in &rule.right {
+                if symbol == EPSILON { continue; }
                 if Grammar::is_terminal(&symbol) {
                     self.terminals.insert(symbol.clone());
                 } else {
@@ -139,36 +169,37 @@ impl Grammar {
         self.symbols.extend(self.terminals.iter().cloned());
         self.symbols.extend(self.non_terminals.iter().cloned());
         self.symbols.insert(String::from(EPSILON));
-    }
-
-    fn build_props_nullable(&self, symbol: &str) -> bool {
-        match self.non_terminal_properties.borrow().get(symbol) {
-            Some(v) => { return v.nullable; }
-            None => {}
-        }
-        if !self.non_terminals.contains(symbol) {
-            return false;
-        }
-        let nullable = self.rules.iter()
-            .filter(|r| r.left.as_str() == symbol)
-            .any(|r| r.right.iter().all(|s| self.build_props_nullable(s.as_str())));
-        let mut props = self.non_terminal_properties.borrow_mut();
-        match (*props).get_mut(symbol) {
-            Some(v) => {
-                v.nullable = nullable;
-            }
-            None => {
-                (*props).insert(
-                    String::from(symbol),
-                    NonTerminalProps { nullable },
-                );
-            }
-        }
-        nullable
+        self.symbols.insert(String::from(EOF));
+        self.terminals.insert(String::from(EOF));
+        self.rules.insert(
+            0,
+            GrammarRule {
+                left: self.get_augmented_start_symbol(),
+                right: vec![self.start_symbol.clone()],
+            },
+        );
     }
 
     fn build_props(&mut self) {
-        self.build_props_nullable(self.start_symbol.as_str());
+        self.build_props_nullable();
+    }
+
+    fn build_props_nullable(&mut self) {
+        for rule in self.rules.iter()
+            .filter(|r| r.right.len() == 1 && r.right[0] == EPSILON) {
+            self.nullable_non_terminals.insert(rule.left.clone());
+        }
+
+        let mut prev_size = 0;
+        while self.nullable_non_terminals.len() != prev_size {
+            prev_size = self.nullable_non_terminals.len();
+            for rule in self.rules[1..].iter() {
+                if rule.right.iter()
+                    .any(|s| self.nullable_non_terminals.contains(s)) {
+                    self.nullable_non_terminals.insert(rule.left.clone());
+                }
+            }
+        }
     }
 
     fn build_first_sets(&mut self) {
@@ -216,7 +247,8 @@ impl Grammar {
                     );
                     if first.contains(EPSILON) {
                         index += 1;
-                    } else if !first.contains(EPSILON) || index >= rule.right.len() {
+                    }
+                    if !first.contains(EPSILON) || index >= rule.right.len() {
                         break;
                     }
                 }
@@ -285,12 +317,15 @@ impl Grammar {
                         // So everything in FOLLOW(LHS) is also in FOLLOW(symbol)
                         if index == rule.right.len() {
                             follow_set.extend(
-                                follow_sets.get(&*rule.left).unwrap().iter()
+                                follow_sets.get(&*rule.left)
+                                    // .unwrap()
+                                    .unwrap_or(&HashSet::new())
+                                    .iter()
                                     .cloned()
                             );
                             break;
                         }
-                        first = first_sets.get(&*rule.right[i + 1]).unwrap();
+                        first = first_sets.get(&*rule.right[index]).unwrap();
                         follow_set.extend(
                             first.iter()
                                 .filter(|s| s.as_str() != EPSILON)
@@ -338,10 +373,11 @@ impl Grammar {
     }
 
     pub fn is_nullable(&self, symbol: &str) -> bool {
-        match self.non_terminal_properties.borrow().get(symbol) {
-            Some(v) => v.nullable,
-            None => false
-        }
+        self.nullable_non_terminals.contains(symbol)
+    }
+
+    pub fn get_rule(&self, rule_index: usize) -> &GrammarRule {
+        &self.rules[rule_index]
     }
 
     pub fn get_rules(&self) -> &Vec<GrammarRule> {
@@ -359,15 +395,37 @@ impl Grammar {
                 .map(|t| {
                     let rule = self.terminal_rules.iter().find(|r| r.left == *t);
                     let regex = match rule {
-                        Some(r) => r.right[0].clone(),
-                        None => Grammar::stringify(t)
+                        Some(r) => format!("^{}", r.right[0]),
+                        None => format!("^{}", regex::escape(&*Grammar::stringify(t)))
                     };
                     TokenType {
                         name: String::from(t),
-                        regex: Regex::new(format!("^{}", regex).as_str()).unwrap(),
+                        regex: Regex::new(&*regex).unwrap(),
                     }
                 })
         );
         token_types
+    }
+
+    pub fn get_start_symbol(&self) -> String {
+        self.start_symbol.clone()
+    }
+
+    pub fn get_terminals(&self) -> &StringSet {
+        &self.terminals
+    }
+
+    pub fn get_augmented_start_symbol(&self) -> String {
+        format!("{}'", self.start_symbol)
+    }
+
+    pub fn to_jsmachine_string(&self) -> String {
+        format!(
+            "{}",
+            self.rules.iter()
+                .map(|r| r.to_jsmachine_string())
+                .intersperse(String::from("\n"))
+                .collect::<String>()
+        )
     }
 }

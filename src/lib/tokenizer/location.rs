@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SourceLocation {
     pub file: String,
     pub line: i32,

@@ -1,16 +1,15 @@
-use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
-
+use crate::lib::error::SyntaxError;
 use crate::lib::tokenizer::*;
 use crate::lib::tokenizer::tokens::*;
 
-type Result<T> = std::result::Result<T, ParseError>;
+type Result<T> = std::result::Result<T, SyntaxError>;
 
 pub struct Tokenizer {
     file: PathBuf,
     string: String,
-    cursor: RefCell<usize>,
+    cursor: usize,
     token_types: Vec<TokenType>,
 }
 
@@ -19,7 +18,7 @@ impl Tokenizer {
         Tokenizer {
             file: PathBuf::from("inline"),
             string: input.parse().unwrap(),
-            cursor: RefCell::new(0),
+            cursor: 0,
             token_types,
         }
     }
@@ -28,7 +27,7 @@ impl Tokenizer {
         Tokenizer {
             file: PathBuf::from(file),
             string: fs::read_to_string(file).unwrap(),
-            cursor: RefCell::new(0),
+            cursor: 0,
             token_types,
         }
     }
@@ -39,7 +38,7 @@ impl Tokenizer {
         self.get_cursor_pos() < self.string.len()
     }
 
-    pub fn next(&self) -> Result<TokenInstance> {
+    pub fn next(&mut self) -> Result<TokenInstance> {
         let loc = self.get_cursor_loc();
         if !self.has_next() {
             return Ok(TokenInstance {
@@ -49,30 +48,31 @@ impl Tokenizer {
             });
         }
 
-        let (s, t) = self.match_next()?;
-        *self.cursor.borrow_mut() += s.len();
-        if t.name.is_empty() {
+        let (s, i) = self.match_next()?;
+        let token: &TokenType = &self.token_types[i];
+        self.cursor += s.len();
+        if token.name.is_empty() {
             return self.next();
         }
 
         Ok(TokenInstance {
-            token: t.name.clone(),
-            value: String::from(s),
+            token: token.name.clone(),
+            value: s,
             loc,
         })
     }
 
-    pub fn match_next(&self) -> Result<(&str, &TokenType)> {
-        let substring = &self.string[self.get_cursor_pos()..];
-        let mut longest_match: Option<(&str, &TokenType)> = None;
-        for token in self.token_types.iter() {
+    pub fn match_next(&self) -> Result<(String, usize)> {
+        let substring = &self.string[self.cursor..];
+        let mut longest_match: Option<(&str, usize)> = None;
+        for (i, token) in self.token_types.iter().enumerate() {
             let regex_match = match token.regex.find(substring) {
                 Some(m) => m.as_str(),
                 None => continue
             };
 
             if longest_match.is_none() || regex_match.len() > longest_match.unwrap().0.len() {
-                longest_match = Some((regex_match, &token));
+                longest_match = Some((regex_match, i));
             }
         }
 
@@ -82,13 +82,14 @@ impl Tokenizer {
                 Some(m) => m.as_str(),
                 None => ""
             };
-            return Err(ParseError {
+            return Err(SyntaxError {
                 loc,
                 message: format!("unexpected token '{}'", unexpected),
             });
         }
 
-        Ok(longest_match.unwrap())
+        let (s, i) = longest_match.unwrap();
+        Ok((String::from(s), i))
     }
 
     pub fn get_cursor_loc(&self) -> SourceLocation {
@@ -112,6 +113,6 @@ impl Tokenizer {
     }
 
     pub fn get_cursor_pos(&self) -> usize {
-        *self.cursor.borrow()
+        self.cursor
     }
 }

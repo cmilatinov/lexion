@@ -1,0 +1,145 @@
+[
+    {
+        "left": "Grammar",
+        "right": [
+            "ProductionList"
+        ]
+    },
+    {
+        "left": "ProductionList",
+        "right": [
+            "ProductionList",
+            "Production"
+        ]
+    },
+    {
+        "left": "ProductionList",
+        "right": [
+            "Production"
+        ]
+    },
+    {
+        "left": "Production",
+        "right": [
+            "NonTerminalProduction"
+        ]
+    },
+    {
+        "left": "Production",
+        "right": [
+            "TerminalProduction"
+        ]
+    },
+    {
+        "left": "NonTerminalProduction",
+        "right": [
+            "NonTerminal",
+            "'->'",
+            "RuleList",
+            "OptReductionAction",
+            "';'"
+        ]
+    },
+    {
+        "left": "TerminalProduction",
+        "right": [
+            "Terminal",
+            "'->'",
+            "Regex",
+            "';'"
+        ]
+    },
+    {
+        "left": "RuleList",
+        "right": [
+            "RuleList",
+            "'|'",
+            "SymbolList"
+        ]
+    },
+    {
+        "left": "RuleList",
+        "right": [
+            "SymbolList"
+        ]
+    },
+    {
+        "left": "SymbolList",
+        "right": [
+            "SymbolList",
+            "Symbol"
+        ]
+    },
+    {
+        "left": "SymbolList",
+        "right": [
+            "ε"
+        ]
+    },
+    {
+        "left": "NonTerminal",
+        "right": [
+            "'non_terminal_literal'"
+        ]
+    },
+    {
+        "left": "Terminal",
+        "right": [
+            "'terminal_literal'"
+        ]
+    },
+    {
+        "left": "Symbol",
+        "right": [
+            "'non_terminal_literal'"
+        ]
+    },
+    {
+        "left": "Symbol",
+        "right": [
+            "'terminal_literal'"
+        ]
+    },
+    {
+        "left": "Regex",
+        "right": [
+            "'regex_literal'"
+        ]
+    },
+    {
+        "left": "OptReductionAction",
+        "right": [
+            "'action_literal'"
+        ]
+    },
+    {
+        "left": "OptReductionAction",
+        "right": [
+            "ε"
+        ]
+    },
+    {
+        "left": "'action_literal'",
+        "right": [
+            "\\{\\{[\\s\\S]*?\\}\\}"
+        ]
+    },
+    {
+        "left": "'non_terminal_literal'",
+        "right": [
+            "(?:[a-zA-Z0-9]+|ε)"
+        ]
+    },
+    {
+        "left": "'terminal_literal'",
+        "right": [
+            "'[^']*'"
+        ]
+    },
+    {
+        "left": "'regex_literal'",
+        "right": [
+            "\\/.+\\/"
+        ]
+    }
+]
