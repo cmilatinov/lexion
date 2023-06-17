@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use prettytable::{Cell, Row, Table};
+use prettytable::{Cell, Row, row, Table};
 use crate::lib::error::SyntaxError;
 use crate::lib::grammar::{Derivation, DerivationNode, Grammar};
 use crate::lib::parsers::{ParseTableAction, ParseTableLR};
@@ -70,6 +70,12 @@ pub trait GrammarParserLR {
         let mut stack: Vec<StackItem> = vec![StackItem::State(0)];
         let mut lookahead = tokenizer.next()?;
         let mut step = 0;
+
+        // Init parse trace if present
+        if parse_trace.is_some() {
+            let trace = &mut **parse_trace.as_mut().unwrap();
+            trace.set_titles(row![cFyb => "Step", "Stack", "Lookahead", "Action"]);
+        }
 
         while stack.len() > 0 {
             step += 1;

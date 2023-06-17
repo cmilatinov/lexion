@@ -1,10 +1,10 @@
 #![allow(dead_code, special_module_name, unstable_name_collisions)]
 
 use std::time::Instant;
-use prettytable::{format, row, Table};
+use prettytable::{format, Table};
 
 use crate::lib::grammar::{Grammar};
-use crate::lib::parsers::{GrammarParserLL1, GrammarParserLR, GrammarParserLR0, GrammarParserSLR1};
+use crate::lib::parsers::{GrammarParserLL1, GrammarParserLR, GrammarParserSLR1};
 
 mod lib;
 
@@ -27,10 +27,11 @@ fn main() {
 
     let mut trace = Table::new();
     trace.set_format(*format::consts::FORMAT_BOX_CHARS);
-    trace.set_titles(row![cFyb => "Step", "Stack", "Lookahead", "Action"]);
     let res = parser_lr0.parse_from_string_trace(&grammar, "A -> 'a';", Some(&mut trace));
     if let Err(e) = res {
         println!("{}", e);
+    } else if let Ok(d) = res {
+        d.print_std();
     }
     trace.printstd();
 
