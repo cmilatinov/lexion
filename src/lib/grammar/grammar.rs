@@ -376,6 +376,10 @@ impl Grammar {
         self.nullable_non_terminals.contains(symbol)
     }
 
+    pub fn is_nullable_sequence(&self, sequence: &[String]) -> bool {
+        sequence.iter().all(|s| self.is_nullable(s))
+    }
+
     pub fn get_rule(&self, rule_index: usize) -> &GrammarRule {
         &self.rules[rule_index]
     }
@@ -392,6 +396,7 @@ impl Grammar {
         ];
         token_types.extend(
             self.terminals.iter()
+                .filter(|t| &**t != EOF)
                 .map(|t| {
                     let rule = self.terminal_rules.iter().find(|r| r.left == *t);
                     let regex = match rule {

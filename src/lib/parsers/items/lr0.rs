@@ -3,10 +3,10 @@ use crate::lib::grammar::{Grammar, GrammarRule};
 use crate::lib::parsers::items::{ClosurableItem, LRItem};
 use crate::lib::tokenizer::tokens::EPSILON;
 
-#[derive(Eq, PartialEq, Hash, Clone, PartialOrd, Ord)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone, PartialOrd, Ord)]
 pub struct LR0Item {
-    rule_index: usize,
-    dot_index: usize
+    pub rule_index: usize,
+    pub dot_index: usize
 }
 
 impl LR0Item {
