@@ -67,7 +67,6 @@ dependencies = [
  "lazy-regex",
  "lazy_static",
  "prettytable-rs",
- "recur-fn",
  "regex",
  "serde",
  "serde_json",
@@ -296,12 +295,6 @@ checksum = "1b9ab9c7eadfd8df19006f1cf1a4aed13540ed5cbc047010ece5826e10825488"
 dependencies = [
  "proc-macro2",
 ]
-
-[[package]]
-name = "recur-fn"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddb239d0574f3f7a7f44da906a0484f1fc284f89cfbc4eca1895420dbf948201"
 
 [[package]]
 name = "redox_syscall"
