@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter, Result};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 use crate::lib::tokenizer::SourceLocation;
 
@@ -8,7 +9,7 @@ pub struct TokenType {
     pub regex: Regex,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenInstance {
     pub token: String,
     pub value: String,

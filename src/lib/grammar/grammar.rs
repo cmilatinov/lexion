@@ -4,19 +4,28 @@ use std::fs::File;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use crate::lib::tokenizer::*;
 use crate::lib::tokenizer::tokens::*;
-use serde::{Serialize, Deserialize};
+use serde_json::Value;
 
 lazy_static! {
     pub static ref TERMINAL: Regex = Regex::new(r"^'.*'$").unwrap();
 }
 
-#[derive(Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct GrammarRule {
     pub left: String,
-    pub right: Vec<String>,
+    pub right: Vec<String>
 }
+
+impl PartialEq for GrammarRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.left == other.left && self.right == other.right
+    }
+}
+
+impl Eq for GrammarRule {}
 
 type StringSet = HashSet<String>;
 type StringSetMap = HashMap<String, HashSet<String>>;
@@ -99,15 +108,11 @@ impl Grammar {
     }
 
     pub fn from_rules(rules: Vec<GrammarRule>) -> Self {
+        let (terminal_rules, rules) = rules.into_iter()
+            .partition(|r| Grammar::is_terminal(&r.left));
         let mut grammar = Grammar {
-            rules: rules.iter()
-                .filter(|r| Grammar::is_non_terminal(&r.left))
-                .cloned()
-                .collect(),
-            terminal_rules: rules.iter()
-                .filter(|r| Grammar::is_terminal(&r.left))
-                .cloned()
-                .collect(),
+            rules,
+            terminal_rules,
             start_symbol: String::from(""),
             symbols: HashSet::new(),
             terminals: HashSet::new(),
@@ -175,7 +180,7 @@ impl Grammar {
             0,
             GrammarRule {
                 left: self.get_augmented_start_symbol(),
-                right: vec![self.start_symbol.clone()],
+                right: vec![self.start_symbol.clone()]
             },
         );
     }

@@ -3,7 +3,8 @@
         "left": "Grammar",
         "right": [
             "ProductionList"
-        ]
+        ],
+        "reduction": "|_| json!({ \"type\": \"Bing\" })"
     },
     {
         "left": "ProductionList",

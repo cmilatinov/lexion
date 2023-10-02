@@ -1,15 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use crate::lib::grammar::{Grammar, GrammarRule};
+use crate::lib::grammar::{Grammar};
 use crate::lib::tokenizer::tokens::{EOF, EPSILON};
 
-type ParseTableLL1<'t> = HashMap<String, HashMap<String, &'t GrammarRule>>;
+type ParseTableLL1 = HashMap<String, HashMap<String, usize>>;
 
-pub struct GrammarParserLL1<'g> {
+pub struct GrammarParserLL1 {
     is_ll1: bool,
-    parse_table: ParseTableLL1<'g>
+    parse_table: ParseTableLL1
 }
 
-impl GrammarParserLL1<'_> {
+impl GrammarParserLL1 {
     pub fn from_grammar(grammar: &Grammar) -> GrammarParserLL1 {
         let mut parser = GrammarParserLL1 {
             is_ll1: true,
@@ -20,9 +20,9 @@ impl GrammarParserLL1<'_> {
     }
 }
 
-impl<'a> GrammarParserLL1<'a> {
-    fn build_parse_table(&mut self, grammar: &'a Grammar) {
-        for rule in grammar.get_rules().iter() {
+impl GrammarParserLL1 {
+    fn build_parse_table(&mut self, grammar: &Grammar) {
+        for (i, rule) in grammar.get_rules().iter().enumerate() {
             let mut symbol_set: HashSet<String> = grammar.first_of(&*rule.right[0]).unwrap()
                 .iter()
                 .cloned()
@@ -35,10 +35,12 @@ impl<'a> GrammarParserLL1<'a> {
             }
             for terminal in grammar.first_of(&*rule.right[0]).unwrap().iter() {
                 match self.parse_table.get_mut(&*rule.left) {
-                    Some(m) => { m.insert(terminal.clone(), rule); },
+                    Some(m) => {
+                        m.insert(terminal.clone(), i);
+                    },
                     None => {
                         let mut map = HashMap::new();
-                        let prev = map.insert(terminal.clone(), rule);
+                        let prev = map.insert(terminal.clone(), i);
                         if prev.is_some() {
                             self.is_ll1 = false;
                         }
