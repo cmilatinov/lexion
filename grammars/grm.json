@@ -1,146 +1,220 @@
-[
-    {
-        "left": "Grammar",
-        "right": [
-            "ProductionList"
-        ],
-        "reduction": "|_| json!({ \"type\": \"Bing\" })"
-    },
-    {
-        "left": "ProductionList",
-        "right": [
-            "ProductionList",
-            "Production"
-        ]
-    },
-    {
-        "left": "ProductionList",
-        "right": [
-            "Production"
-        ]
-    },
-    {
-        "left": "Production",
-        "right": [
-            "NonTerminalProduction"
-        ]
-    },
-    {
-        "left": "Production",
-        "right": [
-            "TerminalProduction"
-        ]
-    },
-    {
-        "left": "NonTerminalProduction",
-        "right": [
-            "NonTerminal",
-            "'->'",
-            "RuleList",
-            "OptReductionAction",
-            "';'"
-        ]
-    },
-    {
-        "left": "TerminalProduction",
-        "right": [
-            "Terminal",
-            "'->'",
-            "Regex",
-            "';'"
-        ]
-    },
-    {
-        "left": "RuleList",
-        "right": [
-            "RuleList",
-            "'|'",
-            "SymbolList"
-        ]
-    },
-    {
-        "left": "RuleList",
-        "right": [
-            "SymbolList"
-        ]
-    },
-    {
-        "left": "SymbolList",
-        "right": [
-            "SymbolList",
-            "Symbol"
-        ]
-    },
-    {
-        "left": "SymbolList",
-        "right": [
-            "ε"
-        ]
-    },
-    {
-        "left": "NonTerminal",
-        "right": [
-            "'non_terminal_literal'"
-        ]
-    },
-    {
-        "left": "Terminal",
-        "right": [
-            "'terminal_literal'"
-        ]
-    },
-    {
-        "left": "Symbol",
-        "right": [
-            "'non_terminal_literal'"
-        ]
-    },
-    {
-        "left": "Symbol",
-        "right": [
-            "'terminal_literal'"
-        ]
-    },
-    {
-        "left": "Regex",
-        "right": [
-            "'regex_literal'"
-        ]
-    },
-    {
-        "left": "OptReductionAction",
-        "right": [
-            "'action_literal'"
-        ]
-    },
-    {
-        "left": "OptReductionAction",
-        "right": [
-            "ε"
-        ]
-    },
-    {
-        "left": "'action_literal'",
-        "right": [
-            "\\{\\{[\\s\\S]*?\\}\\}"
-        ]
-    },
-    {
-        "left": "'non_terminal_literal'",
-        "right": [
-            "(?:[a-zA-Z0-9]+|ε)"
-        ]
-    },
-    {
-        "left": "'terminal_literal'",
-        "right": [
-            "'[^']*'"
-        ]
-    },
-    {
-        "left": "'regex_literal'",
-        "right": [
-            "\\/.+\\/"
-        ]
-    }
-]
+{
+    "definitions": "pub struct Reduction { pub ty: String, pub code: String } pub struct Rule { pub left: String, pub right: Vec<String> }",
+    "rules": [
+        {
+            "left": "Grammar",
+            "right": [
+                "ProductionList"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$$ = $1;"
+            }
+        },
+        {
+            "left": "ProductionList",
+            "right": [
+                "ProductionList",
+                "Production"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$1.extend($2); $$ = $1;"
+            }
+        },
+        {
+            "left": "ProductionList",
+            "right": [
+                "Production"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$$ = $1;"
+            }
+        },
+        {
+            "left": "Production",
+            "right": [
+                "NonTerminalProduction"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$$ = $1;"
+            }
+        },
+        {
+            "left": "Production",
+            "right": [
+                "TerminalProduction"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$$ = $1;"
+            }
+        },
+        {
+            "left": "NonTerminalProduction",
+            "right": [
+                "NonTerminal",
+                "'->'",
+                "RuleList",
+                "OptReductionAction",
+                "';'"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$$ = $3.into_iter().map(|r| Rule { left: $1.clone(), right: r }).collect();"
+            }
+        },
+        {
+            "left": "TerminalProduction",
+            "right": [
+                "Terminal",
+                "'->'",
+                "Regex",
+                "';'"
+            ],
+            "reduction": {
+                "ty": "Vec<Rule>",
+                "code": "$$ = vec![Rule { left: $1, right: vec![$3] }];"
+            }
+        },
+        {
+            "left": "RuleList",
+            "right": [
+                "RuleList",
+                "'|'",
+                "SymbolList"
+            ],
+            "reduction": {
+                "ty": "Vec<Vec<String>>",
+                "code": "$1.push($3); $$ = $1;"
+            }
+        },
+        {
+            "left": "RuleList",
+            "right": [
+                "SymbolList"
+            ],
+            "reduction": {
+                "ty": "Vec<Vec<String>>",
+                "code": "$$ = vec![$1];"
+            }
+        },
+        {
+            "left": "SymbolList",
+            "right": [
+                "SymbolList",
+                "Symbol"
+            ],
+            "reduction": {
+                "ty": "Vec<String>",
+                "code": "$1.push($2); $$ = $1;"
+            }
+        },
+        {
+            "left": "SymbolList",
+            "right": [
+                "ε"
+            ],
+            "reduction": {
+                "ty": "Vec<String>",
+                "code": "$$ = vec![];"
+            }
+        },
+        {
+            "left": "NonTerminal",
+            "right": [
+                "'non_terminal_literal'"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = $1.value.clone();"
+            }
+        },
+        {
+            "left": "Terminal",
+            "right": [
+                "'terminal_literal'"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = $1.value.clone();"
+            }
+        },
+        {
+            "left": "Symbol",
+            "right": [
+                "'non_terminal_literal'"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = $1.value.clone();"
+            }
+        },
+        {
+            "left": "Symbol",
+            "right": [
+                "'terminal_literal'"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = $1.value.clone();"
+            }
+        },
+        {
+            "left": "Regex",
+            "right": [
+                "'regex_literal'"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = $1.value.clone();"
+            }
+        },
+        {
+            "left": "OptReductionAction",
+            "right": [
+                "'action_literal'"
+            ],
+            "reduction": {
+                "ty": "Option<String>",
+                "code": "$$ = Some($1.value.clone());"
+            }
+        },
+        {
+            "left": "OptReductionAction",
+            "right": [
+                "ε"
+            ],
+            "reduction": {
+                "ty": "Option<String>",
+                "code": "$$ = None;"
+            }
+        },
+        {
+            "left": "'action_literal'",
+            "right": [
+                "\\{\\{[\\s\\S]*?\\}\\}"
+            ]
+        },
+        {
+            "left": "'non_terminal_literal'",
+            "right": [
+                "(?:[a-zA-Z0-9]+|ε)"
+            ]
+        },
+        {
+            "left": "'terminal_literal'",
+            "right": [
+                "'[^']*'"
+            ]
+        },
+        {
+            "left": "'regex_literal'",
+            "right": [
+                "\\/.+\\/"
+            ]
+        }
+    ]
+}

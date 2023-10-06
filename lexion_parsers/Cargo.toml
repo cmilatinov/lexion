@@ -1,0 +1,11 @@
+[package]
+name = "lexion_parsers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+indextree = "4.6.0"
+lexion_lib = { path = "../lexion_lib" }
+lexion_derive = { path = "../lexion_derive" }
+serde = "1.0.188"
+serde_json = "1.0.107"
