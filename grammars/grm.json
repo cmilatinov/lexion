@@ -1,5 +1,5 @@
 {
-    "definitions": "pub struct Reduction { pub ty: String, pub code: String } pub struct Rule { pub left: String, pub right: Vec<String> }",
+    "definitions": "#[derive(Debug)] pub struct Reduction { pub ty: String, pub code: String } #[derive(Debug)] pub struct Rule { pub left: String, pub right: Vec<String> }",
     "rules": [
         {
             "left": "Grammar",
