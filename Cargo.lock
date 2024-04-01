@@ -243,6 +243,7 @@ dependencies = [
  "indextree",
  "lexion_derive",
  "lexion_lib",
+ "prettytable-rs",
  "serde",
  "serde_json",
 ]

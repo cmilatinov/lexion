@@ -4,8 +4,8 @@ use crate::parsers::items::{CanonicalCollectionGraph, LR0Item, LRItem};
 use crate::parsers::{GrammarParserLR, ParseTableLR};
 
 pub struct GrammarParserSLR1 {
-    collection: CanonicalCollectionGraph<LR0Item>,
-    table: ParseTableLR
+    pub collection: CanonicalCollectionGraph<LR0Item>,
+    pub table: ParseTableLR
 }
 
 impl GrammarParserLR for GrammarParserSLR1 {

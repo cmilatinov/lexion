@@ -397,6 +397,10 @@ impl Grammar {
         token_types.extend(
             self.terminals.iter()
                 .filter(|t| &**t != EOF)
+                .sorted_by_key(|t| {
+                    let rule = self.terminal_rules.iter().find(|r| r.left == **t);
+                    if let Some(_) = rule { 1 } else { 0 }
+                })
                 .map(|t| {
                     let rule = self.terminal_rules.iter().find(|r| r.left == *t);
                     let regex = match rule {

@@ -1,0 +1,22 @@
+S -> StmtList ;
+
+StmtList -> StmtList Stmt ;
+StmtList -> ;
+
+Stmt -> FuncDecl FuncBody ;
+
+FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn ;
+
+FuncQual -> 'extern' ;
+FuncQual -> ;
+
+FuncReturn -> '->' 'ident' ;
+FuncReturn -> ;
+
+FuncBody -> '{' StmtList '}' ;
+
+ParamList -> ParamList ',' Param ;
+ParamList -> Param ;
+ParamList -> ;
+
+'ident' -> /[A-Za-z_][A-Za-z0-9_]*/ ;
