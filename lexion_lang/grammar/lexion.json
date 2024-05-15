@@ -1,0 +1,1057 @@
+{
+  "definitions": "",
+  "rules": [
+    {
+      "left": "Program",
+      "right": [
+        "StmtList"
+      ],
+      "reduction": {
+        "ty": "Vec<Stmt>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "StmtList",
+      "right": [
+        "StmtList",
+        "Stmt"
+      ],
+      "reduction": {
+        "ty": "Vec<Stmt>",
+        "code": "$1.push($2); $$ = $1;"
+      }
+    },
+    {
+      "left": "StmtList",
+      "right": [
+        "Stmt"
+      ],
+      "reduction": {
+        "ty": "Vec<Stmt>",
+        "code": "$$ = vec![$1];"
+      }
+    },
+    {
+      "left": "Stmt",
+      "right": [
+        "ExprStmt"
+      ],
+      "reduction": {
+        "ty": "Stmt",
+        "code": "$$ = Stmt::ExprStmt($1);"
+      }
+    },
+    {
+      "left": "Stmt",
+      "right": [
+        "VarDeclStmt"
+      ],
+      "reduction": {
+        "ty": "Stmt",
+        "code": "$$ = Stmt::VarDeclStmt($1);"
+      }
+    },
+    {
+      "left": "Stmt",
+      "right": [
+        "FuncDeclStmt"
+      ],
+      "reduction": {
+        "ty": "Stmt",
+        "code": "$$ = Stmt::FuncDeclStmt($1);"
+      }
+    },
+    {
+      "left": "ExprStmt",
+      "right": [
+        "';'"
+      ],
+      "reduction": {
+        "ty": "ExprStmt",
+        "code": "$$ = ExprStmt {\r\n        expr: Box::new(Expr::NoneExpr)\r\n    };"
+      }
+    },
+    {
+      "left": "ExprStmt",
+      "right": [
+        "Expr",
+        "';'"
+      ],
+      "reduction": {
+        "ty": "ExprStmt",
+        "code": "$$ = ExprStmt {\r\n        expr: $1\r\n    };"
+      }
+    },
+    {
+      "left": "Expr",
+      "right": [
+        "Expr",
+        "','",
+        "AssignExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "Expr",
+      "right": [
+        "AssignExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "AssignExpr",
+      "right": [
+        "UnaryExpr",
+        "'='",
+        "AssignExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "AssignExpr",
+      "right": [
+        "CondExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "CondExpr",
+      "right": [
+        "LogicOrExpr",
+        "'?'",
+        "Expr",
+        "':'",
+        "CondExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::TernaryExpr(TernaryExpr {\r\n        operator: String::from(\"?:\"),\r\n        first: $1,\r\n        second: $3,\r\n        third: $5\r\n    }));"
+      }
+    },
+    {
+      "left": "CondExpr",
+      "right": [
+        "LogicOrExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "LogicOrExpr",
+      "right": [
+        "LogicOrExpr",
+        "'||'",
+        "LogicAndExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "LogicOrExpr",
+      "right": [
+        "LogicAndExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "LogicAndExpr",
+      "right": [
+        "LogicAndExpr",
+        "'&&'",
+        "BitwiseOrExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "LogicAndExpr",
+      "right": [
+        "BitwiseOrExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "BitwiseOrExpr",
+      "right": [
+        "BitwiseOrExpr",
+        "'|'",
+        "BitwiseXorExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "BitwiseOrExpr",
+      "right": [
+        "BitwiseXorExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "BitwiseXorExpr",
+      "right": [
+        "BitwiseXorExpr",
+        "'^'",
+        "BitwiseAndExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "BitwiseXorExpr",
+      "right": [
+        "BitwiseAndExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "BitwiseAndExpr",
+      "right": [
+        "BitwiseAndExpr",
+        "'&'",
+        "EqExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "BitwiseAndExpr",
+      "right": [
+        "EqExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "EqExpr",
+      "right": [
+        "EqExpr",
+        "'eq_op'",
+        "RelExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "EqExpr",
+      "right": [
+        "RelExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "RelExpr",
+      "right": [
+        "RelExpr",
+        "'rel_op'",
+        "ShiftExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "RelExpr",
+      "right": [
+        "ShiftExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "ShiftExpr",
+      "right": [
+        "ShiftExpr",
+        "'shift_op'",
+        "AddExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "ShiftExpr",
+      "right": [
+        "AddExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "AddExpr",
+      "right": [
+        "AddExpr",
+        "'+'",
+        "MulExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "AddExpr",
+      "right": [
+        "AddExpr",
+        "'-'",
+        "MulExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "AddExpr",
+      "right": [
+        "MulExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "MulExpr",
+      "right": [
+        "MulExpr",
+        "'*'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "MulExpr",
+      "right": [
+        "MulExpr",
+        "'/'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "MulExpr",
+      "right": [
+        "MulExpr",
+        "'%'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "MulExpr",
+      "right": [
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "CastExpr",
+      "right": [
+        "'('",
+        "Type",
+        "')'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: String::from(\"()\"),\r\n        expr: $4\r\n    }));"
+      }
+    },
+    {
+      "left": "CastExpr",
+      "right": [
+        "UnaryExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'++'",
+        "UnaryExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'--'",
+        "UnaryExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'sizeof'",
+        "UnaryExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'!'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'~'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'&'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'*'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'+'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "'-'",
+        "CastExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+      }
+    },
+    {
+      "left": "UnaryExpr",
+      "right": [
+        "PostfixExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'['",
+        "Expr",
+        "']'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: String::from(\"[]\"),\r\n        left: $1,\r\n        right: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'('",
+        "')'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::CallExpr(CallExpr {\r\n        expr: $1,\r\n        args: vec![]\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'('",
+        "ArgList",
+        "')'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::CallExpr(CallExpr {\r\n        expr: $1,\r\n        args: $3\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'.'",
+        "'ident'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::IdentExpr(IdentExpr {\r\n            ident: $3.value\r\n        }))\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'->'",
+        "'ident'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::IdentExpr(IdentExpr {\r\n            ident: $3.value\r\n        }))\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'++'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::NoneExpr)\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PostfixExpr",
+        "'--'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::NoneExpr)\r\n    }));"
+      }
+    },
+    {
+      "left": "PostfixExpr",
+      "right": [
+        "PrimaryExpr"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "PrimaryExpr",
+      "right": [
+        "Literal"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::LitExpr(LitExpr {\r\n        lit: $1\r\n    }));"
+      }
+    },
+    {
+      "left": "PrimaryExpr",
+      "right": [
+        "'ident'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = Box::new(Expr::IdentExpr(IdentExpr {\r\n        ident: $1.value\r\n    }));"
+      }
+    },
+    {
+      "left": "PrimaryExpr",
+      "right": [
+        "'('",
+        "Expr",
+        "')'"
+      ],
+      "reduction": {
+        "ty": "Box<Expr>",
+        "code": "$$ = $2;"
+      }
+    },
+    {
+      "left": "ArgList",
+      "right": [
+        "ArgList",
+        "','",
+        "AssignExpr"
+      ],
+      "reduction": {
+        "ty": "Vec<Expr>",
+        "code": "$1.push(*$3);\r\n    $$ = $1;"
+      }
+    },
+    {
+      "left": "ArgList",
+      "right": [
+        "AssignExpr"
+      ],
+      "reduction": {
+        "ty": "Vec<Expr>",
+        "code": "$$ = vec![*$1];"
+      }
+    },
+    {
+      "left": "Literal",
+      "right": [
+        "'string_literal'"
+      ],
+      "reduction": {
+        "ty": "Lit",
+        "code": "$$ = Lit::String($1.value);"
+      }
+    },
+    {
+      "left": "Literal",
+      "right": [
+        "'int_literal'"
+      ],
+      "reduction": {
+        "ty": "Lit",
+        "code": "$$ = Lit::Integer($1.value.parse::<isize>().unwrap());"
+      }
+    },
+    {
+      "left": "Literal",
+      "right": [
+        "'float_literal'"
+      ],
+      "reduction": {
+        "ty": "Lit",
+        "code": "$$ = Lit::Float($1.value.parse::<f64>().unwrap());"
+      }
+    },
+    {
+      "left": "Literal",
+      "right": [
+        "'bool_literal'"
+      ],
+      "reduction": {
+        "ty": "Lit",
+        "code": "$$ = Lit::Boolean($1.value.parse::<bool>().unwrap());"
+      }
+    },
+    {
+      "left": "VarDeclStmt",
+      "right": [
+        "'let'",
+        "VarDeclList",
+        "';'"
+      ],
+      "reduction": {
+        "ty": "VarDeclStmt",
+        "code": "$$ = VarDeclStmt {\r\n        decls: $2\r\n    };"
+      }
+    },
+    {
+      "left": "VarDeclList",
+      "right": [
+        "VarDeclList",
+        "','",
+        "VarDecl"
+      ],
+      "reduction": {
+        "ty": "Vec<VarDecl>",
+        "code": "$1.push($3);\r\n    $$ = $1;"
+      }
+    },
+    {
+      "left": "VarDeclList",
+      "right": [
+        "VarDecl"
+      ],
+      "reduction": {
+        "ty": "Vec<VarDecl>",
+        "code": "$$ = vec![$1];"
+      }
+    },
+    {
+      "left": "VarDecl",
+      "right": [
+        "'ident'",
+        "OptVarType",
+        "OptVarInit"
+      ],
+      "reduction": {
+        "ty": "VarDecl",
+        "code": "$$ = VarDecl {\r\n        name: $1.value,\r\n        ty: $2,\r\n        init: $3,\r\n    };"
+      }
+    },
+    {
+      "left": "OptVarType",
+      "right": [
+        "':'",
+        "Type"
+      ],
+      "reduction": {
+        "ty": "Option<Type>",
+        "code": "$$ = Some($2);"
+      }
+    },
+    {
+      "left": "OptVarType",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "Option<Type>",
+        "code": "$$ = None;"
+      }
+    },
+    {
+      "left": "OptVarInit",
+      "right": [
+        "'='",
+        "Expr"
+      ],
+      "reduction": {
+        "ty": "Option<Box<Expr>>",
+        "code": "$$ = Some($2);"
+      }
+    },
+    {
+      "left": "OptVarInit",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "Option<Box<Expr>>",
+        "code": "$$ = None;"
+      }
+    },
+    {
+      "left": "FuncDeclStmt",
+      "right": [
+        "FuncDecl",
+        "FuncBody"
+      ],
+      "reduction": {
+        "ty": "FuncDeclStmt",
+        "code": "$$ = FuncDeclStmt {\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: Some($2),\r\n    };"
+      }
+    },
+    {
+      "left": "FuncDeclStmt",
+      "right": [
+        "FuncDecl",
+        "';'"
+      ],
+      "reduction": {
+        "ty": "FuncDeclStmt",
+        "code": "$$ = FuncDeclStmt {\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: None,\r\n    };"
+      }
+    },
+    {
+      "left": "FuncDecl",
+      "right": [
+        "FuncQual",
+        "'fn'",
+        "'ident'",
+        "'('",
+        "ParamList",
+        "')'",
+        "FuncReturn"
+      ],
+      "reduction": {
+        "ty": "(String, Vec<Param>, Option<Type>)",
+        "code": "$$ = (\r\n        $3.value,\r\n        $5,\r\n        $7\r\n    );"
+      }
+    },
+    {
+      "left": "FuncQual",
+      "right": [
+        "'extern'"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "FuncQual",
+      "right": [
+        "ε"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "FuncReturn",
+      "right": [
+        "'->'",
+        "Type"
+      ],
+      "reduction": {
+        "ty": "Option<Type>",
+        "code": "$$ = Some($2);"
+      }
+    },
+    {
+      "left": "FuncReturn",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "Option<Type>",
+        "code": "$$ = None;"
+      }
+    },
+    {
+      "left": "FuncBody",
+      "right": [
+        "'{'",
+        "StmtList",
+        "'}'"
+      ],
+      "reduction": {
+        "ty": "BlockStmt",
+        "code": "$$ = BlockStmt {\r\n        stmts: $2\r\n    };"
+      }
+    },
+    {
+      "left": "ParamList",
+      "right": [
+        "ParamList",
+        "','",
+        "Param"
+      ],
+      "reduction": {
+        "ty": "Vec<Param>",
+        "code": "$1.push($3); $$ = $1;"
+      }
+    },
+    {
+      "left": "ParamList",
+      "right": [
+        "Param"
+      ],
+      "reduction": {
+        "ty": "Vec<Param>",
+        "code": "$$ = vec![$1];"
+      }
+    },
+    {
+      "left": "ParamList",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "Vec<Param>",
+        "code": "$$ = vec![];"
+      }
+    },
+    {
+      "left": "Param",
+      "right": [
+        "'ident'",
+        "':'",
+        "Type"
+      ],
+      "reduction": {
+        "ty": "Param",
+        "code": "$$ = Param {\r\n        name: $1.value,\r\n        ty: $3\r\n    };"
+      }
+    },
+    {
+      "left": "Type",
+      "right": [
+        "TypeRefList",
+        "'ident'"
+      ],
+      "reduction": {
+        "ty": "Type",
+        "code": "$$ = Type::Struct {\r\n        ref_count: $1,\r\n        ident: $2.value\r\n    };"
+      }
+    },
+    {
+      "left": "TypeRefList",
+      "right": [
+        "TypeRefList",
+        "'&'"
+      ],
+      "reduction": {
+        "ty": "usize",
+        "code": "$$ = $1 + 1;"
+      }
+    },
+    {
+      "left": "TypeRefList",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "usize",
+        "code": "$$ = 0;"
+      }
+    },
+    {
+      "left": "'unary_op'",
+      "right": [
+        "[&*+\\-~!]"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'eq_op'",
+      "right": [
+        "(:?==|!=)"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'rel_op'",
+      "right": [
+        "(:?<=|>=|<|>)"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'shift_op'",
+      "right": [
+        "(:?>>|<<)"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'add_op'",
+      "right": [
+        "[+\\-]"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'mul_op'",
+      "right": [
+        "[*\\/%]"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'int_literal'",
+      "right": [
+        "(?:[1-9][0-9]*|0)"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'float_literal'",
+      "right": [
+        "[+\\-]?(?:[1-9][0-9]*|0)?(?:\\.[0-9]*[1-9]|\\.0)(?:[eE][+\\-]?(?:[1-9][0-9]*|0))?"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'bool_literal'",
+      "right": [
+        "(?:true|false)"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'string_literal'",
+      "right": [
+        "(?:\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')"
+      ],
+      "reduction": null
+    },
+    {
+      "left": "'ident'",
+      "right": [
+        "[A-Za-z_][A-Za-z0-9_]*"
+      ],
+      "reduction": null
+    }
+  ]
+}

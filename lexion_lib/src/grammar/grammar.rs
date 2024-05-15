@@ -398,8 +398,10 @@ impl Grammar {
             self.terminals.iter()
                 .filter(|t| &**t != EOF)
                 .sorted_by_key(|t| {
-                    let rule = self.terminal_rules.iter().find(|r| r.left == **t);
-                    if let Some(_) = rule { 1 } else { 0 }
+                    self.terminal_rules
+                        .iter()
+                        .position(|r| r.left == **t)
+                        .unwrap_or_default()
                 })
                 .map(|t| {
                     let rule = self.terminal_rules.iter().find(|r| r.left == *t);

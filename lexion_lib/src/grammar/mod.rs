@@ -1,5 +1,6 @@
-mod grammar;
 mod derivation;
+mod grammar;
+pub mod serialize;
 
-pub use grammar::*;
 pub use derivation::*;
+pub use grammar::*;

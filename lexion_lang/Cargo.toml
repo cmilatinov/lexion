@@ -1,0 +1,15 @@
+[package]
+name = "lexion_lang"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lexion_lib = { path = "../lexion_lib" }
+lexion_parsers = { path = "../lexion_parsers" }
+lexion_derive = { path = "../lexion_derive" }
+
+[build-dependencies]
+lexion_lib = { path = "../lexion_lib" }
+lexion_parsers = { path = "../lexion_parsers" }
+serde = "1.0.197"
+serde_json = "1.0.115"

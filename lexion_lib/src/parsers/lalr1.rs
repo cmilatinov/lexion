@@ -5,9 +5,11 @@ use crate::parsers::ParseTableLR;
 use crate::tokenizer::tokens::{EOF, EPSILON};
 
 pub struct GrammarParserLALR1 {
+    #[allow(dead_code)]
     collection: CanonicalCollectionGraph<LR0Item>,
-    table: ParseTableLR,
+    #[allow(dead_code)]
     lookahead_sets: HashMap<(usize, LR0Item), HashSet<String>>,
+    table: ParseTableLR,
 }
 
 struct SetConstructorLALR1<'a> {

@@ -1,5 +1,5 @@
 {
-    "definitions": "#[derive(Debug)] pub struct Reduction { pub ty: String, pub code: String } #[derive(Debug)] pub struct Rule { pub left: String, pub right: Vec<String> }",
+    "definitions": "",
     "rules": [
         {
             "left": "Grammar",
@@ -63,7 +63,7 @@
             ],
             "reduction": {
                 "ty": "Vec<Rule>",
-                "code": "$$ = $3.into_iter().map(|r| Rule { left: $1.clone(), right: r }).collect();"
+                "code": "$$ = $3.into_iter().map(|r| Rule { left: $1.clone(), right: r, reduction: $4.clone() }).collect();"
             }
         },
         {
@@ -76,7 +76,7 @@
             ],
             "reduction": {
                 "ty": "Vec<Rule>",
-                "code": "$$ = vec![Rule { left: $1, right: vec![$3] }];"
+                "code": "$$ = vec![Rule { left: $1, right: vec![$3], reduction: None }];"
             }
         },
         {
@@ -169,17 +169,17 @@
             ],
             "reduction": {
                 "ty": "String",
-                "code": "$$ = $1.value.clone();"
+                "code": "$$ = String::from(&$1.value[1..$1.value.len()-1]);"
             }
         },
         {
             "left": "OptReductionAction",
             "right": [
-                "'action_literal'"
+                "OptReductionType", "'action_literal'"
             ],
             "reduction": {
-                "ty": "Option<String>",
-                "code": "$$ = Some($1.value.clone());"
+                "ty": "Option<Reduction>",
+                "code": "$$ = Some(Reduction { ty: $1, code: String::from((&$2.value[2..$2.value.len()-2]).trim()) });"
             }
         },
         {
@@ -188,9 +188,35 @@
                 "ε"
             ],
             "reduction": {
-                "ty": "Option<String>",
+                "ty": "Option<Reduction>",
                 "code": "$$ = None;"
             }
+        },
+        {
+            "left": "OptReductionType",
+            "right": [
+                "'type_literal'"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = String::from((&$1.value[1..$1.value.len()-1]).trim());"
+            }
+        },
+        {
+            "left": "OptReductionType",
+            "right": [
+                "ε"
+            ],
+            "reduction": {
+                "ty": "String",
+                "code": "$$ = String::from(\"\");"
+            }
+        },
+        {
+            "left": "'type_literal'",
+            "right": [
+                "\\[[\\s\\S]*?\\]"
+            ]
         },
         {
             "left": "'action_literal'",

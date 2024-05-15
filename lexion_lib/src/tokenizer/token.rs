@@ -1,15 +1,15 @@
 use std::fmt::{Display, Formatter, Result};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
 
-use crate::tokenizer::SourceLocation;
+use regex::Regex;
+
+use crate::tokenizer::{FileLocation, SourceLocation};
 
 pub struct TokenType {
     pub name: String,
     pub regex: Regex,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone)]
 pub struct TokenInstance {
     pub token: String,
     pub value: String,
@@ -34,18 +34,17 @@ impl TokenInstance {
             token: String::from(""),
             value: String::from(""),
             loc: SourceLocation {
-                file: String::from("inline"),
-                line: 1,
-                col: 1
-            }
+                file: "inline",
+                loc: FileLocation { line: 1, col: 1 },
+            },
         }
     }
 
-    pub fn from(token: &str, value: &str, loc: &SourceLocation) ->Self {
+    pub fn from(token: &str, value: &str, loc: &SourceLocation) -> Self {
         Self {
             token: String::from(token),
             value: String::from(value),
-            loc: loc.clone()
+            loc: loc.clone(),
         }
     }
 }

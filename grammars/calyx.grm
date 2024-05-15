@@ -10,7 +10,7 @@ FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn ;
 FuncQual -> 'extern' ;
 FuncQual -> ;
 
-FuncReturn -> '->' 'ident' ;
+FuncReturn -> '->' Type ;
 FuncReturn -> ;
 
 FuncBody -> '{' StmtList '}' ;
@@ -18,5 +18,9 @@ FuncBody -> '{' StmtList '}' ;
 ParamList -> ParamList ',' Param ;
 ParamList -> Param ;
 ParamList -> ;
+
+Param -> 'ident' ':' Type ;
+
+Type -> 'ident' | 'void' ;
 
 'ident' -> /[A-Za-z_][A-Za-z0-9_]*/ ;

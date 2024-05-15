@@ -3,6 +3,7 @@ use crate::parsers::{GrammarParserLR, ParseTableLR};
 use crate::parsers::items::{CanonicalCollectionGraph, LR0Item};
 
 pub struct GrammarParserLR0 {
+    #[allow(dead_code)]
     collection: CanonicalCollectionGraph<LR0Item>,
     table: ParseTableLR
 }

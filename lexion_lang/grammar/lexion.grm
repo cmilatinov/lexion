@@ -1,0 +1,420 @@
+Program -> StmtList [Vec<Stmt>] {{ $$ = $1; }} ;
+
+StmtList -> StmtList Stmt [Vec<Stmt>] {{ $1.push($2); $$ = $1; }} ;
+StmtList -> Stmt [Vec<Stmt>] {{ $$ = vec![$1]; }} ;
+
+Stmt -> ExprStmt
+[Stmt] {{
+    $$ = Stmt::ExprStmt($1);
+}} ;
+Stmt -> VarDeclStmt
+[Stmt] {{
+    $$ = Stmt::VarDeclStmt($1);
+}} ;
+
+Stmt -> FuncDeclStmt
+[Stmt] {{
+    $$ = Stmt::FuncDeclStmt($1);
+}} ;
+
+ExprStmt -> ';'
+[ExprStmt] {{
+    $$ = ExprStmt {
+        expr: Box::new(Expr::NoneExpr)
+    };
+}} ;
+ExprStmt -> Expr ';'
+[ExprStmt] {{
+    $$ = ExprStmt {
+        expr: $1
+    };
+}} ;
+
+Expr -> Expr ',' AssignExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+Expr -> AssignExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+AssignExpr -> UnaryExpr '=' AssignExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+AssignExpr -> CondExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+CondExpr -> LogicOrExpr '?' Expr ':' CondExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::TernaryExpr(TernaryExpr {
+        operator: String::from("?:"),
+        first: $1,
+        second: $3,
+        third: $5
+    }));
+}} ;
+CondExpr -> LogicOrExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+LogicOrExpr -> LogicOrExpr '||' LogicAndExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+LogicOrExpr -> LogicAndExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+LogicAndExpr -> LogicAndExpr '&&' BitwiseOrExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+LogicAndExpr -> BitwiseOrExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+BitwiseOrExpr -> BitwiseOrExpr '|' BitwiseXorExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+BitwiseOrExpr -> BitwiseXorExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+BitwiseXorExpr -> BitwiseXorExpr '^' BitwiseAndExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+BitwiseXorExpr -> BitwiseAndExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+BitwiseAndExpr -> BitwiseAndExpr '&' EqExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+BitwiseAndExpr -> EqExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+EqExpr -> EqExpr 'eq_op' RelExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+EqExpr -> RelExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+RelExpr -> RelExpr 'rel_op' ShiftExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+RelExpr -> ShiftExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+ShiftExpr -> ShiftExpr 'shift_op' AddExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+ShiftExpr -> AddExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+AddExpr -> AddExpr '+' MulExpr | AddExpr '-' MulExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+AddExpr -> MulExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+MulExpr -> MulExpr '*' CastExpr | MulExpr '/' CastExpr | MulExpr '%' CastExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: $3
+    }));
+}} ;
+MulExpr -> CastExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+CastExpr -> '(' Type ')' CastExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::UnaryExpr(UnaryExpr {
+        operator: String::from("()"),
+        expr: $4
+    }));
+}} ;
+CastExpr -> UnaryExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+UnaryExpr -> '++' UnaryExpr |
+             '--' UnaryExpr |
+             'sizeof' UnaryExpr |
+             '!' CastExpr |
+             '~' CastExpr |
+             '&' CastExpr |
+             '*' CastExpr |
+             '+' CastExpr |
+             '-' CastExpr
+[Box<Expr>] {{
+    $$ = Box::new(Expr::UnaryExpr(UnaryExpr {
+        operator: $1.value,
+        expr: $2
+    }));
+}} ;
+UnaryExpr ->  PostfixExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+PostfixExpr -> PostfixExpr '[' Expr ']'
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: String::from("[]"),
+        left: $1,
+        right: $3
+    }));
+}} ;
+PostfixExpr -> PostfixExpr '(' ')'
+[Box<Expr>] {{
+    $$ = Box::new(Expr::CallExpr(CallExpr {
+        expr: $1,
+        args: vec![]
+    }));
+}} ;
+PostfixExpr -> PostfixExpr '(' ArgList ')'
+[Box<Expr>] {{
+    $$ = Box::new(Expr::CallExpr(CallExpr {
+        expr: $1,
+        args: $3
+    }));
+}} ;
+PostfixExpr -> PostfixExpr '.' 'ident' | PostfixExpr '->' 'ident'
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: Box::new(Expr::IdentExpr(IdentExpr {
+            ident: $3.value
+        }))
+    }));
+}} ;
+PostfixExpr -> PostfixExpr '++' | PostfixExpr '--'
+[Box<Expr>] {{
+    $$ = Box::new(Expr::BinaryExpr(BinaryExpr {
+        operator: $2.value,
+        left: $1,
+        right: Box::new(Expr::NoneExpr)
+    }));
+}} ;
+PostfixExpr -> PrimaryExpr
+[Box<Expr>] {{
+    $$ = $1;
+}} ;
+
+PrimaryExpr -> Literal
+[Box<Expr>] {{
+    $$ = Box::new(Expr::LitExpr(LitExpr {
+        lit: $1
+    }));
+}} ;
+PrimaryExpr -> 'ident'
+[Box<Expr>] {{
+    $$ = Box::new(Expr::IdentExpr(IdentExpr {
+        ident: $1.value
+    }));
+}} ;
+PrimaryExpr -> '(' Expr ')'
+[Box<Expr>] {{
+    $$ = $2;
+}} ;
+
+ArgList -> ArgList ',' AssignExpr
+[Vec<Expr>] {{
+    $1.push(*$3);
+    $$ = $1;
+}} ;
+ArgList -> AssignExpr
+[Vec<Expr>] {{
+    $$ = vec![*$1];
+}} ;
+
+Literal -> 'string_literal' [Lit] {{ $$ = Lit::String($1.value); }} ;
+Literal -> 'int_literal' [Lit] {{ $$ = Lit::Integer($1.value.parse::<isize>().unwrap()); }} ;
+Literal -> 'float_literal' [Lit] {{ $$ = Lit::Float($1.value.parse::<f64>().unwrap()); }} ;
+Literal -> 'bool_literal' [Lit] {{ $$ = Lit::Boolean($1.value.parse::<bool>().unwrap()); }} ;
+
+VarDeclStmt -> 'let' VarDeclList ';'
+[VarDeclStmt] {{
+    $$ = VarDeclStmt {
+        decls: $2
+    };
+}} ;
+
+VarDeclList -> VarDeclList ',' VarDecl
+[Vec<VarDecl>] {{
+    $1.push($3);
+    $$ = $1;
+}} ;
+
+VarDeclList -> VarDecl
+[Vec<VarDecl>] {{
+    $$ = vec![$1];
+}} ;
+
+VarDecl -> 'ident' OptVarType OptVarInit
+[VarDecl] {{
+    $$ = VarDecl {
+        name: $1.value,
+        ty: $2,
+        init: $3,
+    };
+}} ;
+
+OptVarType -> ':' Type [Option<Type>] {{ $$ = Some($2); }} ;
+OptVarType -> [Option<Type>] {{ $$ = None; }} ;
+
+OptVarInit -> '=' Expr [Option<Box<Expr>>] {{ $$ = Some($2); }} ;
+OptVarInit -> [Option<Box<Expr>>] {{ $$ = None; }} ;
+
+FuncDeclStmt -> FuncDecl FuncBody
+[FuncDeclStmt] {{
+    $$ = FuncDeclStmt {
+        name: $1.0,
+        params: $1.1,
+        ty: $1.2,
+        body: Some($2),
+    };
+}} ;
+FuncDeclStmt -> FuncDecl ';'
+[FuncDeclStmt] {{
+    $$ = FuncDeclStmt {
+        name: $1.0,
+        params: $1.1,
+        ty: $1.2,
+        body: None,
+    };
+}} ;
+
+FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
+[(String, Vec<Param>, Option<Type>)] {{
+    $$ = (
+        $3.value,
+        $5,
+        $7
+    );
+}} ;
+
+FuncQual -> 'extern' ;
+FuncQual -> ;
+
+FuncReturn -> '->' Type [Option<Type>] {{ $$ = Some($2); }} ;
+FuncReturn ->  [Option<Type>] {{ $$ = None; }} ;
+
+FuncBody -> '{' StmtList '}'
+[BlockStmt] {{
+    $$ = BlockStmt {
+        stmts: $2
+    };
+}};
+
+ParamList -> ParamList ',' Param [Vec<Param>] {{ $1.push($3); $$ = $1; }} ;
+ParamList -> Param [Vec<Param>] {{ $$ = vec![$1]; }} ;
+ParamList -> [Vec<Param>] {{ $$ = vec![]; }} ;
+
+Param -> 'ident' ':' Type [Param] {{
+    $$ = Param {
+        name: $1.value,
+        ty: $3
+    };
+}};
+
+Type -> TypeRefList 'ident'
+[Type] {{
+    $$ = Type::Struct {
+        ref_count: $1,
+        ident: $2.value
+    };
+}} ;
+
+TypeRefList -> TypeRefList '&' [usize] {{ $$ = $1 + 1; }} ;
+TypeRefList -> [usize] {{ $$ = 0; }} ;
+
+'unary_op' -> /[&*+\-~!]/ ;
+'eq_op' -> /(:?==|!=)/ ;
+'rel_op' -> /(:?<=|>=|<|>)/ ;
+'shift_op' -> /(:?>>|<<)/ ;
+'add_op' -> /[+\-]/ ;
+'mul_op' -> /[*\/%]/ ;
+
+'int_literal' -> /(?:[1-9][0-9]*|0)/ ;
+'float_literal' -> /[+\-]?(?:[1-9][0-9]*|0)?(?:\.[0-9]*[1-9]|\.0)(?:[eE][+\-]?(?:[1-9][0-9]*|0))?/ ;
+'bool_literal' -> /(?:true|false)/ ;
+'string_literal' -> /(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/ ;
+
+'ident' -> /[A-Za-z_][A-Za-z0-9_]*/ ;

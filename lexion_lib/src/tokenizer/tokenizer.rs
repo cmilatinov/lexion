@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use crate::error::SyntaxError;
 use crate::tokenizer::*;
 use crate::tokenizer::tokens::*;
@@ -7,7 +6,7 @@ use crate::tokenizer::tokens::*;
 type Result<T> = std::result::Result<T, SyntaxError>;
 
 pub struct Tokenizer {
-    file: PathBuf,
+    file: &'static str,
     string: String,
     cursor: usize,
     token_types: Vec<TokenType>,
@@ -16,16 +15,16 @@ pub struct Tokenizer {
 impl Tokenizer {
     pub fn from_string(input: &str, token_types: Vec<TokenType>) -> Tokenizer {
         Tokenizer {
-            file: PathBuf::from("inline"),
-            string: input.parse().unwrap(),
+            file: "inline",
+            string: input.into(),
             cursor: 0,
             token_types,
         }
     }
 
-    pub fn from_file(file: &str, token_types: Vec<TokenType>) -> Tokenizer {
+    pub fn from_file(file: &'static str, token_types: Vec<TokenType>) -> Tokenizer {
         Tokenizer {
-            file: PathBuf::from(file),
+            file,
             string: fs::read_to_string(file).unwrap(),
             cursor: 0,
             token_types,
@@ -35,7 +34,7 @@ impl Tokenizer {
 
 impl Tokenizer {
     pub fn has_next(&self) -> bool {
-        self.get_cursor_pos() < self.string.len()
+        self.cursor < self.string.len()
     }
 
     pub fn next(&mut self) -> Result<TokenInstance> {
@@ -83,7 +82,7 @@ impl Tokenizer {
                 None => ""
             };
             return Err(SyntaxError {
-                loc,
+                range: SourceRange::from_loc_len(loc, unexpected.len()),
                 message: format!("unexpected token '{}'", unexpected),
             });
         }
@@ -91,28 +90,22 @@ impl Tokenizer {
         let (s, i) = longest_match.unwrap();
         Ok((String::from(s), i))
     }
-
+    
     pub fn get_cursor_loc(&self) -> SourceLocation {
         let mut line = 1;
         let mut last_line = 0;
-        for (i, c) in &mut self.string[0..self.get_cursor_pos()].as_bytes().iter().enumerate() {
+        for (i, c) in &mut self.string[0..self.cursor].as_bytes().iter().enumerate() {
             if *c == b'\n' {
                 line += 1;
                 last_line = if i == 0 { 0 } else { i + 1 };
             }
         }
-        let file = match fs::canonicalize(&self.file) {
-            Ok(p) => String::from(p.to_str().unwrap()),
-            Err(_) => String::from(self.file.to_str().unwrap())
-        };
         SourceLocation {
-            file,
-            line,
-            col: (self.get_cursor_pos() - last_line + 1) as i32,
+            file: self.file,
+            loc: FileLocation { 
+                line,
+                col: self.cursor - last_line + 1,
+            }
         }
-    }
-
-    pub fn get_cursor_pos(&self) -> usize {
-        self.cursor
     }
 }

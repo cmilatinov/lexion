@@ -1,10 +1,10 @@
 use std::fmt::{Display, Formatter, Result};
 use colored::Colorize;
-use crate::tokenizer::SourceLocation;
+use crate::tokenizer::SourceRange;
 
 #[derive(Debug, Clone)]
 pub struct SyntaxError {
-    pub loc: SourceLocation,
+    pub range: SourceRange,
     pub message: String,
 }
 
@@ -15,7 +15,7 @@ impl Display for SyntaxError {
             "{} {} {}",
             "[ERROR]".bold(),
             self.message,
-            self.loc.to_string()
+            self.range.start().to_string()
         )
     }
 }

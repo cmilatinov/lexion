@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["lexion_lib", "lexion_derive", "lexion_parsers"]
+members = ["lexion_lib", "lexion_derive", "lexion_parsers", "lexion_lang"]

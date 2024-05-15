@@ -1,0 +1,10 @@
+extern fn main() {}
+
+fn main(a: b) -> test {}
+
+fn main(c: d, e: f) {
+    extern fn main(a: b) -> void {
+    }
+    fn another(c: d) {
+    }
+}

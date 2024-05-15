@@ -1,0 +1,92 @@
+S -> Expr ;
+
+Expr -> Expr ',' AssignExpr ;
+Expr -> AssignExpr ;
+
+AssignExpr -> UnaryExpr '=' AssignExpr ;
+AssignExpr -> CondExpr ;
+
+CondExpr -> LogicOrExpr '?' Expr ':' CondExpr ;
+CondExpr -> LogicOrExpr ;
+
+LogicOrExpr -> LogicOrExpr '||' LogicAndExpr ;
+LogicOrExpr -> LogicAndExpr ;
+
+LogicAndExpr -> LogicAndExpr '&&' BitwiseOrExpr ;
+LogicAndExpr -> BitwiseOrExpr ;
+
+BitwiseOrExpr -> BitwiseOrExpr '|' BitwiseXorExpr ;
+BitwiseOrExpr -> BitwiseXorExpr ;
+
+BitwiseXorExpr -> BitwiseXorExpr '^' BitwiseAndExpr ;
+BitwiseXorExpr -> BitwiseAndExpr ;
+
+BitwiseAndExpr -> BitwiseAndExpr '&' EqExpr ;
+BitwiseAndExpr -> EqExpr ;
+
+EqExpr -> EqExpr 'eq_op' RelExpr ;
+EqExpr -> RelExpr ;
+
+RelExpr -> RelExpr 'rel_op' ShiftExpr ;
+RelExpr -> ShiftExpr ;
+
+ShiftExpr -> ShiftExpr 'shift_op' AddExpr ;
+ShiftExpr -> AddExpr ;
+
+AddExpr -> AddExpr '+' MulExpr ;
+AddExpr -> AddExpr '-' MulExpr ;
+AddExpr -> MulExpr ;
+
+MulExpr -> MulExpr '*' CastExpr ;
+MulExpr -> MulExpr '/' CastExpr ;
+MulExpr -> MulExpr '%' CastExpr ;
+MulExpr -> CastExpr ;
+
+CastExpr -> '(' Type ')' CastExpr ;
+CastExpr -> UnaryExpr ;
+
+UnaryExpr -> '++' UnaryExpr ;
+UnaryExpr -> '--' UnaryExpr ;
+UnaryExpr -> 'sizeof' UnaryExpr ;
+UnaryExpr -> 'sizeof' '(' Type ')' ;
+UnaryExpr -> '!' CastExpr ;
+UnaryExpr -> '~' CastExpr ;
+UnaryExpr -> '&' CastExpr ;
+UnaryExpr -> '*' CastExpr ;
+UnaryExpr -> '+' CastExpr ;
+UnaryExpr -> '-' CastExpr ;
+UnaryExpr ->  PostfixExpr ;
+
+PostfixExpr -> PostfixExpr '[' Expr ']' ;
+PostfixExpr -> PostfixExpr '(' ')' ;
+PostfixExpr -> PostfixExpr '(' ArgList ')' ;
+PostfixExpr -> PostfixExpr '.' 'ident' ;
+PostfixExpr -> PostfixExpr '->' 'ident' ;
+PostfixExpr -> PostfixExpr '++' ;
+PostfixExpr -> PostfixExpr '--' ;
+PostfixExpr -> PrimaryExpr ;
+
+PrimaryExpr -> Literal ;
+PrimaryExpr -> 'ident' ;
+PrimaryExpr -> '(' Expr ')' ;
+
+ArgList -> ArgList ',' AssignExpr ;
+ArgList -> AssignExpr ;
+
+Literal -> 'string_literal' ;
+Literal -> 'int_literal' ;
+Literal -> 'float_literal' ;
+Literal -> 'bool_literal' ;
+
+Type -> 'ident' ;
+
+'eq_op' -> /(:?==|!=)/ ;
+'rel_op' -> /(:?<=|>=|<|>)/ ;
+'shift_op' -> /(:?>>|<<)/ ;
+
+'int_literal' -> /(?:[1-9][0-9]*|0)/ ;
+'float_literal' -> /[+\-]?(?:[1-9][0-9]*|0)?(?:\.[0-9]*[1-9]|\.0)(?:[eE][+\-]?(?:[1-9][0-9]*|0))?/ ;
+'bool_literal' -> /(?:true|false)/ ;
+'string_literal' -> /(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/ ;
+
+'ident' -> /[A-Za-z_][A-Za-z0-9_]*/ ;

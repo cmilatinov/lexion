@@ -1,23 +1,31 @@
 use std::fmt::{Display, Formatter, Result};
-use indextree::{Arena, NodeId};
+
+use petgraph::Graph;
+use petgraph::graph::NodeIndex;
+
 use crate::grammar::{Grammar, GrammarRule};
 use crate::tokenizer::TokenInstance;
 
+#[derive(Debug)]
 pub struct DerivationNode {
     pub token: TokenInstance,
     pub rule_index: usize,
 }
 
-pub struct Derivation(pub NodeId, pub Arena<DerivationNode>);
+pub struct Derivation(pub NodeIndex, pub Graph<DerivationNode, usize>);
 
 impl Display for DerivationNode {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let token = Grammar::stringify(&*self.token.token);
         write!(
-            f, "[{}]{} {}",
+            f,
+            "[{}]{} {}",
             token,
-            if token == self.token.value { String::from("") }
-            else { format!(" `{}`", self.token.value) },
+            if token == self.token.value {
+                String::from("")
+            } else {
+                format!(" `{}`", self.token.value)
+            },
             self.token.loc
         )
     }
@@ -25,11 +33,11 @@ impl Display for DerivationNode {
 
 impl Derivation {
     fn write(
-        node_id: NodeId,
-        arena: &Arena<DerivationNode>,
+        node_id: NodeIndex,
+        graph: &Graph<DerivationNode, usize>,
         f: &mut Formatter<'_>,
         mut indent: String,
-        last: usize
+        last: usize,
     ) -> Result {
         write!(f, "{}", indent)?;
         if last == 0 {
@@ -39,16 +47,16 @@ impl Derivation {
             write!(f, "└─")?;
             indent += "  ";
         }
-        write!(f, "{}\n", arena.get(node_id).unwrap().get())?;
-        let num_children = node_id.children(arena).count();
-        for (i, child) in node_id.children(arena).enumerate() {
+
+        write!(f, "{}\n", graph.node_weight(node_id).unwrap())?;
+        let num_children = graph.neighbors(node_id).count();
+        for (i, child) in graph.neighbors(node_id).enumerate() {
             Derivation::write(
                 child,
-                arena,
+                graph,
                 f,
                 indent.clone(),
-                if i == num_children - 1 { 1 }
-                else { 0 }
+                if i == num_children - 1 { 1 } else { 0 },
             )?;
         }
         Ok(())
@@ -76,18 +84,11 @@ impl DerivationNode {
         }
     }
 
-    pub fn from(
-        token: TokenInstance,
-        rule_index: usize,
-    ) -> Self {
-        Self {
-            token,
-            rule_index,
-        }
+    pub fn from(token: TokenInstance, rule_index: usize) -> Self {
+        Self { token, rule_index }
     }
 
     pub fn get_rule<'a>(&'a self, grammar: &'a Grammar) -> &'a GrammarRule {
         &grammar.get_rules()[self.rule_index]
     }
 }
-
