@@ -1,6 +1,12 @@
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::ops::{Deref, DerefMut};
+use std::string::ToString;
 
-#[derive(Debug, PartialEq, Eq)]
+use generational_arena::{Arena, Index};
+use lazy_static::lazy_static;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Tuple {
         types: Vec<Type>,
@@ -17,6 +23,29 @@ pub enum Type {
         ident: String,
         ty: String,
     },
+}
+
+lazy_static! {
+    pub static ref TYPE_VOID: Type = Type::Struct {
+        ident: String::from("void"),
+        ref_count: 0
+    };
+    pub static ref TYPE_U32: Type = Type::Struct {
+        ident: String::from("u32"),
+        ref_count: 0
+    };
+    pub static ref TYPE_F32: Type = Type::Struct {
+        ident: String::from("f32"),
+        ref_count: 0
+    };
+    pub static ref TYPE_STR: Type = Type::Struct {
+        ident: String::from("str"),
+        ref_count: 0
+    };
+    pub static ref TYPE_BOOL: Type = Type::Struct {
+        ident: String::from("bool"),
+        ref_count: 0
+    };
 }
 
 impl Display for Type {
@@ -64,5 +93,52 @@ impl Type {
             ident: "void".to_string(),
             ref_count: 0,
         }
+    }
+}
+
+#[derive(Default)]
+pub struct TypeCollection {
+    pub arena: Arena<Type>,
+    pub type_strings: HashMap<String, Index>,
+    pub type_map: HashMap<Index, Index>,
+}
+
+impl Deref for TypeCollection {
+    type Target = Arena<Type>;
+    fn deref(&self) -> &Self::Target {
+        &self.arena
+    }
+}
+
+impl DerefMut for TypeCollection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.arena
+    }
+}
+
+impl TypeCollection {
+    pub fn insert(&mut self, ty: Type) -> Index {
+        let string = ty.to_string();
+        if let Some(index) = self.type_strings.get(&string) {
+            *index
+        } else {
+            let index = self.arena.insert(ty);
+            self.type_strings.insert(string, index);
+            index
+        }
+    }
+
+    pub fn canonicalize(&self, ty: Index) -> Index {
+        let mut result = ty;
+        while let Some(next) = self.type_map.get(&ty) {
+            result = *next;
+        }
+        result
+    }
+
+    pub fn eq(&self, mut a: Index, mut b: Index) -> bool {
+        a = self.canonicalize(a);
+        b = self.canonicalize(b);
+        a == b
     }
 }

@@ -1,7 +1,7 @@
 Program -> StmtList [Vec<Stmt>] {{ $$ = $1; }} ;
 
 StmtList -> StmtList Stmt [Vec<Stmt>] {{ $1.push($2); $$ = $1; }} ;
-StmtList -> Stmt [Vec<Stmt>] {{ $$ = vec![$1]; }} ;
+StmtList -> [Vec<Stmt>] {{ $$ = vec![]; }} ;
 
 Stmt -> ExprStmt
 [Stmt] {{
@@ -10,6 +10,10 @@ Stmt -> ExprStmt
 Stmt -> VarDeclStmt
 [Stmt] {{
     $$ = Stmt::VarDeclStmt($1);
+}} ;
+Stmt -> BlockStmt
+[Stmt] {{
+    $$ = Stmt::BlockStmt($1);
 }} ;
 
 Stmt -> FuncDeclStmt
@@ -312,6 +316,7 @@ Literal -> 'bool_literal' [Lit] {{ $$ = Lit::Boolean($1.value.parse::<bool>().un
 VarDeclStmt -> 'let' VarDeclList ';'
 [VarDeclStmt] {{
     $$ = VarDeclStmt {
+        range: (&$1, &$3).into(),
         decls: $2
     };
 }} ;
@@ -329,22 +334,32 @@ VarDeclList -> VarDecl
 
 VarDecl -> 'ident' OptVarType OptVarInit
 [VarDecl] {{
-    $$ = VarDecl {
-        name: $1.value,
-        ty: $2,
-        init: $3,
+    $$ = match $2 {
+        Some((ty, range)) => VarDecl {
+            range: range.extend($1.loc),
+            name: $1.value,
+            ty: Some(ty),
+            init: $3
+        },
+        None => VarDecl {
+            range: (&$1).into(),
+            name: $1.value,
+            ty: None,
+            init: $3
+        }
     };
 }} ;
 
-OptVarType -> ':' Type [Option<Type>] {{ $$ = Some($2); }} ;
-OptVarType -> [Option<Type>] {{ $$ = None; }} ;
+OptVarType -> ':' Type [Option<(Type, SourceRange)>] {{ $$ = Some($2); }} ;
+OptVarType -> [Option<(Type, SourceRange)>] {{ $$ = None; }} ;
 
 OptVarInit -> '=' Expr [Option<Box<Expr>>] {{ $$ = Some($2); }} ;
 OptVarInit -> [Option<Box<Expr>>] {{ $$ = None; }} ;
 
-FuncDeclStmt -> FuncDecl FuncBody
+FuncDeclStmt -> FuncDecl BlockStmt
 [FuncDeclStmt] {{
     $$ = FuncDeclStmt {
+        range: $1.3,
         name: $1.0,
         params: $1.1,
         ty: $1.2,
@@ -354,6 +369,7 @@ FuncDeclStmt -> FuncDecl FuncBody
 FuncDeclStmt -> FuncDecl ';'
 [FuncDeclStmt] {{
     $$ = FuncDeclStmt {
+        range: $1.3,
         name: $1.0,
         params: $1.1,
         ty: $1.2,
@@ -362,23 +378,36 @@ FuncDeclStmt -> FuncDecl ';'
 }} ;
 
 FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
-[(String, Vec<Param>, Option<Type>)] {{
+[(String, Vec<Param>, Option<Type>, SourceRange)] {{
+    let mut ty = None;
+    let mut range: SourceRange = (&$2).into();
+    match $7 {
+        Some((typ, rg)) => {
+            range = range.merge(rg);
+            ty = Some(typ);
+        }
+        None => {
+            range = range.extend($6.loc);
+        }
+    };
     $$ = (
         $3.value,
         $5,
-        $7
+        ty,
+        range
     );
 }} ;
 
 FuncQual -> 'extern' ;
 FuncQual -> ;
 
-FuncReturn -> '->' Type [Option<Type>] {{ $$ = Some($2); }} ;
-FuncReturn ->  [Option<Type>] {{ $$ = None; }} ;
+FuncReturn -> '->' Type [Option<(Type, SourceRange)>] {{ $$ = Some($2); }} ;
+FuncReturn ->  [Option<(Type, SourceRange)>] {{ $$ = None; }} ;
 
-FuncBody -> '{' StmtList '}'
+BlockStmt -> '{' StmtList '}'
 [BlockStmt] {{
     $$ = BlockStmt {
+        range: SourceRange::from_start_end($1.loc, $3.loc),
         stmts: $2
     };
 }};
@@ -389,21 +418,45 @@ ParamList -> [Vec<Param>] {{ $$ = vec![]; }} ;
 
 Param -> 'ident' ':' Type [Param] {{
     $$ = Param {
+        range: $3.1.extend($1.loc),
         name: $1.value,
-        ty: $3
+        ty: $3.0
     };
 }};
 
 Type -> TypeRefList 'ident'
-[Type] {{
-    $$ = Type::Struct {
-        ref_count: $1,
-        ident: $2.value
+[(Type, SourceRange)] {{
+    $$ = match $1 {
+        Some((count, range)) => (
+            Type::Struct {
+                ref_count: count,
+                ident: $2.value
+            },
+            range.extend($2.loc)
+        ),
+        None => {
+            let range: SourceRange = (&$2).into();
+            (
+                Type::Struct {
+                    ref_count: 0,
+                    ident: $2.value
+                },
+                range
+            )
+        }
     };
 }} ;
 
-TypeRefList -> TypeRefList '&' [usize] {{ $$ = $1 + 1; }} ;
-TypeRefList -> [usize] {{ $$ = 0; }} ;
+TypeRefList -> TypeRefList '&'
+[Option<(usize, SourceRange)>] {{
+    $$ = match $1 {
+        Some((count, range)) => Some((count + 1, range.extend($2.loc))),
+        None => Some((1, (&$2).into()))
+    };
+}} ;
+TypeRefList -> [Option<(usize, SourceRange)>] {{
+    $$ = None;
+}} ;
 
 'unary_op' -> /[&*+\-~!]/ ;
 'eq_op' -> /(:?==|!=)/ ;

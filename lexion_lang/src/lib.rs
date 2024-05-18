@@ -1,38 +1,37 @@
 pub mod ast;
+pub mod diagnostic;
 pub mod parser;
-pub mod symbol_table_generator;
-pub mod typechecker;
+pub mod pipeline;
+pub mod symbol_table;
+pub mod type_checker;
 pub mod validator;
 
 #[cfg(test)]
 mod tests {
     use lexion_lib::prettytable::{format, Table};
 
+    use crate::diagnostic::DiagnosticPrinterStdout;
     use crate::parser::ParserLexion;
-    use crate::symbol_table_generator::SymbolTableGenerator;
+    use crate::pipeline::PipelineStage;
+    use crate::symbol_table::SymbolTableGenerator;
 
     #[test]
     fn test_parse() {
         let parser = ParserLexion::new();
         let mut trace = Table::new();
         trace.set_format(*format::consts::FORMAT_BOX_CHARS);
-        let result = parser.parse_from_string_trace(
-            r#"fn test(a: test, b: t2) -> cringe {
-                let a = 34;
-                let b: &str = "1";
-                let c, d;
-                a = abc(a, b, c);
-                b = "" + 2 - 0.1;
-                c = 1.0e-32;
-                d = true;
-            }"#,
-            Some(&mut trace),
-        );
+        let result =
+            parser.parse_from_string_trace(include_str!("../tests/function.txt"), Some(&mut trace));
+        trace.printstd();
         match result {
             Ok(ast) => {
-                println!("{:#?}", ast);
-                SymbolTableGenerator::default().process(&ast);
-                trace.printstd();
+                if let Some((graph, types)) =
+                    SymbolTableGenerator::default().exec(&mut DiagnosticPrinterStdout, &ast)
+                {
+                    if let Some(table) = graph.table(graph.root, Some(&types)) {
+                        println!("{}", table);
+                    }
+                }
             }
             Err(err) => println!("{}", err),
         };

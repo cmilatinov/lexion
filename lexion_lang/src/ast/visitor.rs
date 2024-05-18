@@ -6,20 +6,27 @@ use crate::ast::{
 #[derive(Default)]
 pub struct ASTVisitor;
 
+#[derive(Clone, Copy)]
 pub enum ASTNode<'a> {
     Stmt(&'a Stmt),
     Expr(&'a Expr),
 }
 
+pub enum TraversalType {
+    Preorder,
+    Postorder,
+}
+
 impl ASTVisitor {
-    pub fn visit<F: FnMut(ASTNode)>(&self, ast: &AST, mut visitor: F) {
+    pub fn visit<F: FnMut(TraversalType, ASTNode)>(&self, ast: &AST, mut visitor: F) {
         for stmt in ast.iter() {
             self.visit_stmt(stmt, &mut visitor);
         }
     }
 
-    pub fn visit_stmt<F: FnMut(ASTNode)>(&self, stmt: &Stmt, visitor: &mut F) {
-        visitor(ASTNode::Stmt(stmt));
+    pub fn visit_stmt<F: FnMut(TraversalType, ASTNode)>(&self, stmt: &Stmt, visitor: &mut F) {
+        let node = ASTNode::Stmt(stmt);
+        visitor(TraversalType::Preorder, node);
         match stmt {
             Stmt::FuncDeclStmt(FuncDeclStmt { body, .. }) => {
                 for stmt in body.iter() {
@@ -28,7 +35,7 @@ impl ASTVisitor {
                     }
                 }
             }
-            Stmt::BlockStmt(BlockStmt { stmts }) => {
+            Stmt::BlockStmt(BlockStmt { stmts, .. }) => {
                 for stmt in stmts.iter() {
                     self.visit_stmt(stmt, visitor);
                 }
@@ -38,10 +45,12 @@ impl ASTVisitor {
             }
             _ => {}
         }
+        visitor(TraversalType::Postorder, node);
     }
 
-    pub fn visit_expr<F: FnMut(ASTNode)>(&self, expr: &Expr, visitor: &mut F) {
-        visitor(ASTNode::Expr(expr));
+    pub fn visit_expr<F: FnMut(TraversalType, ASTNode)>(&self, expr: &Expr, visitor: &mut F) {
+        let node = ASTNode::Expr(expr);
+        visitor(TraversalType::Preorder, node);
         match expr {
             Expr::UnaryExpr(UnaryExpr { expr, .. }) => {
                 self.visit_expr(expr, visitor);
@@ -68,5 +77,6 @@ impl ASTVisitor {
             }
             _ => {}
         }
+        visitor(TraversalType::Postorder, node);
     }
 }

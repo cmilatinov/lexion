@@ -25,11 +25,11 @@
     {
       "left": "StmtList",
       "right": [
-        "Stmt"
+        "ε"
       ],
       "reduction": {
         "ty": "Vec<Stmt>",
-        "code": "$$ = vec![$1];"
+        "code": "$$ = vec![];"
       }
     },
     {
@@ -50,6 +50,16 @@
       "reduction": {
         "ty": "Stmt",
         "code": "$$ = Stmt::VarDeclStmt($1);"
+      }
+    },
+    {
+      "left": "Stmt",
+      "right": [
+        "BlockStmt"
+      ],
+      "reduction": {
+        "ty": "Stmt",
+        "code": "$$ = Stmt::BlockStmt($1);"
       }
     },
     {
@@ -736,7 +746,7 @@
       ],
       "reduction": {
         "ty": "VarDeclStmt",
-        "code": "$$ = VarDeclStmt {\r\n        decls: $2\r\n    };"
+        "code": "$$ = VarDeclStmt {\r\n        range: (&$1, &$3).into(),\r\n        decls: $2\r\n    };"
       }
     },
     {
@@ -770,7 +780,7 @@
       ],
       "reduction": {
         "ty": "VarDecl",
-        "code": "$$ = VarDecl {\r\n        name: $1.value,\r\n        ty: $2,\r\n        init: $3,\r\n    };"
+        "code": "$$ = match $2 {\r\n        Some((ty, range)) => VarDecl {\r\n            range: range.extend($1.loc),\r\n            name: $1.value,\r\n            ty: Some(ty),\r\n            init: $3\r\n        },\r\n        None => VarDecl {\r\n            range: (&$1).into(),\r\n            name: $1.value,\r\n            ty: None,\r\n            init: $3\r\n        }\r\n    };"
       }
     },
     {
@@ -780,7 +790,7 @@
         "Type"
       ],
       "reduction": {
-        "ty": "Option<Type>",
+        "ty": "Option<(Type, SourceRange)>",
         "code": "$$ = Some($2);"
       }
     },
@@ -790,7 +800,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<Type>",
+        "ty": "Option<(Type, SourceRange)>",
         "code": "$$ = None;"
       }
     },
@@ -819,11 +829,11 @@
       "left": "FuncDeclStmt",
       "right": [
         "FuncDecl",
-        "FuncBody"
+        "BlockStmt"
       ],
       "reduction": {
         "ty": "FuncDeclStmt",
-        "code": "$$ = FuncDeclStmt {\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: Some($2),\r\n    };"
+        "code": "$$ = FuncDeclStmt {\r\n        range: $1.3,\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: Some($2),\r\n    };"
       }
     },
     {
@@ -834,7 +844,7 @@
       ],
       "reduction": {
         "ty": "FuncDeclStmt",
-        "code": "$$ = FuncDeclStmt {\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: None,\r\n    };"
+        "code": "$$ = FuncDeclStmt {\r\n        range: $1.3,\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: None,\r\n    };"
       }
     },
     {
@@ -849,8 +859,8 @@
         "FuncReturn"
       ],
       "reduction": {
-        "ty": "(String, Vec<Param>, Option<Type>)",
-        "code": "$$ = (\r\n        $3.value,\r\n        $5,\r\n        $7\r\n    );"
+        "ty": "(String, Vec<Param>, Option<Type>, SourceRange)",
+        "code": "let mut ty = None;\r\n    let mut range: SourceRange = (&$2).into();\r\n    match $7 {\r\n        Some((typ, rg)) => {\r\n            range = range.merge(rg);\r\n            ty = Some(typ);\r\n        }\r\n        None => {\r\n            range = range.extend($6.loc);\r\n        }\r\n    };\r\n    $$ = (\r\n        $3.value,\r\n        $5,\r\n        ty,\r\n        range\r\n    );"
       }
     },
     {
@@ -874,7 +884,7 @@
         "Type"
       ],
       "reduction": {
-        "ty": "Option<Type>",
+        "ty": "Option<(Type, SourceRange)>",
         "code": "$$ = Some($2);"
       }
     },
@@ -884,12 +894,12 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<Type>",
+        "ty": "Option<(Type, SourceRange)>",
         "code": "$$ = None;"
       }
     },
     {
-      "left": "FuncBody",
+      "left": "BlockStmt",
       "right": [
         "'{'",
         "StmtList",
@@ -897,7 +907,7 @@
       ],
       "reduction": {
         "ty": "BlockStmt",
-        "code": "$$ = BlockStmt {\r\n        stmts: $2\r\n    };"
+        "code": "$$ = BlockStmt {\r\n        range: SourceRange::from_start_end($1.loc, $3.loc),\r\n        stmts: $2\r\n    };"
       }
     },
     {
@@ -941,7 +951,7 @@
       ],
       "reduction": {
         "ty": "Param",
-        "code": "$$ = Param {\r\n        name: $1.value,\r\n        ty: $3\r\n    };"
+        "code": "$$ = Param {\r\n        range: $3.1.extend($1.loc),\r\n        name: $1.value,\r\n        ty: $3.0\r\n    };"
       }
     },
     {
@@ -951,8 +961,8 @@
         "'ident'"
       ],
       "reduction": {
-        "ty": "Type",
-        "code": "$$ = Type::Struct {\r\n        ref_count: $1,\r\n        ident: $2.value\r\n    };"
+        "ty": "(Type, SourceRange)",
+        "code": "$$ = match $1 {\r\n        Some((count, range)) => (\r\n            Type::Struct {\r\n                ref_count: count,\r\n                ident: $2.value\r\n            },\r\n            range.extend($2.loc)\r\n        ),\r\n        None => {\r\n            let range: SourceRange = (&$2).into();\r\n            (\r\n                Type::Struct {\r\n                    ref_count: 0,\r\n                    ident: $2.value\r\n                },\r\n                range\r\n            )\r\n        }\r\n    };"
       }
     },
     {
@@ -962,8 +972,8 @@
         "'&'"
       ],
       "reduction": {
-        "ty": "usize",
-        "code": "$$ = $1 + 1;"
+        "ty": "Option<(usize, SourceRange)>",
+        "code": "$$ = match $1 {\r\n        Some((count, range)) => Some((count + 1, range.extend($2.loc))),\r\n        None => Some((1, (&$2).into()))\r\n    };"
       }
     },
     {
@@ -972,8 +982,8 @@
         "ε"
       ],
       "reduction": {
-        "ty": "usize",
-        "code": "$$ = 0;"
+        "ty": "Option<(usize, SourceRange)>",
+        "code": "$$ = None;"
       }
     },
     {

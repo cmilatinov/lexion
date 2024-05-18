@@ -169,8 +169,8 @@ pub fn impl_parser_from_json(stream: TokenStream) -> TokenStream {
         #definitions
 
         pub struct #typename {
-            grammar: #FQGrammar,
-            grammar_parser: #FQGrammarParserSLR1,
+            pub grammar: #FQGrammar,
+            pub grammar_parser: #FQGrammarParserSLR1,
         }
 
         impl #typename {
