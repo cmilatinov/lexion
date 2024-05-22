@@ -19,14 +19,13 @@ impl Display for DerivationNode {
         let token = Grammar::stringify(&*self.token.token);
         write!(
             f,
-            "[{}]{} {}",
+            "[{}]{}",
             token,
             if token == self.token.value {
                 String::from("")
             } else {
                 format!(" `{}`", self.token.value)
-            },
-            self.token.loc
+            }
         )
     }
 }
@@ -72,7 +71,7 @@ impl Display for Derivation {
 impl DerivationNode {
     pub fn new() -> Self {
         Self {
-            token: TokenInstance::new(),
+            token: Default::default(),
             rule_index: 0,
         }
     }

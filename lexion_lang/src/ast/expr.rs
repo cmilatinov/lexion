@@ -1,39 +1,26 @@
+use crate::ast::sourced::Sourced;
+
+pub type SourcedExpr = Sourced<Expr>;
+
 #[derive(Debug)]
 pub enum Expr {
     NoneExpr,
-    UnaryExpr(UnaryExpr),
-    BinaryExpr(BinaryExpr),
-    TernaryExpr(TernaryExpr),
+    OperatorExpr(OperatorExpr),
     CallExpr(CallExpr),
     IdentExpr(IdentExpr),
     LitExpr(LitExpr),
 }
 
 #[derive(Debug)]
-pub struct UnaryExpr {
+pub struct OperatorExpr {
     pub operator: String,
-    pub expr: Box<Expr>,
-}
-
-#[derive(Debug)]
-pub struct BinaryExpr {
-    pub operator: String,
-    pub left: Box<Expr>,
-    pub right: Box<Expr>,
-}
-
-#[derive(Debug)]
-pub struct TernaryExpr {
-    pub operator: String,
-    pub first: Box<Expr>,
-    pub second: Box<Expr>,
-    pub third: Box<Expr>,
+    pub args: Vec<SourcedExpr>,
 }
 
 #[derive(Debug)]
 pub struct CallExpr {
-    pub expr: Box<Expr>,
-    pub args: Vec<Expr>,
+    pub expr: Box<SourcedExpr>,
+    pub args: Vec<SourcedExpr>,
 }
 
 #[derive(Debug)]

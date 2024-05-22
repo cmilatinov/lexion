@@ -1,8 +1,7 @@
-use lexion_lib::tokenizer::SourceRange;
+use crate::ast::{SourcedExpr, Type};
+use crate::ast::sourced::Sourced;
 
-use crate::ast::Type;
-
-use super::expr::Expr;
+pub type SourcedStmt = Sourced<Stmt>;
 
 #[derive(Debug)]
 pub enum Stmt {
@@ -14,42 +13,36 @@ pub enum Stmt {
 
 #[derive(Debug)]
 pub struct FuncDeclStmt {
-    pub range: SourceRange,
-    pub name: String,
-    pub params: Vec<Param>,
-    pub ty: Option<Type>,
-    pub body: Option<BlockStmt>,
+    pub name: Sourced<String>,
+    pub params: Vec<Sourced<Param>>,
+    pub ty: Option<Sourced<Type>>,
+    pub body: Option<Sourced<BlockStmt>>,
 }
 
 #[derive(Debug)]
 pub struct Param {
-    pub range: SourceRange,
-    pub name: String,
-    pub ty: Type,
+    pub name: Sourced<String>,
+    pub ty: Sourced<Type>,
 }
 
 #[derive(Debug)]
 pub struct BlockStmt {
-    pub range: SourceRange,
-    pub stmts: Vec<Stmt>,
+    pub stmts: Vec<SourcedStmt>,
 }
 
 #[derive(Debug)]
 pub struct ExprStmt {
-    pub range: SourceRange,
-    pub expr: Box<Expr>,
+    pub expr: Box<SourcedExpr>,
 }
 
 #[derive(Debug)]
 pub struct VarDeclStmt {
-    pub range: SourceRange,
-    pub decls: Vec<VarDecl>,
+    pub decls: Vec<Sourced<VarDecl>>,
 }
 
 #[derive(Debug)]
 pub struct VarDecl {
-    pub range: SourceRange,
-    pub name: String,
-    pub ty: Option<Type>,
-    pub init: Option<Box<Expr>>,
+    pub name: Sourced<String>,
+    pub ty: Option<Sourced<Type>>,
+    pub init: Option<Box<SourcedExpr>>,
 }

@@ -1,99 +1,59 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
-use std::string::ToString;
 
 use generational_arena::{Arena, Index};
 use lazy_static::lazy_static;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TupleType {
+    pub types: Vec<Index>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct StructType {
+    pub ident: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct RefType {
+    pub to: Index,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct FunctionType {
+    pub params: Vec<Index>,
+    pub return_type: Index,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TypeDefType {
+    pub ident: String,
+    pub ty: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
-    Tuple {
-        types: Vec<Type>,
-    },
-    Struct {
-        ident: String,
-        ref_count: usize,
-    },
-    Function {
-        params: Vec<Type>,
-        return_type: Box<Type>,
-    },
-    TypeDef {
-        ident: String,
-        ty: String,
-    },
+    TupleType(TupleType),
+    StructType(StructType),
+    RefType(RefType),
+    FunctionType(FunctionType),
+    TypeDefType(TypeDefType),
 }
 
 lazy_static! {
-    pub static ref TYPE_VOID: Type = Type::Struct {
-        ident: String::from("void"),
-        ref_count: 0
-    };
-    pub static ref TYPE_U32: Type = Type::Struct {
-        ident: String::from("u32"),
-        ref_count: 0
-    };
-    pub static ref TYPE_F32: Type = Type::Struct {
-        ident: String::from("f32"),
-        ref_count: 0
-    };
-    pub static ref TYPE_STR: Type = Type::Struct {
-        ident: String::from("str"),
-        ref_count: 0
-    };
-    pub static ref TYPE_BOOL: Type = Type::Struct {
-        ident: String::from("bool"),
-        ref_count: 0
-    };
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::Tuple { types } => {
-                write!(
-                    f,
-                    "({})",
-                    types
-                        .iter()
-                        .map(|t| t.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-            Type::Struct { ident, ref_count } => {
-                write!(f, "{}{}", "&".repeat(*ref_count), ident)
-            }
-            Type::Function {
-                params,
-                return_type,
-            } => {
-                write!(
-                    f,
-                    "fn ({}) -> {}",
-                    params
-                        .iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    return_type
-                )
-            }
-            Type::TypeDef { ident, .. } => {
-                write!(f, "{}", ident)
-            }
-        }
-    }
-}
-
-impl Type {
-    pub fn void() -> Self {
-        Self::Struct {
-            ident: "void".to_string(),
-            ref_count: 0,
-        }
-    }
+    pub static ref TYPE_UNIT: Type = Type::TupleType(TupleType { types: vec![] });
+    pub static ref TYPE_U32: Type = Type::StructType(StructType {
+        ident: String::from("u32")
+    });
+    pub static ref TYPE_F32: Type = Type::StructType(StructType {
+        ident: String::from("f32")
+    });
+    pub static ref TYPE_STR: Type = Type::StructType(StructType {
+        ident: String::from("str")
+    });
+    pub static ref TYPE_BOOL: Type = Type::StructType(StructType {
+        ident: String::from("bool")
+    });
 }
 
 #[derive(Default)]
@@ -117,12 +77,59 @@ impl DerefMut for TypeCollection {
 }
 
 impl TypeCollection {
-    pub fn insert(&mut self, ty: Type) -> Index {
-        let string = ty.to_string();
+    pub fn to_string_list(&self, types: &Vec<Index>) -> String {
+        types
+            .iter()
+            .map(|i| self.to_string_index(*i))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    pub fn to_string_index(&self, ty: Index) -> String {
+        match self.arena.get(ty) {
+            Some(ty) => self.to_string(ty),
+            None => String::from(""),
+        }
+    }
+
+    pub fn to_string(&self, ty: &Type) -> String {
+        match ty {
+            Type::TupleType(TupleType { types }) => {
+                format!("({})", self.to_string_list(types))
+            }
+            Type::StructType(StructType { ident }) => {
+                format!("{}", ident)
+            }
+            Type::RefType(RefType { to }) => {
+                format!("&{}", self.to_string_index(*to))
+            }
+            Type::FunctionType(FunctionType {
+                params,
+                return_type,
+            }) => {
+                format!(
+                    "fn ({}) -> {}",
+                    self.to_string_list(params),
+                    self.to_string_index(*return_type)
+                )
+            }
+            Type::TypeDefType(TypeDefType { ident, .. }) => {
+                format!("{}", ident)
+            }
+        }
+    }
+
+    pub fn reference(&mut self, to: Index) -> Index {
+        let ty = Type::RefType(RefType { to });
+        self.insert(&ty)
+    }
+
+    pub fn insert(&mut self, ty: &Type) -> Index {
+        let string = self.to_string(&ty);
         if let Some(index) = self.type_strings.get(&string) {
             *index
         } else {
-            let index = self.arena.insert(ty);
+            let index = self.arena.insert(ty.clone());
             self.type_strings.insert(string, index);
             index
         }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use itertools::Itertools;
 use petgraph::Graph;
 use petgraph::graph::NodeIndex;
@@ -6,7 +8,7 @@ use prettytable::{Cell, row, Row, Table};
 use crate::error::SyntaxError;
 use crate::grammar::{Derivation, DerivationNode, Grammar};
 use crate::parsers::{ParseTableAction, ParseTableLR};
-use crate::tokenizer::{SourceRange, TokenInstance, Tokenizer};
+use crate::tokenizer::{TokenInstance, Tokenizer};
 use crate::tokenizer::tokens::{EOF, EPSILON};
 
 pub type DerivationResult = Result<Derivation, SyntaxError>;
@@ -29,7 +31,7 @@ pub trait GrammarParserLR {
         self.parse_trace(grammar, &mut tokenizer, trace)
     }
 
-    fn parse_from_string(&self, grammar: &Grammar, string: &str) -> DerivationResult {
+    fn parse_from_string(&self, grammar: &Grammar, string: Arc<String>) -> DerivationResult {
         let mut tokenizer = Tokenizer::from_string(string, grammar.get_token_types());
         self.parse(grammar, &mut tokenizer)
     }
@@ -37,7 +39,7 @@ pub trait GrammarParserLR {
     fn parse_from_string_trace(
         &self,
         grammar: &Grammar,
-        string: &str,
+        string: Arc<String>,
         trace: Option<&mut Table>,
     ) -> DerivationResult {
         let mut tokenizer = Tokenizer::from_string(string, grammar.get_token_types());
@@ -139,7 +141,7 @@ pub trait GrammarParserLR {
                     };
                     let num_right = num_children * 2;
                     let node_id = graph.add_node(DerivationNode::from(
-                        TokenInstance::from(&*rule.left, &*rule.left, &lookahead.loc),
+                        TokenInstance::from(&*rule.left, &*rule.left, lookahead.span),
                         rule_index,
                     ));
                     for child_id in stack
@@ -159,7 +161,8 @@ pub trait GrammarParserLR {
                 }
                 ParseTableAction::Reject => {
                     return Err(SyntaxError {
-                        range: SourceRange::from_loc_len(lookahead.loc, lookahead.value.len()),
+                        src: tokenizer.source(),
+                        span: lookahead.span,
                         message: if &*lookahead.value == EOF {
                             String::from("unexpected end of input")
                         } else {
@@ -171,7 +174,8 @@ pub trait GrammarParserLR {
         }
 
         Err(SyntaxError {
-            range: tokenizer.get_cursor_loc().into(),
+            src: tokenizer.source(),
+            span: tokenizer.cursor_offset().into(),
             message: String::from("unexpected end of input"),
         })
     }

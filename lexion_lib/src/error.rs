@@ -1,21 +1,15 @@
-use std::fmt::{Display, Formatter, Result};
-use colored::Colorize;
-use crate::tokenizer::SourceRange;
+use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+use miette::{Diagnostic, NamedSource, SourceSpan};
+use thiserror::Error;
+
+#[derive(Debug, Clone, Error, Diagnostic)]
+#[error("{message}")]
+#[diagnostic()]
 pub struct SyntaxError {
-    pub range: SourceRange,
+    #[source_code]
+    pub src: NamedSource<Arc<String>>,
+    #[label("here")]
+    pub span: SourceSpan,
     pub message: String,
-}
-
-impl Display for SyntaxError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(
-            f,
-            "{} {} {}",
-            "[ERROR]".bold(),
-            self.message,
-            self.range.start().to_string()
-        )
-    }
 }

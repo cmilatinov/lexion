@@ -3,6 +3,7 @@ use quote::{quote, ToTokens};
 
 pub(crate) struct FQOption;
 pub(crate) struct FQResult;
+pub(crate) struct FQArc;
 
 pub(crate) struct FQNodeIndex;
 pub(crate) struct FQEdgeRef;
@@ -27,6 +28,12 @@ impl ToTokens for FQOption {
 impl ToTokens for FQResult {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(std::result::Result).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for FQArc {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        quote!(std::sync::Arc).to_tokens(tokens)
     }
 }
 

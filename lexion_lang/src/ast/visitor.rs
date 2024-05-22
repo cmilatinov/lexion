@@ -1,6 +1,6 @@
 use crate::ast::{
-    AST, BinaryExpr, BlockStmt, CallExpr, Expr, ExprStmt, FuncDeclStmt, Stmt, TernaryExpr,
-    UnaryExpr,
+    AST, BlockStmt, CallExpr, Expr, ExprStmt, FuncDeclStmt, OperatorExpr, Sourced,
+    SourcedExpr, SourcedStmt, Stmt,
 };
 
 #[derive(Default)]
@@ -8,8 +8,8 @@ pub struct ASTVisitor;
 
 #[derive(Clone, Copy)]
 pub enum ASTNode<'a> {
-    Stmt(&'a Stmt),
-    Expr(&'a Expr),
+    Stmt(&'a SourcedStmt),
+    Expr(&'a SourcedExpr),
 }
 
 pub enum TraversalType {
@@ -24,23 +24,36 @@ impl ASTVisitor {
         }
     }
 
-    pub fn visit_stmt<F: FnMut(TraversalType, ASTNode)>(&self, stmt: &Stmt, visitor: &mut F) {
+    pub fn visit_stmt<F: FnMut(TraversalType, ASTNode)>(
+        &self,
+        stmt: &SourcedStmt,
+        visitor: &mut F,
+    ) {
         let node = ASTNode::Stmt(stmt);
         visitor(TraversalType::Preorder, node);
         match stmt {
-            Stmt::FuncDeclStmt(FuncDeclStmt { body, .. }) => {
+            Sourced {
+                value: Stmt::FuncDeclStmt(FuncDeclStmt { body, .. }),
+                ..
+            } => {
                 for stmt in body.iter() {
                     for stmt in stmt.stmts.iter() {
                         self.visit_stmt(stmt, visitor);
                     }
                 }
             }
-            Stmt::BlockStmt(BlockStmt { stmts, .. }) => {
+            Sourced {
+                value: Stmt::BlockStmt(BlockStmt { stmts, .. }),
+                ..
+            } => {
                 for stmt in stmts.iter() {
                     self.visit_stmt(stmt, visitor);
                 }
             }
-            Stmt::ExprStmt(ExprStmt { expr }) => {
+            Sourced {
+                value: Stmt::ExprStmt(ExprStmt { expr }),
+                ..
+            } => {
                 self.visit_expr(expr, visitor);
             }
             _ => {}
@@ -48,28 +61,26 @@ impl ASTVisitor {
         visitor(TraversalType::Postorder, node);
     }
 
-    pub fn visit_expr<F: FnMut(TraversalType, ASTNode)>(&self, expr: &Expr, visitor: &mut F) {
+    pub fn visit_expr<F: FnMut(TraversalType, ASTNode)>(
+        &self,
+        expr: &SourcedExpr,
+        visitor: &mut F,
+    ) {
         let node = ASTNode::Expr(expr);
         visitor(TraversalType::Preorder, node);
         match expr {
-            Expr::UnaryExpr(UnaryExpr { expr, .. }) => {
-                self.visit_expr(expr, visitor);
-            }
-            Expr::BinaryExpr(BinaryExpr { left, right, .. }) => {
-                self.visit_expr(left, visitor);
-                self.visit_expr(right, visitor);
-            }
-            Expr::TernaryExpr(TernaryExpr {
-                first,
-                second,
-                third,
+            Sourced {
+                value: Expr::OperatorExpr(OperatorExpr { args, .. }),
                 ..
-            }) => {
-                self.visit_expr(first, visitor);
-                self.visit_expr(second, visitor);
-                self.visit_expr(third, visitor);
+            } => {
+                for arg in args {
+                    self.visit_expr(arg, visitor);
+                }
             }
-            Expr::CallExpr(CallExpr { expr, args }) => {
+            Sourced {
+                value: Expr::CallExpr(CallExpr { expr, args, .. }),
+                ..
+            } => {
                 self.visit_expr(expr, visitor);
                 for expr in args {
                     self.visit_expr(expr, visitor);

@@ -14,7 +14,7 @@ use lexion_lib::grammar::serialize::Grammar;
 mod fq;
 
 struct ImplParserInput {
-    typename: Type,
+    typename: Ident,
     filename: LitStr,
 }
 
@@ -190,13 +190,13 @@ pub fn impl_parser_from_json(stream: TokenStream) -> TokenStream {
             }
 
             pub fn parse_from_string(
-                &self, string: &str
+                &self, string: #FQArc<String>
             ) -> #FQResult<#parse_result, #FQSyntaxError> {
                 self.parse_from_string_trace(string, None)
             }
 
             pub fn parse_from_string_trace(
-                &self, string: &str, trace: #FQOption<&mut #FQTable>
+                &self, string: #FQArc<String>, trace: #FQOption<&mut #FQTable>
             ) -> #FQResult<#parse_result, #FQSyntaxError> {
                 let derivation =
                     self.grammar_parser.parse_from_string_trace(&self.grammar, string, trace)?;

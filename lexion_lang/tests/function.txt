@@ -2,9 +2,10 @@ extern fn first() {}
 
 fn second(a: b) -> test {}
 
-fn third(c: d, e: f) {
-    let cringe = 10;
+fn main(c: d, e: f) {
+    let c = 10;
     extern fn main(a: b) -> void {
+        c = c + 1;
     }
     fn another(c: d) {
     }

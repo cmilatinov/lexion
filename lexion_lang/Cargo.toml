@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap_derive = "4.5.4"
+clap = { version = "4.5.4", features = ["derive"] }
+generational-arena = "0.2.9"
 lexion_lib = { path = "../lexion_lib" }
 lexion_parsers = { path = "../lexion_parsers" }
 lexion_derive = { path = "../lexion_derive" }
-generational-arena = "0.2.9"
 lazy_static = "1.4.0"
 
 [build-dependencies]

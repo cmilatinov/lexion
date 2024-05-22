@@ -7,7 +7,7 @@
         "StmtList"
       ],
       "reduction": {
-        "ty": "Vec<Stmt>",
+        "ty": "Vec<SourcedStmt>",
         "code": "$$ = $1;"
       }
     },
@@ -18,7 +18,7 @@
         "Stmt"
       ],
       "reduction": {
-        "ty": "Vec<Stmt>",
+        "ty": "Vec<SourcedStmt>",
         "code": "$1.push($2); $$ = $1;"
       }
     },
@@ -28,7 +28,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Vec<Stmt>",
+        "ty": "Vec<SourcedStmt>",
         "code": "$$ = vec![];"
       }
     },
@@ -38,8 +38,8 @@
         "ExprStmt"
       ],
       "reduction": {
-        "ty": "Stmt",
-        "code": "$$ = Stmt::ExprStmt($1);"
+        "ty": "SourcedStmt",
+        "code": "$$ = $1;"
       }
     },
     {
@@ -48,18 +48,8 @@
         "VarDeclStmt"
       ],
       "reduction": {
-        "ty": "Stmt",
-        "code": "$$ = Stmt::VarDeclStmt($1);"
-      }
-    },
-    {
-      "left": "Stmt",
-      "right": [
-        "BlockStmt"
-      ],
-      "reduction": {
-        "ty": "Stmt",
-        "code": "$$ = Stmt::BlockStmt($1);"
+        "ty": "SourcedStmt",
+        "code": "$$ = $1;"
       }
     },
     {
@@ -68,8 +58,18 @@
         "FuncDeclStmt"
       ],
       "reduction": {
-        "ty": "Stmt",
-        "code": "$$ = Stmt::FuncDeclStmt($1);"
+        "ty": "SourcedStmt",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "Stmt",
+      "right": [
+        "BlockStmt"
+      ],
+      "reduction": {
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        $1.span,\r\n        Stmt::BlockStmt($1.value)\r\n    ).into();"
       }
     },
     {
@@ -78,8 +78,8 @@
         "';'"
       ],
       "reduction": {
-        "ty": "ExprStmt",
-        "code": "$$ = ExprStmt {\r\n        expr: Box::new(Expr::NoneExpr)\r\n    };"
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        $1.span,\r\n        Stmt::ExprStmt(ExprStmt {\r\n            expr: Box::new(($1.span, Expr::NoneExpr).into())\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -89,8 +89,8 @@
         "';'"
       ],
       "reduction": {
-        "ty": "ExprStmt",
-        "code": "$$ = ExprStmt {\r\n        expr: $1\r\n    };"
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        $1.span,\r\n        Stmt::ExprStmt(ExprStmt {\r\n            expr: $1\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -101,8 +101,8 @@
         "AssignExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -111,7 +111,7 @@
         "AssignExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -123,8 +123,8 @@
         "AssignExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -133,7 +133,7 @@
         "CondExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -147,8 +147,8 @@
         "CondExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::TernaryExpr(TernaryExpr {\r\n        operator: String::from(\"?:\"),\r\n        first: $1,\r\n        second: $3,\r\n        third: $5\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $5.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: String::from(\"?:\"),\r\n            args: vec![*$1, *$3, *$5]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -157,7 +157,7 @@
         "LogicOrExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -169,8 +169,8 @@
         "LogicAndExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -179,7 +179,7 @@
         "LogicAndExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -191,8 +191,8 @@
         "BitwiseOrExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -201,7 +201,7 @@
         "BitwiseOrExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -213,8 +213,8 @@
         "BitwiseXorExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -223,7 +223,7 @@
         "BitwiseXorExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -235,8 +235,8 @@
         "BitwiseAndExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -245,7 +245,7 @@
         "BitwiseAndExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -257,8 +257,8 @@
         "EqExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -267,7 +267,7 @@
         "EqExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -279,8 +279,8 @@
         "RelExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -289,7 +289,7 @@
         "RelExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -301,8 +301,8 @@
         "ShiftExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -311,7 +311,7 @@
         "ShiftExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -323,8 +323,8 @@
         "AddExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -333,7 +333,7 @@
         "AddExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -345,8 +345,8 @@
         "MulExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -357,8 +357,8 @@
         "MulExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -367,7 +367,7 @@
         "MulExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -379,8 +379,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -391,8 +391,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -403,8 +403,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -413,7 +413,7 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -426,8 +426,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: String::from(\"()\"),\r\n        expr: $4\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: String::from(\"()\"),\r\n            args: vec![*$4]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -436,7 +436,7 @@
         "UnaryExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -447,8 +447,8 @@
         "UnaryExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -458,8 +458,8 @@
         "UnaryExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -469,8 +469,8 @@
         "UnaryExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -480,8 +480,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -491,8 +491,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -502,8 +502,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -513,8 +513,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -524,8 +524,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -535,8 +535,8 @@
         "CastExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::UnaryExpr(UnaryExpr {\r\n        operator: $1.value,\r\n        expr: $2\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $1.value,\r\n            args: vec![*$2]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -545,7 +545,7 @@
         "PostfixExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -558,8 +558,8 @@
         "']'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: String::from(\"[]\"),\r\n        left: $1,\r\n        right: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: String::from(\"[]\"),\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -570,8 +570,8 @@
         "')'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::CallExpr(CallExpr {\r\n        expr: $1,\r\n        args: vec![]\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::CallExpr(CallExpr {\r\n            expr: $1,\r\n            args: vec![]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -583,8 +583,8 @@
         "')'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::CallExpr(CallExpr {\r\n        expr: $1,\r\n        args: $3\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::CallExpr(CallExpr {\r\n            expr: $1,\r\n            args: $3\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -595,8 +595,8 @@
         "'ident'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::IdentExpr(IdentExpr {\r\n            ident: $3.value\r\n        }))\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![\r\n                *$1,\r\n                (\r\n                    $3.span,\r\n                    Expr::IdentExpr(IdentExpr {\r\n                        ident: $3.value\r\n                    })\r\n                ).into()\r\n            ]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -607,8 +607,8 @@
         "'ident'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::IdentExpr(IdentExpr {\r\n            ident: $3.value\r\n        }))\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![\r\n                *$1,\r\n                (\r\n                    $3.span,\r\n                    Expr::IdentExpr(IdentExpr {\r\n                        ident: $3.value\r\n                    })\r\n                ).into()\r\n            ]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -618,8 +618,8 @@
         "'++'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::NoneExpr)\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![\r\n                *$1,\r\n                (\r\n                    SpanBuilder::end($2.span),\r\n                    Expr::NoneExpr\r\n                ).into()\r\n            ]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -629,8 +629,8 @@
         "'--'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::BinaryExpr(BinaryExpr {\r\n        operator: $2.value,\r\n        left: $1,\r\n        right: Box::new(Expr::NoneExpr)\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![\r\n                *$1,\r\n                (\r\n                    SpanBuilder::end($2.span),\r\n                    Expr::NoneExpr\r\n                ).into()\r\n            ]\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -639,7 +639,7 @@
         "PrimaryExpr"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $1;"
       }
     },
@@ -649,8 +649,8 @@
         "Literal"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::LitExpr(LitExpr {\r\n        lit: $1\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        $1.span,\r\n        Expr::LitExpr(LitExpr {\r\n            lit: $1.value\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -659,8 +659,8 @@
         "'ident'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
-        "code": "$$ = Box::new(Expr::IdentExpr(IdentExpr {\r\n        ident: $1.value\r\n    }));"
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\r\n        $1.span,\r\n        Expr::IdentExpr(IdentExpr {\r\n            ident: $1.value\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -671,7 +671,7 @@
         "')'"
       ],
       "reduction": {
-        "ty": "Box<Expr>",
+        "ty": "Box<SourcedExpr>",
         "code": "$$ = $2;"
       }
     },
@@ -683,7 +683,7 @@
         "AssignExpr"
       ],
       "reduction": {
-        "ty": "Vec<Expr>",
+        "ty": "Vec<SourcedExpr>",
         "code": "$1.push(*$3);\r\n    $$ = $1;"
       }
     },
@@ -693,7 +693,7 @@
         "AssignExpr"
       ],
       "reduction": {
-        "ty": "Vec<Expr>",
+        "ty": "Vec<SourcedExpr>",
         "code": "$$ = vec![*$1];"
       }
     },
@@ -703,8 +703,8 @@
         "'string_literal'"
       ],
       "reduction": {
-        "ty": "Lit",
-        "code": "$$ = Lit::String($1.value);"
+        "ty": "Sourced<Lit>",
+        "code": "$$ = ($1.span, Lit::String($1.value)).into();"
       }
     },
     {
@@ -713,8 +713,8 @@
         "'int_literal'"
       ],
       "reduction": {
-        "ty": "Lit",
-        "code": "$$ = Lit::Integer($1.value.parse::<isize>().unwrap());"
+        "ty": "Sourced<Lit>",
+        "code": "$$ = ($1.span, Lit::Integer($1.value.parse::<isize>().unwrap())).into();"
       }
     },
     {
@@ -723,8 +723,8 @@
         "'float_literal'"
       ],
       "reduction": {
-        "ty": "Lit",
-        "code": "$$ = Lit::Float($1.value.parse::<f64>().unwrap());"
+        "ty": "Sourced<Lit>",
+        "code": "$$ = ($1.span, Lit::Float($1.value.parse::<f64>().unwrap())).into();"
       }
     },
     {
@@ -733,8 +733,8 @@
         "'bool_literal'"
       ],
       "reduction": {
-        "ty": "Lit",
-        "code": "$$ = Lit::Boolean($1.value.parse::<bool>().unwrap());"
+        "ty": "Sourced<Lit>",
+        "code": "$$ = ($1.span, Lit::Boolean($1.value.parse::<bool>().unwrap())).into();"
       }
     },
     {
@@ -745,8 +745,8 @@
         "';'"
       ],
       "reduction": {
-        "ty": "VarDeclStmt",
-        "code": "$$ = VarDeclStmt {\r\n        range: (&$1, &$3).into(),\r\n        decls: $2\r\n    };"
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Stmt::VarDeclStmt(VarDeclStmt {\r\n            decls: $2\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -757,7 +757,7 @@
         "VarDecl"
       ],
       "reduction": {
-        "ty": "Vec<VarDecl>",
+        "ty": "Vec<Sourced<VarDecl>>",
         "code": "$1.push($3);\r\n    $$ = $1;"
       }
     },
@@ -767,7 +767,7 @@
         "VarDecl"
       ],
       "reduction": {
-        "ty": "Vec<VarDecl>",
+        "ty": "Vec<Sourced<VarDecl>>",
         "code": "$$ = vec![$1];"
       }
     },
@@ -779,8 +779,8 @@
         "OptVarInit"
       ],
       "reduction": {
-        "ty": "VarDecl",
-        "code": "$$ = match $2 {\r\n        Some((ty, range)) => VarDecl {\r\n            range: range.extend($1.loc),\r\n            name: $1.value,\r\n            ty: Some(ty),\r\n            init: $3\r\n        },\r\n        None => VarDecl {\r\n            range: (&$1).into(),\r\n            name: $1.value,\r\n            ty: None,\r\n            init: $3\r\n        }\r\n    };"
+        "ty": "Sourced<VarDecl>",
+        "code": "$$ = match $2 {\r\n        Some(ty) => (\r\n            SpanBuilder::merge($1.span, ty.span),\r\n            VarDecl {\r\n                name: ($1.span, $1.value).into(),\r\n                ty: Some(ty),\r\n                init: $3\r\n            }\r\n        ).into(),\r\n        None => (\r\n            $1.span,\r\n            VarDecl {\r\n                name: ($1.span, $1.value).into(),\r\n                ty: None,\r\n                init: $3\r\n            }\r\n        ).into()\r\n    };"
       }
     },
     {
@@ -790,7 +790,7 @@
         "Type"
       ],
       "reduction": {
-        "ty": "Option<(Type, SourceRange)>",
+        "ty": "Option<Sourced<Type>>",
         "code": "$$ = Some($2);"
       }
     },
@@ -800,7 +800,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<(Type, SourceRange)>",
+        "ty": "Option<Sourced<Type>>",
         "code": "$$ = None;"
       }
     },
@@ -811,7 +811,7 @@
         "Expr"
       ],
       "reduction": {
-        "ty": "Option<Box<Expr>>",
+        "ty": "Option<Box<SourcedExpr>>",
         "code": "$$ = Some($2);"
       }
     },
@@ -821,7 +821,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<Box<Expr>>",
+        "ty": "Option<Box<SourcedExpr>>",
         "code": "$$ = None;"
       }
     },
@@ -832,8 +832,8 @@
         "BlockStmt"
       ],
       "reduction": {
-        "ty": "FuncDeclStmt",
-        "code": "$$ = FuncDeclStmt {\r\n        range: $1.3,\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: Some($2),\r\n    };"
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: Some($2),\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -843,8 +843,8 @@
         "';'"
       ],
       "reduction": {
-        "ty": "FuncDeclStmt",
-        "code": "$$ = FuncDeclStmt {\r\n        range: $1.3,\r\n        name: $1.0,\r\n        params: $1.1,\r\n        ty: $1.2,\r\n        body: None,\r\n    };"
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: None,\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -859,8 +859,8 @@
         "FuncReturn"
       ],
       "reduction": {
-        "ty": "(String, Vec<Param>, Option<Type>, SourceRange)",
-        "code": "let mut ty = None;\r\n    let mut range: SourceRange = (&$2).into();\r\n    match $7 {\r\n        Some((typ, rg)) => {\r\n            range = range.merge(rg);\r\n            ty = Some(typ);\r\n        }\r\n        None => {\r\n            range = range.extend($6.loc);\r\n        }\r\n    };\r\n    $$ = (\r\n        $3.value,\r\n        $5,\r\n        ty,\r\n        range\r\n    );"
+        "ty": "(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan)",
+        "code": "let mut ty = None;\r\n    let mut span = $2.span;\r\n    if let Some(sp) = $1 {\r\n        span = SpanBuilder::merge(sp, span);\r\n    }\r\n    match $7 {\r\n        Some(typ) => {\r\n            span = SpanBuilder::merge(span, typ.span);\r\n            ty = Some(typ);\r\n        }\r\n        None => {\r\n            span = SpanBuilder::merge(span, $6.span);\r\n        }\r\n    };\r\n    $$ = (\r\n        ($3.span, $3.value).into(),\r\n        $5,\r\n        ty,\r\n        span\r\n    );"
       }
     },
     {
@@ -868,14 +868,20 @@
       "right": [
         "'extern'"
       ],
-      "reduction": null
+      "reduction": {
+        "ty": "Option<SourceSpan>",
+        "code": "$$ = Some($1.span);"
+      }
     },
     {
       "left": "FuncQual",
       "right": [
         "ε"
       ],
-      "reduction": null
+      "reduction": {
+        "ty": "Option<SourceSpan>",
+        "code": "$$ = None;"
+      }
     },
     {
       "left": "FuncReturn",
@@ -884,7 +890,7 @@
         "Type"
       ],
       "reduction": {
-        "ty": "Option<(Type, SourceRange)>",
+        "ty": "Option<Sourced<Type>>",
         "code": "$$ = Some($2);"
       }
     },
@@ -894,7 +900,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<(Type, SourceRange)>",
+        "ty": "Option<Sourced<Type>>",
         "code": "$$ = None;"
       }
     },
@@ -906,8 +912,8 @@
         "'}'"
       ],
       "reduction": {
-        "ty": "BlockStmt",
-        "code": "$$ = BlockStmt {\r\n        range: SourceRange::from_start_end($1.loc, $3.loc),\r\n        stmts: $2\r\n    };"
+        "ty": "Sourced<BlockStmt>",
+        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        BlockStmt {\r\n            stmts: $2\r\n        }\r\n    ).into();"
       }
     },
     {
@@ -918,7 +924,7 @@
         "Param"
       ],
       "reduction": {
-        "ty": "Vec<Param>",
+        "ty": "Vec<Sourced<Param>>",
         "code": "$1.push($3); $$ = $1;"
       }
     },
@@ -928,7 +934,7 @@
         "Param"
       ],
       "reduction": {
-        "ty": "Vec<Param>",
+        "ty": "Vec<Sourced<Param>>",
         "code": "$$ = vec![$1];"
       }
     },
@@ -938,7 +944,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Vec<Param>",
+        "ty": "Vec<Sourced<Param>>",
         "code": "$$ = vec![];"
       }
     },
@@ -950,8 +956,8 @@
         "Type"
       ],
       "reduction": {
-        "ty": "Param",
-        "code": "$$ = Param {\r\n        range: $3.1.extend($1.loc),\r\n        name: $1.value,\r\n        ty: $3.0\r\n    };"
+        "ty": "Sourced<Param>",
+        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Param {\r\n            name: ($1.span, $1.value).into(),\r\n            ty: $3\r\n        }\r\n    ).into();"
       }
     },
     {
@@ -961,8 +967,8 @@
         "'ident'"
       ],
       "reduction": {
-        "ty": "(Type, SourceRange)",
-        "code": "$$ = match $1 {\r\n        Some((count, range)) => (\r\n            Type::Struct {\r\n                ref_count: count,\r\n                ident: $2.value\r\n            },\r\n            range.extend($2.loc)\r\n        ),\r\n        None => {\r\n            let range: SourceRange = (&$2).into();\r\n            (\r\n                Type::Struct {\r\n                    ref_count: 0,\r\n                    ident: $2.value\r\n                },\r\n                range\r\n            )\r\n        }\r\n    };"
+        "ty": "Sourced<Type>",
+        "code": "$$ = match $1 {\r\n        Some((_count, span)) => (\r\n            SpanBuilder::merge(span, $2.span),\r\n            Type::StructType(StructType {\r\n                ident: $2.value\r\n            })\r\n        ).into(),\r\n        None => (\r\n            $2.span,\r\n            Type::StructType(StructType {\r\n                ident: $2.value\r\n            })\r\n        ).into()\r\n    };"
       }
     },
     {
@@ -972,8 +978,8 @@
         "'&'"
       ],
       "reduction": {
-        "ty": "Option<(usize, SourceRange)>",
-        "code": "$$ = match $1 {\r\n        Some((count, range)) => Some((count + 1, range.extend($2.loc))),\r\n        None => Some((1, (&$2).into()))\r\n    };"
+        "ty": "Option<(usize, SourceSpan)>",
+        "code": "$$ = match $1 {\r\n        Some((count, span)) => Some((\r\n            count + 1,\r\n            SpanBuilder::merge(span, $2.span)\r\n        )),\r\n        None => Some((1, $2.span))\r\n    };"
       }
     },
     {
@@ -982,7 +988,7 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<(usize, SourceRange)>",
+        "ty": "Option<(usize, SourceSpan)>",
         "code": "$$ = None;"
       }
     },

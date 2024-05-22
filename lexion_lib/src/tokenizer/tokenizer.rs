@@ -1,4 +1,8 @@
 use std::fs;
+use std::sync::Arc;
+
+use miette::{NamedSource, SourceOffset};
+
 use crate::error::SyntaxError;
 use crate::tokenizer::*;
 use crate::tokenizer::tokens::*;
@@ -7,16 +11,16 @@ type Result<T> = std::result::Result<T, SyntaxError>;
 
 pub struct Tokenizer {
     file: &'static str,
-    string: String,
+    string: Arc<String>,
     cursor: usize,
     token_types: Vec<TokenType>,
 }
 
 impl Tokenizer {
-    pub fn from_string(input: &str, token_types: Vec<TokenType>) -> Tokenizer {
+    pub fn from_string(input: Arc<String>, token_types: Vec<TokenType>) -> Tokenizer {
         Tokenizer {
             file: "inline",
-            string: input.into(),
+            string: input,
             cursor: 0,
             token_types,
         }
@@ -25,7 +29,7 @@ impl Tokenizer {
     pub fn from_file(file: &'static str, token_types: Vec<TokenType>) -> Tokenizer {
         Tokenizer {
             file,
-            string: fs::read_to_string(file).unwrap(),
+            string: Arc::new(fs::read_to_string(file).unwrap()),
             cursor: 0,
             token_types,
         }
@@ -38,12 +42,12 @@ impl Tokenizer {
     }
 
     pub fn next(&mut self) -> Result<TokenInstance> {
-        let loc = self.get_cursor_loc();
+        let offset = self.cursor_offset();
         if !self.has_next() {
             return Ok(TokenInstance {
                 token: String::from(EOF),
                 value: String::from(EOF),
-                loc,
+                span: offset.into(),
             });
         }
 
@@ -55,9 +59,9 @@ impl Tokenizer {
         }
 
         Ok(TokenInstance {
+            span: (offset, s.len()).into(),
             token: token.name.clone(),
             value: s,
-            loc,
         })
     }
 
@@ -67,7 +71,7 @@ impl Tokenizer {
         for (i, token) in self.token_types.iter().enumerate() {
             let regex_match = match token.regex.find(substring) {
                 Some(m) => m.as_str(),
-                None => continue
+                None => continue,
             };
 
             if longest_match.is_none() || regex_match.len() > longest_match.unwrap().0.len() {
@@ -76,13 +80,14 @@ impl Tokenizer {
         }
 
         if longest_match.is_none() {
-            let loc = self.get_cursor_loc();
+            let offset = self.cursor_offset();
             let unexpected = match UNEXPECTED.find(substring) {
                 Some(m) => m.as_str(),
-                None => ""
+                None => "",
             };
             return Err(SyntaxError {
-                range: SourceRange::from_loc_len(loc, unexpected.len()),
+                src: self.source(),
+                span: (offset, unexpected.len()).into(),
                 message: format!("unexpected token '{}'", unexpected),
             });
         }
@@ -90,22 +95,12 @@ impl Tokenizer {
         let (s, i) = longest_match.unwrap();
         Ok((String::from(s), i))
     }
-    
-    pub fn get_cursor_loc(&self) -> SourceLocation {
-        let mut line = 1;
-        let mut last_line = 0;
-        for (i, c) in &mut self.string[0..self.cursor].as_bytes().iter().enumerate() {
-            if *c == b'\n' {
-                line += 1;
-                last_line = if i == 0 { 0 } else { i + 1 };
-            }
-        }
-        SourceLocation {
-            file: self.file,
-            loc: FileLocation { 
-                line,
-                col: self.cursor - last_line + 1,
-            }
-        }
+
+    pub fn cursor_offset(&self) -> SourceOffset {
+        self.cursor.into()
+    }
+
+    pub fn source(&self) -> NamedSource<Arc<String>> {
+        NamedSource::new(self.file, self.string.clone())
     }
 }
