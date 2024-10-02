@@ -3,7 +3,7 @@ Program -> StmtList [Vec<SourcedStmt>] {{ $$ = $1; }} ;
 StmtList -> StmtList Stmt [Vec<SourcedStmt>] {{ $1.push($2); $$ = $1; }} ;
 StmtList -> [Vec<SourcedStmt>] {{ $$ = vec![]; }} ;
 
-Stmt -> ExprStmt | VarDeclStmt | FuncDeclStmt
+Stmt -> ReturnStmt | ExprStmt | VarDeclStmt | FuncDeclStmt
 [SourcedStmt] {{
     $$ = $1;
 }} ;
@@ -11,6 +11,25 @@ Stmt -> BlockStmt [SourcedStmt] {{
     $$ = (
         $1.span,
         Stmt::BlockStmt($1.value)
+    ).into();
+}} ;
+
+ReturnStmt -> 'return' Expr ';' 
+[SourcedStmt] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $3.span),
+        Stmt::ReturnStmt(ReturnStmt {
+            expr: Some($2)
+        })
+    ).into(); 
+}} ;
+ReturnStmt -> 'return' ';' 
+[SourcedStmt] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $2.span),
+        Stmt::ReturnStmt(ReturnStmt {
+            expr: None
+        })
     ).into();
 }} ;
 
@@ -270,9 +289,9 @@ PostfixExpr -> PostfixExpr '[' Expr ']'
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $4.span),
-        Expr::OperatorExpr(OperatorExpr {
-            operator: String::from("[]"),
-            args: vec![*$1, *$3]
+        Expr::IndexExpr(IndexExpr {
+            expr: $1,
+            index: $3
         })
     ).into());
 }} ;
@@ -296,21 +315,13 @@ PostfixExpr -> PostfixExpr '(' ArgList ')'
         })
     ).into());
 }} ;
-PostfixExpr -> PostfixExpr '.' 'ident' | PostfixExpr '->' 'ident'
+PostfixExpr -> PostfixExpr '.' 'ident'
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
-        Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
-            args: vec![
-                *$1,
-                (
-                    $3.span,
-                    Expr::IdentExpr(IdentExpr {
-                        ident: $3.value
-                    })
-                ).into()
-            ]
+        Expr::MemberExpr(MemberExpr {
+            expr: $1,
+            ident: $3.value
         })
     ).into());
 }} ;
@@ -443,6 +454,7 @@ FuncDeclStmt -> FuncDecl BlockStmt
             params: $1.1,
             ty: $1.2,
             body: Some($2),
+            is_vararg: $1.4,
         })
     ).into();
 }} ;
@@ -455,12 +467,13 @@ FuncDeclStmt -> FuncDecl ';'
             params: $1.1,
             ty: $1.2,
             body: None,
+            is_vararg: $1.4,
         })
     ).into();
 }} ;
 
 FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
-[(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan)] {{
+[(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool)] {{
     let mut ty = None;
     let mut span = $2.span;
     if let Some(sp) = $1 {
@@ -477,9 +490,10 @@ FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
     };
     $$ = (
         ($3.span, $3.value).into(),
-        $5,
+        $5.0,
         ty,
-        span
+        span,
+        $5.1
     );
 }} ;
 
@@ -499,9 +513,21 @@ BlockStmt -> '{' StmtList '}'
     ).into();
 }};
 
-ParamList -> ParamList ',' Param [Vec<Sourced<Param>>] {{ $1.push($3); $$ = $1; }} ;
-ParamList -> Param [Vec<Sourced<Param>>] {{ $$ = vec![$1]; }} ;
-ParamList -> [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
+ParamList -> NonTermParamList [(Vec<Sourced<Param>>, bool)] {{ $$ = ($1, false); }} ;
+ParamList -> TermParamList [(Vec<Sourced<Param>>, bool)] {{ $$ = ($1, true); }} ;
+ParamList -> [(Vec<Sourced<Param>>, bool)] {{ $$ = (vec![], false); }} ;
+
+NonTermParamList -> Param NonTermParamListTail [Vec<Sourced<Param>>] {{ $2.push($1); $$ = $2; }} ;
+NonTermParamList -> Param [Vec<Sourced<Param>>] {{ $$ = vec![$1]; }} ;
+
+NonTermParamListTail -> ',' Param NonTermParamListTail [Vec<Sourced<Param>>] {{ $3.push($2); $$ = $3; }} ;
+NonTermParamListTail -> [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
+
+TermParamList -> Param TermParamListTail ',' '...' [Vec<Sourced<Param>>] {{ $2.push($1); $$ = $2; }} ;
+TermParamList -> '...' [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
+
+TermParamListTail -> ',' Param TermParamListTail [Vec<Sourced<Param>>] {{ $3.push($2); $$ = $3; }} ;
+TermParamListTail -> [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
 
 Param -> 'ident' ':' Type [Sourced<Param>] {{
     $$ = (

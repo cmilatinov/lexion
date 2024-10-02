@@ -35,6 +35,16 @@
     {
       "left": "Stmt",
       "right": [
+        "ReturnStmt"
+      ],
+      "reduction": {
+        "ty": "SourcedStmt",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "Stmt",
+      "right": [
         "ExprStmt"
       ],
       "reduction": {
@@ -70,6 +80,29 @@
       "reduction": {
         "ty": "SourcedStmt",
         "code": "$$ = (\r\n        $1.span,\r\n        Stmt::BlockStmt($1.value)\r\n    ).into();"
+      }
+    },
+    {
+      "left": "ReturnStmt",
+      "right": [
+        "'return'",
+        "Expr",
+        "';'"
+      ],
+      "reduction": {
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Stmt::ReturnStmt(ReturnStmt {\r\n            expr: Some($2)\r\n        })\r\n    ).into();"
+      }
+    },
+    {
+      "left": "ReturnStmt",
+      "right": [
+        "'return'",
+        "';'"
+      ],
+      "reduction": {
+        "ty": "SourcedStmt",
+        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Stmt::ReturnStmt(ReturnStmt {\r\n            expr: None\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -559,7 +592,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: String::from(\"[]\"),\r\n            args: vec![*$1, *$3]\r\n        })\r\n    ).into());"
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::IndexExpr(IndexExpr {\r\n            expr: $1,\r\n            index: $3\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -596,19 +629,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![\r\n                *$1,\r\n                (\r\n                    $3.span,\r\n                    Expr::IdentExpr(IdentExpr {\r\n                        ident: $3.value\r\n                    })\r\n                ).into()\r\n            ]\r\n        })\r\n    ).into());"
-      }
-    },
-    {
-      "left": "PostfixExpr",
-      "right": [
-        "PostfixExpr",
-        "'->'",
-        "'ident'"
-      ],
-      "reduction": {
-        "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: $2.value,\r\n            args: vec![\r\n                *$1,\r\n                (\r\n                    $3.span,\r\n                    Expr::IdentExpr(IdentExpr {\r\n                        ident: $3.value\r\n                    })\r\n                ).into()\r\n            ]\r\n        })\r\n    ).into());"
+        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::MemberExpr(MemberExpr {\r\n            expr: $1,\r\n            ident: $3.value\r\n        })\r\n    ).into());"
       }
     },
     {
@@ -833,7 +854,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: Some($2),\r\n        })\r\n    ).into();"
+        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: Some($2),\r\n            is_vararg: $1.4,\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -844,7 +865,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: None,\r\n        })\r\n    ).into();"
+        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: None,\r\n            is_vararg: $1.4,\r\n        })\r\n    ).into();"
       }
     },
     {
@@ -859,8 +880,8 @@
         "FuncReturn"
       ],
       "reduction": {
-        "ty": "(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan)",
-        "code": "let mut ty = None;\r\n    let mut span = $2.span;\r\n    if let Some(sp) = $1 {\r\n        span = SpanBuilder::merge(sp, span);\r\n    }\r\n    match $7 {\r\n        Some(typ) => {\r\n            span = SpanBuilder::merge(span, typ.span);\r\n            ty = Some(typ);\r\n        }\r\n        None => {\r\n            span = SpanBuilder::merge(span, $6.span);\r\n        }\r\n    };\r\n    $$ = (\r\n        ($3.span, $3.value).into(),\r\n        $5,\r\n        ty,\r\n        span\r\n    );"
+        "ty": "(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool)",
+        "code": "let mut ty = None;\r\n    let mut span = $2.span;\r\n    if let Some(sp) = $1 {\r\n        span = SpanBuilder::merge(sp, span);\r\n    }\r\n    match $7 {\r\n        Some(typ) => {\r\n            span = SpanBuilder::merge(span, typ.span);\r\n            ty = Some(typ);\r\n        }\r\n        None => {\r\n            span = SpanBuilder::merge(span, $6.span);\r\n        }\r\n    };\r\n    $$ = (\r\n        ($3.span, $3.value).into(),\r\n        $5.0,\r\n        ty,\r\n        span,\r\n        $5.1\r\n    );"
       }
     },
     {
@@ -919,17 +940,46 @@
     {
       "left": "ParamList",
       "right": [
-        "ParamList",
-        "','",
-        "Param"
+        "NonTermParamList"
       ],
       "reduction": {
-        "ty": "Vec<Sourced<Param>>",
-        "code": "$1.push($3); $$ = $1;"
+        "ty": "(Vec<Sourced<Param>>, bool)",
+        "code": "$$ = ($1, false);"
       }
     },
     {
       "left": "ParamList",
+      "right": [
+        "TermParamList"
+      ],
+      "reduction": {
+        "ty": "(Vec<Sourced<Param>>, bool)",
+        "code": "$$ = ($1, true);"
+      }
+    },
+    {
+      "left": "ParamList",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "(Vec<Sourced<Param>>, bool)",
+        "code": "$$ = (vec![], false);"
+      }
+    },
+    {
+      "left": "NonTermParamList",
+      "right": [
+        "Param",
+        "NonTermParamListTail"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<Param>>",
+        "code": "$2.push($1); $$ = $2;"
+      }
+    },
+    {
+      "left": "NonTermParamList",
       "right": [
         "Param"
       ],
@@ -939,7 +989,64 @@
       }
     },
     {
-      "left": "ParamList",
+      "left": "NonTermParamListTail",
+      "right": [
+        "','",
+        "Param",
+        "NonTermParamListTail"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<Param>>",
+        "code": "$3.push($2); $$ = $3;"
+      }
+    },
+    {
+      "left": "NonTermParamListTail",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<Param>>",
+        "code": "$$ = vec![];"
+      }
+    },
+    {
+      "left": "TermParamList",
+      "right": [
+        "Param",
+        "TermParamListTail",
+        "','",
+        "'...'"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<Param>>",
+        "code": "$2.push($1); $$ = $2;"
+      }
+    },
+    {
+      "left": "TermParamList",
+      "right": [
+        "'...'"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<Param>>",
+        "code": "$$ = vec![];"
+      }
+    },
+    {
+      "left": "TermParamListTail",
+      "right": [
+        "','",
+        "Param",
+        "TermParamListTail"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<Param>>",
+        "code": "$3.push($2); $$ = $3;"
+      }
+    },
+    {
+      "left": "TermParamListTail",
       "right": [
         "ε"
       ],

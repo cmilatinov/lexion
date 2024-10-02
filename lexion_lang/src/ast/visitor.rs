@@ -1,6 +1,6 @@
 use crate::ast::{
-    AST, BlockStmt, CallExpr, Expr, ExprStmt, FuncDeclStmt, OperatorExpr, Sourced,
-    SourcedExpr, SourcedStmt, Stmt,
+    AST, BlockStmt, CallExpr, Expr, ExprStmt, FuncDeclStmt, MemberExpr, OperatorExpr,
+    Sourced, SourcedExpr, SourcedStmt, Stmt,
 };
 
 #[derive(Default)]
@@ -76,6 +76,12 @@ impl ASTVisitor {
                 for arg in args {
                     self.visit_expr(arg, visitor);
                 }
+            }
+            Sourced {
+                value: Expr::MemberExpr(MemberExpr { expr, .. }),
+                ..
+            } => {
+                self.visit_expr(&expr, visitor);
             }
             Sourced {
                 value: Expr::CallExpr(CallExpr { expr, args, .. }),

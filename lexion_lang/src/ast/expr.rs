@@ -6,6 +6,8 @@ pub type SourcedExpr = Sourced<Expr>;
 pub enum Expr {
     NoneExpr,
     OperatorExpr(OperatorExpr),
+    MemberExpr(MemberExpr),
+    IndexExpr(IndexExpr),
     CallExpr(CallExpr),
     IdentExpr(IdentExpr),
     LitExpr(LitExpr),
@@ -15,6 +17,18 @@ pub enum Expr {
 pub struct OperatorExpr {
     pub operator: String,
     pub args: Vec<SourcedExpr>,
+}
+
+#[derive(Debug)]
+pub struct MemberExpr {
+    pub expr: Box<SourcedExpr>,
+    pub ident: String,
+}
+
+#[derive(Debug)]
+pub struct IndexExpr {
+    pub expr: Box<SourcedExpr>,
+    pub index: Box<SourcedExpr>,
 }
 
 #[derive(Debug)]

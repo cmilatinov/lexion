@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
 use crate::grammar::Grammar;
 use crate::parsers::items::{CanonicalCollectionGraph, GraphState, LR0Item, LRItem};
 use crate::parsers::ParseTableLR;
 use crate::tokenizer::tokens::{EOF, EPSILON};
+use std::collections::{HashMap, HashSet};
 
 pub struct GrammarParserLALR1 {
     #[allow(dead_code)]
@@ -21,7 +21,10 @@ struct SetConstructorLALR1<'a> {
 }
 
 impl<'a> SetConstructorLALR1<'a> {
-    fn from_grammar(grammar: &'a Grammar, collection: &'a CanonicalCollectionGraph<LR0Item>) -> Self {
+    fn from_grammar(
+        grammar: &'a Grammar,
+        collection: &'a CanonicalCollectionGraph<LR0Item>,
+    ) -> Self {
         Self {
             grammar,
             collection,
@@ -37,7 +40,11 @@ impl<'a> SetConstructorLALR1<'a> {
         result
     }
 
-    fn pred(&self, state: &GraphState<LR0Item>, sequence: &[String]) -> HashSet<GraphState<LR0Item>> {
+    fn pred(
+        &self,
+        state: &GraphState<LR0Item>,
+        sequence: &[String],
+    ) -> HashSet<GraphState<LR0Item>> {
         if sequence.len() == 0 || *sequence == vec![String::from(EPSILON)] {
             return HashSet::from([state.clone()]);
         }
@@ -65,8 +72,11 @@ impl<'a> SetConstructorLALR1<'a> {
             self.lookaheads.insert(String::from(EOF));
             return;
         }
-        for i in state.get_items().iter()
-            .filter(|i| i.dot_index < i.get_rule(self.grammar).right.len()) {
+        for i in state
+            .get_items()
+            .iter()
+            .filter(|i| i.dot_index < i.get_rule(self.grammar).right.len())
+        {
             let rule = i.get_rule(self.grammar);
             let x = rule.right[i.dot_index].as_str();
             if x != EPSILON && Grammar::is_terminal(x) {
@@ -92,14 +102,19 @@ impl<'a> SetConstructorLALR1<'a> {
         );
 
         let visited = self.visited.clone();
-        for s in self.pred(state, alpha).iter()
-            .filter(|s| !visited.contains(&(String::from(a), (*s).clone()))) {
+        for s in self
+            .pred(state, alpha)
+            .iter()
+            .filter(|s| !visited.contains(&(String::from(a), (*s).clone())))
+        {
             self.visited.insert((String::from(a), s.clone()));
             self.trans(&self.goto(&s, a));
             for i in s.get_items().iter().filter(|i| {
                 let i_rule = i.get_rule(self.grammar);
-                i_rule.right[i.dot_index] == rule.left &&
-                    self.grammar.is_nullable_sequence(&i_rule.right[i.dot_index + 1..])
+                i_rule.right[i.dot_index] == rule.left
+                    && self
+                        .grammar
+                        .is_nullable_sequence(&i_rule.right[i.dot_index + 1..])
             }) {
                 self.lalr(i, s);
             }
@@ -121,8 +136,11 @@ impl GrammarParserLALR1 {
         let collection = CanonicalCollectionGraph::new(grammar, LR0Item::new(0, 0));
         let mut lookahead_sets = HashMap::new();
 
-        for (index, state) in collection.states.iter()
-            .filter(|(_, s)| s.is_final(grammar)) {
+        for (index, state) in collection
+            .states
+            .iter()
+            .filter(|(_, s)| s.is_final(grammar))
+        {
             for item in state.get_items().iter().filter(|i| i.is_final(grammar)) {
                 let mut constructor = SetConstructorLALR1::from_grammar(grammar, &collection);
                 constructor.lalr1(item, state);
@@ -131,12 +149,15 @@ impl GrammarParserLALR1 {
         }
 
         let empty = HashSet::new();
-        let table = ParseTableLR::from_collection(
-            grammar, &collection,
-            |i, _, si| lookahead_sets.get(&(si, *i)).unwrap_or(&empty),
-        );
+        let table = ParseTableLR::from_collection(grammar, &collection, |i, _, si| {
+            lookahead_sets.get(&(si, *i)).unwrap_or(&empty)
+        });
 
-        Self { collection, table, lookahead_sets }
+        Self {
+            collection,
+            table,
+            lookahead_sets,
+        }
     }
 }
 

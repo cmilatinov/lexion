@@ -1,0 +1,101 @@
+Program' -> Program
+Program -> StmtList
+StmtList -> StmtList Stmt
+StmtList -> ''
+Stmt -> ReturnStmt
+Stmt -> ExprStmt
+Stmt -> VarDeclStmt
+Stmt -> FuncDeclStmt
+Stmt -> BlockStmt
+ReturnStmt -> return Expr ;
+ReturnStmt -> return ;
+ExprStmt -> ;
+ExprStmt -> Expr ;
+Expr -> Expr , AssignExpr
+Expr -> AssignExpr
+AssignExpr -> UnaryExpr = AssignExpr
+AssignExpr -> CondExpr
+CondExpr -> LogicOrExpr ? Expr : CondExpr
+CondExpr -> LogicOrExpr
+LogicOrExpr -> LogicOrExpr || LogicAndExpr
+LogicOrExpr -> LogicAndExpr
+LogicAndExpr -> LogicAndExpr && BitwiseOrExpr
+LogicAndExpr -> BitwiseOrExpr
+BitwiseOrExpr -> BitwiseOrExpr | BitwiseXorExpr
+BitwiseOrExpr -> BitwiseXorExpr
+BitwiseXorExpr -> BitwiseXorExpr ^ BitwiseAndExpr
+BitwiseXorExpr -> BitwiseAndExpr
+BitwiseAndExpr -> BitwiseAndExpr & EqExpr
+BitwiseAndExpr -> EqExpr
+EqExpr -> EqExpr eq_op RelExpr
+EqExpr -> RelExpr
+RelExpr -> RelExpr rel_op ShiftExpr
+RelExpr -> ShiftExpr
+ShiftExpr -> ShiftExpr shift_op AddExpr
+ShiftExpr -> AddExpr
+AddExpr -> AddExpr + MulExpr
+AddExpr -> AddExpr - MulExpr
+AddExpr -> MulExpr
+MulExpr -> MulExpr * CastExpr
+MulExpr -> MulExpr / CastExpr
+MulExpr -> MulExpr % CastExpr
+MulExpr -> CastExpr
+CastExpr -> ( Type ) CastExpr
+CastExpr -> UnaryExpr
+UnaryExpr -> ++ UnaryExpr
+UnaryExpr -> -- UnaryExpr
+UnaryExpr -> sizeof UnaryExpr
+UnaryExpr -> ! CastExpr
+UnaryExpr -> ~ CastExpr
+UnaryExpr -> & CastExpr
+UnaryExpr -> * CastExpr
+UnaryExpr -> + CastExpr
+UnaryExpr -> - CastExpr
+UnaryExpr -> PostfixExpr
+PostfixExpr -> PostfixExpr [ Expr ]
+PostfixExpr -> PostfixExpr ( )
+PostfixExpr -> PostfixExpr ( ArgList )
+PostfixExpr -> PostfixExpr . ident
+PostfixExpr -> PostfixExpr ++
+PostfixExpr -> PostfixExpr --
+PostfixExpr -> PrimaryExpr
+PrimaryExpr -> Literal
+PrimaryExpr -> ident
+PrimaryExpr -> ( Expr )
+ArgList -> ArgList , AssignExpr
+ArgList -> AssignExpr
+Literal -> string_literal
+Literal -> int_literal
+Literal -> float_literal
+Literal -> bool_literal
+VarDeclStmt -> let VarDeclList ;
+VarDeclList -> VarDeclList , VarDecl
+VarDeclList -> VarDecl
+VarDecl -> ident OptVarType OptVarInit
+OptVarType -> : Type
+OptVarType -> ''
+OptVarInit -> = Expr
+OptVarInit -> ''
+FuncDeclStmt -> FuncDecl BlockStmt
+FuncDeclStmt -> FuncDecl ;
+FuncDecl -> FuncQual fn ident ( ParamList ) FuncReturn
+FuncQual -> extern
+FuncQual -> ''
+FuncReturn -> -=> Type
+FuncReturn -> ''
+BlockStmt -> { StmtList }
+ParamList -> NonTermParamList
+ParamList -> TermParamList
+ParamList -> ''
+NonTermParamList -> Param NonTermParamListTail
+NonTermParamList -> Param
+NonTermParamListTail -> , Param NonTermParamListTail
+NonTermParamListTail -> ''
+TermParamList -> Param TermParamListTail , ...
+TermParamList -> ...
+TermParamListTail -> , Param TermParamListTail
+TermParamListTail -> ''
+Param -> ident : Type
+Type -> TypeRefList ident
+TypeRefList -> TypeRefList &
+TypeRefList -> ''

@@ -6,9 +6,9 @@ use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 
 use crate::ast::{
-    AST, ASTNode, ASTVisitor, CallExpr, Expr, ExprStmt, FunctionType, IdentExpr, Lit,
-    LitExpr, OperatorExpr, Sourced, SourcedExpr, Stmt, TraversalType, Type, TYPE_BOOL,
-    TYPE_F32, TYPE_STR, TYPE_U32, TYPE_UNIT, TypeCollection, VarDeclStmt,
+    ASTNode, ASTVisitor, CallExpr, Expr, ExprStmt, FunctionType, IdentExpr, IndexExpr, Lit,
+    LitExpr, MemberExpr, OperatorExpr, Sourced, SourcedExpr, Stmt, TraversalType, TypeCollection,
+    VarDeclStmt, AST, TYPE_BOOL, TYPE_F32, TYPE_STR, TYPE_U32, TYPE_UNIT,
 };
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::pipeline::PipelineStage;
@@ -32,11 +32,9 @@ impl<'a> TypeChecker<'a> {
         expr: &SourcedExpr,
         expected: Option<Index>,
     ) -> Option<Index> {
-        let expected = expected.map(|ty| self.types.canonicalize(ty));
         if let Some(ty) = self.expr(diag, expr) {
-            let ty = self.types.canonicalize(ty);
             if let Some(expected) = expected {
-                if ty != expected {
+                if !self.types.eq(ty, expected) {
                     diag.error(LexionDiagnosticError {
                         src: self.src.clone(),
                         span: expr.span,
@@ -68,6 +66,14 @@ impl<'a> TypeChecker<'a> {
                 span,
             } => self.operator(diag, expr, *span),
             Sourced {
+                value: Expr::MemberExpr(expr),
+                span,
+            } => self.member(diag, expr, *span),
+            Sourced {
+                value: Expr::IndexExpr(expr),
+                span,
+            } => self.index(diag, expr, *span),
+            Sourced {
                 value: Expr::CallExpr(expr),
                 span,
             } => self.call(diag, expr, *span),
@@ -93,29 +99,65 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let types = types.into_iter().map(|ty| ty.unwrap()).collect::<Vec<_>>();
-        if let Some(def) = self
-            .operators
-            .candidate_definitions(expr.operator.as_str(), types.as_slice())
-            .into_iter()
-            .find(|d| d.params.eq(&types))
-        {
-            return Some(def.return_type);
-        } else {
-            diag.error(LexionDiagnosticError {
-                src: self.src.clone(),
-                span,
-                message: format!(
-                    "no matching definition for operator '{}' with operands [{}]",
-                    expr.operator,
-                    types
-                        .iter()
-                        .map(|ty| self.types.to_string_index(*ty))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            });
-            None
+        match self.operators.candidate_definitions(
+            expr.operator.as_str(),
+            types.as_slice(),
+            self.types,
+        ) {
+            Ok(defs) => {
+                if let Some(def) = defs.into_iter().find(|d| d.params.eq(&types)) {
+                    match expr {
+                        OperatorExpr { operator, .. } if operator.as_str().eq("=") => {
+                            if self.assign(diag, expr) {
+                                Some(def.return_type)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => Some(def.return_type),
+                    }
+                } else {
+                    diag.error(LexionDiagnosticError {
+                        src: self.src.clone(),
+                        span,
+                        message: format!(
+                            "no matching definition for operator '{}' with operands [{}]",
+                            expr.operator,
+                            types
+                                .iter()
+                                .map(|ty| self.types.to_string_index(*ty))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    });
+                    None
+                }
+            }
+            Err(err) => {
+                diag.error(err);
+                None
+            }
         }
+    }
+
+    fn member(
+        &mut self,
+        diag: &mut dyn DiagnosticConsumer,
+        expr: &MemberExpr,
+        span: SourceSpan,
+    ) -> Option<Index> {
+        // TODO
+        None
+    }
+
+    fn index(
+        &mut self,
+        diag: &mut dyn DiagnosticConsumer,
+        expr: &IndexExpr,
+        span: SourceSpan,
+    ) -> Option<Index> {
+        // TODO
+        None
     }
 
     fn call(
@@ -155,6 +197,55 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
+    fn assign(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &OperatorExpr) -> bool {
+        let left = &expr.args[0];
+        if !Self::is_assignable(left) {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: left.span,
+                message: String::from("lvalue required as left operand of assignment"),
+            });
+            false
+        } else {
+            true
+        }
+    }
+
+    fn is_assignable(expr: &SourcedExpr) -> bool {
+        let mut result = true;
+        ASTVisitor::default().visit_expr(expr, &mut |ty, node| {
+            if !result {
+                return;
+            }
+            match (ty, node) {
+                (
+                    TraversalType::Postorder,
+                    ASTNode::Expr(Sourced {
+                        value: Expr::IdentExpr(_) | Expr::MemberExpr(_) | Expr::IndexExpr(_),
+                        ..
+                    }),
+                ) => {}
+                (
+                    TraversalType::Postorder,
+                    ASTNode::Expr(Sourced {
+                        value: Expr::OperatorExpr(OperatorExpr { operator, args }),
+                        ..
+                    }),
+                ) if (operator.as_str().eq("*") || operator.as_str().eq("&"))
+                    && args.len() == 1 => {}
+                (TraversalType::Preorder, _) => {}
+                _ => {
+                    match node {
+                        ASTNode::Expr(expr) => println!("{:?}", expr),
+                        _ => {}
+                    };
+                    result = false;
+                }
+            }
+        });
+        result
+    }
+
     fn init_operators(&mut self) {
         let u32 = self.types.insert(&TYPE_U32);
         let u32_ref = self.types.reference(u32);
@@ -169,19 +260,23 @@ impl<'a> TypeChecker<'a> {
                 FunctionType {
                     params: vec![u32_ref],
                     return_type: u32,
+                    is_vararg: false,
                 },
                 FunctionType {
                     params: vec![f32_ref],
                     return_type: f32,
+                    is_vararg: false,
                 },
                 // Postfix w/ dummy int parameter
                 FunctionType {
                     params: vec![u32_ref, u32],
                     return_type: u32,
+                    is_vararg: false,
                 },
                 FunctionType {
                     params: vec![f32_ref, u32],
                     return_type: f32,
+                    is_vararg: false,
                 },
             ],
         );
@@ -193,10 +288,12 @@ impl<'a> TypeChecker<'a> {
                 FunctionType {
                     params: vec![u32],
                     return_type: u32,
+                    is_vararg: false,
                 },
                 FunctionType {
                     params: vec![f32],
                     return_type: f32,
+                    is_vararg: false,
                 },
             ],
         );
@@ -207,6 +304,7 @@ impl<'a> TypeChecker<'a> {
             FunctionType {
                 params: vec![bool],
                 return_type: bool,
+                is_vararg: false,
             },
         );
 
@@ -216,6 +314,7 @@ impl<'a> TypeChecker<'a> {
             FunctionType {
                 params: vec![u32],
                 return_type: u32,
+                is_vararg: false,
             },
         );
 
@@ -226,10 +325,12 @@ impl<'a> TypeChecker<'a> {
                 FunctionType {
                     params: vec![u32, u32],
                     return_type: u32,
+                    is_vararg: false,
                 },
                 FunctionType {
                     params: vec![f32, f32],
                     return_type: f32,
+                    is_vararg: false,
                 },
             ],
         );
@@ -240,6 +341,7 @@ impl<'a> TypeChecker<'a> {
             &[FunctionType {
                 params: vec![u32, u32],
                 return_type: u32,
+                is_vararg: false,
             }],
         );
 
@@ -250,10 +352,12 @@ impl<'a> TypeChecker<'a> {
                 FunctionType {
                     params: vec![u32, u32],
                     return_type: u32,
+                    is_vararg: false,
                 },
                 FunctionType {
                     params: vec![f32, f32],
                     return_type: f32,
+                    is_vararg: false,
                 },
             ],
         );
@@ -264,19 +368,61 @@ impl<'a> TypeChecker<'a> {
             &[FunctionType {
                 params: vec![bool, bool],
                 return_type: bool,
+                is_vararg: false,
             }],
         );
 
-        for (op, fns) in self.operators.iter() {
-            println!(
-                "\n'{}'\n{}",
-                op,
-                fns.iter()
-                    .map(|f| self.types.to_string(&Type::FunctionType(f.clone())))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
-        }
+        self.operators.add_rule(
+            String::from("="),
+            Box::new(|_, list| {
+                let left = list[0];
+                Ok(vec![FunctionType {
+                    params: vec![left, left],
+                    return_type: left,
+                    is_vararg: false,
+                }])
+            }),
+        );
+
+        self.operators.add_rule(
+            String::from("&"),
+            Box::new(|types, list| {
+                let expr = list[0];
+                Ok(vec![FunctionType {
+                    params: vec![expr],
+                    return_type: types.reference(expr),
+                    is_vararg: false,
+                }])
+            }),
+        );
+
+        self.operators.add_rule(
+            String::from("*"),
+            Box::new(|types, list| {
+                let expr = list[0];
+                if let Some(inner) = types.dereference(expr) {
+                    Ok(vec![FunctionType {
+                        params: vec![expr],
+                        return_type: inner,
+                        is_vararg: false,
+                    }])
+                } else {
+                    Ok(vec![])
+                }
+            }),
+        );
+
+        self.operators.add_rule(
+            String::from("?:"),
+            Box::new(move |_, list| {
+                let true_expr = list[1];
+                Ok(vec![FunctionType {
+                    params: vec![bool, true_expr, true_expr],
+                    return_type: true_expr,
+                    is_vararg: false,
+                }])
+            }),
+        )
     }
 }
 

@@ -14,6 +14,13 @@ pub struct Rule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParseTableOverride {
+    pub symbol: String,
+    pub state: usize,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Grammar {
     pub definitions: String,
     pub rules: Vec<Rule>,

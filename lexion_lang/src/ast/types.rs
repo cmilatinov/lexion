@@ -23,6 +23,7 @@ pub struct RefType {
 pub struct FunctionType {
     pub params: Vec<Index>,
     pub return_type: Index,
+    pub is_vararg: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -77,12 +78,15 @@ impl DerefMut for TypeCollection {
 }
 
 impl TypeCollection {
-    pub fn to_string_list(&self, types: &Vec<Index>) -> String {
-        types
+    pub fn to_string_list(&self, types: &Vec<Index>, vararg: bool) -> String {
+        let mut types = types
             .iter()
             .map(|i| self.to_string_index(*i))
-            .collect::<Vec<_>>()
-            .join(", ")
+            .collect::<Vec<_>>();
+        if vararg {
+            types.push(String::from("..."));
+        }
+        types.join(", ")
     }
 
     pub fn to_string_index(&self, ty: Index) -> String {
@@ -95,7 +99,7 @@ impl TypeCollection {
     pub fn to_string(&self, ty: &Type) -> String {
         match ty {
             Type::TupleType(TupleType { types }) => {
-                format!("({})", self.to_string_list(types))
+                format!("({})", self.to_string_list(types, false))
             }
             Type::StructType(StructType { ident }) => {
                 format!("{}", ident)
@@ -106,10 +110,11 @@ impl TypeCollection {
             Type::FunctionType(FunctionType {
                 params,
                 return_type,
+                is_vararg,
             }) => {
                 format!(
                     "fn ({}) -> {}",
-                    self.to_string_list(params),
+                    self.to_string_list(params, *is_vararg),
                     self.to_string_index(*return_type)
                 )
             }
@@ -122,6 +127,16 @@ impl TypeCollection {
     pub fn reference(&mut self, to: Index) -> Index {
         let ty = Type::RefType(RefType { to });
         self.insert(&ty)
+    }
+
+    pub fn dereference(&mut self, from: Index) -> Option<Index> {
+        let mut inner = None;
+        if let Some(ty) = self.arena.get(from) {
+            if let Type::RefType(RefType { to }) = ty {
+                inner = Some(*to);
+            }
+        }
+        inner
     }
 
     pub fn insert(&mut self, ty: &Type) -> Index {

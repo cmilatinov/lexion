@@ -4,15 +4,15 @@ use std::sync::Arc;
 use generational_arena::Index;
 
 use lexion_lib::miette::{NamedSource, SourceSpan};
-use lexion_lib::petgraph::Graph;
 use lexion_lib::petgraph::graph::NodeIndex;
 use lexion_lib::petgraph::prelude::Bfs;
 use lexion_lib::petgraph::visit::Walker;
+use lexion_lib::petgraph::Graph;
 use lexion_lib::prettytable::{format, row, table, Table};
 
 use crate::ast::{
-    AST, ASTNode, ASTVisitor, FuncDeclStmt, FunctionType, Sourced, Stmt, TraversalType,
-    Type, TYPE_UNIT, TypeCollection, VarDeclStmt,
+    ASTNode, ASTVisitor, FuncDeclStmt, FunctionType, Sourced, Stmt, TraversalType, Type,
+    TypeCollection, VarDeclStmt, AST, TYPE_UNIT,
 };
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError, LexionDiagnosticWarn};
 use crate::pipeline::PipelineStage;
@@ -259,7 +259,11 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
                 ASTNode::Stmt(Sourced {
                     value:
                         Stmt::FuncDeclStmt(FuncDeclStmt {
-                            ty, name, params, ..
+                            ty,
+                            name,
+                            params,
+                            is_vararg,
+                            ..
                         }),
                     ..
                 }),
@@ -275,6 +279,7 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
                 let var_type = Some(self.types.insert(&Type::FunctionType(FunctionType {
                     params: param_types,
                     return_type,
+                    is_vararg: *is_vararg,
                 })));
                 self.create_scope(
                     diag,
