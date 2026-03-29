@@ -3,17 +3,35 @@ name = "lexion_lang"
 version = "0.1.0"
 edition = "2021"
 
+#[lib]
+#name = "lexion_lang"
+#path = "src/lib.rs"
+#
+#[[bin]]
+#name = "lexion_compiler"
+#path = "src/bin/main.rs"
+
 [dependencies]
 clap_derive = "4.5.4"
 clap = { version = "4.5.4", features = ["derive"] }
 generational-arena = "0.2.9"
 lexion_lib = { path = "../lexion_lib" }
 lexion_parsers = { path = "../lexion_parsers" }
-lexion_derive = { path = "../lexion_derive" }
 lazy_static = "1.4.0"
+enum_dispatch = "0.3.13"
+strum_macros = "0.26.4"
+paste = "1.0.15"
+thiserror = "2.0.12"
+iced-x86 = { version = "1.21.0", features = ["code_asm"] }
+enumflags2 = "0.7.12"
+derived-deref = "2.1.0"
+num_enum = "0.7.4"
 
 [build-dependencies]
 lexion_lib = { path = "../lexion_lib" }
 lexion_parsers = { path = "../lexion_parsers" }
 serde = "1.0.197"
 serde_json = "1.0.115"
+
+[dev-dependencies]
+insta = "1"

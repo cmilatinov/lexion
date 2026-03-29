@@ -1,13 +1,14 @@
 pub use expr::*;
 pub use sourced::*;
 pub use stmt::*;
-pub use types::*;
-pub use visitor::*;
 
+#[allow(clippy::module_inception)]
+mod ast;
 mod expr;
 mod sourced;
 mod stmt;
-mod types;
-mod visitor;
+pub mod types;
+pub mod visitor;
+pub use self::ast::*;
 
-pub type AST = Vec<SourcedStmt>;
+pub type Ast = Vec<SourcedStmt>;

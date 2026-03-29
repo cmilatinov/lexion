@@ -1,23 +1,33 @@
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
-
+use crate::ast::types::{FunctionType, StructMember, StructType, Type, TypeCollection};
+use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, TraversalType};
+use crate::ast::{Ast, Expr, FuncDeclStmt, Sourced, Stmt, StructDeclStmt, TypedExpr, VarDeclStmt};
+use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError, LexionDiagnosticWarn};
+use crate::generators::x86::MemoryLayout;
+use crate::pipeline::PipelineStage;
+use enumflags2::bitflags;
 use generational_arena::Index;
-
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 use lexion_lib::petgraph::prelude::Bfs;
 use lexion_lib::petgraph::visit::Walker;
 use lexion_lib::petgraph::Graph;
-use lexion_lib::prettytable::{format, row, table, Table};
+use lexion_lib::tabled::builder::Builder;
+use lexion_lib::tabled::settings::Style;
+use lexion_lib::tabled::Table;
+use std::fmt::{Debug, Display, Formatter};
+use std::sync::Arc;
 
-use crate::ast::{
-    ASTNode, ASTVisitor, FuncDeclStmt, FunctionType, Sourced, Stmt, TraversalType, Type,
-    TypeCollection, VarDeclStmt, AST, TYPE_UNIT,
-};
-use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError, LexionDiagnosticWarn};
-use crate::pipeline::PipelineStage;
+#[bitflags]
+#[repr(u32)]
+#[derive(Debug, Clone, Copy)]
+pub enum Properties {
+    Parameter,
+    AddressTaken,
+}
 
-#[derive(Debug, Default, Clone, Copy)]
+pub struct VariableMeta {}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolTableEntryType {
     Global,
     Scope,
@@ -56,12 +66,23 @@ pub struct SymbolTableEntry {
     pub table: Option<NodeIndex>,
     pub span: SourceSpan,
     pub var_type: Option<Index>,
+    pub layout: Option<MemoryLayout>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct SymbolTable {
     pub name: String,
     pub entries: Vec<SymbolTableEntry>,
+}
+
+impl Debug for SymbolTable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.name)?;
+        for entry in self.entries.iter() {
+            writeln!(f, "{}: {}", entry.name, entry.ty)?;
+        }
+        Ok(())
+    }
 }
 
 impl SymbolTable {
@@ -80,6 +101,16 @@ pub struct SymbolTableGraph {
 }
 
 impl SymbolTableGraph {
+    pub fn parent_scope(&self, scope: NodeIndex) -> Option<NodeIndex> {
+        self.graph.neighbors(scope).next()
+    }
+
+    pub fn parent_entry(&self, scope: NodeIndex) -> Option<(NodeIndex, usize, &SymbolTableEntry)> {
+        let scope_name = self.graph.node_weight(scope)?.name.clone();
+        let parent_scope = self.parent_scope(scope)?;
+        self.lookup(parent_scope, scope_name.as_str())
+    }
+
     pub fn insert_entry(&mut self, node: NodeIndex, entry: SymbolTableEntry) -> Result<(), usize> {
         if let Some(table) = self.graph.node_weight_mut(node) {
             match table
@@ -134,29 +165,30 @@ impl SymbolTableGraph {
             (None, _) | (_, None) => String::from(""),
             (Some(types), Some(index)) => match types.get(*index) {
                 None => String::from(""),
-                Some(ty) => types.to_string(ty),
+                Some(ty) => types.to_string_type(ty).into_owned(),
             },
         };
         if let Some(t) = self.graph.node_weight(node) {
-            let mut table = table!(["Type", "Name", "Var Type", "Table"]);
-            table.set_format(*format::consts::FORMAT_BOX_CHARS);
+            let mut builder = Builder::new();
             for entry in &t.entries {
                 if let Some(child_table) = entry.table.and_then(|n| self.table(n, types)) {
-                    table.add_row(row![
+                    builder.push_record([
                         format!("{:?}", entry.ty),
                         entry.name.clone(),
                         fmt_type(&entry.var_type),
-                        child_table
+                        child_table.to_string(),
                     ]);
                 } else {
-                    table.add_row(row![
+                    builder.push_record([
                         format!("{:?}", entry.ty),
                         entry.name.clone(),
                         fmt_type(&entry.var_type),
-                        "N/A"
+                        String::from("N/A"),
                     ]);
                 }
             }
+            let mut table = builder.build();
+            table.with(Style::modern());
             Some(table)
         } else {
             None
@@ -168,23 +200,23 @@ impl Display for SymbolTableGraph {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let table = self.table(self.root, None);
         match table {
-            Some(table) => write!(f, "{}", table),
+            Some(table) => write!(f, "{table}"),
             None => write!(f, ""),
         }
     }
 }
 
 pub struct SymbolTableGenerator<'a> {
-    ast: &'a AST,
     src: NamedSource<Arc<String>>,
-    types: TypeCollection,
+    ast: &'a Ast,
+    types: &'a mut TypeCollection,
     table: SymbolTableGraph,
     current_scope: NodeIndex,
 }
 
 impl<'a> SymbolTableGenerator<'a> {
     fn parent_scope(&mut self) {
-        if let Some(parent) = self.table.graph.neighbors(self.current_scope).next() {
+        if let Some(parent) = self.table.parent_scope(self.current_scope) {
             self.current_scope = parent;
         }
     }
@@ -200,6 +232,51 @@ impl<'a> SymbolTableGenerator<'a> {
             self.insert(diag, entry);
         }
         self.current_scope = scope;
+    }
+
+    fn create_struct(
+        &mut self,
+        diag: &mut dyn DiagnosticConsumer,
+        span: SourceSpan,
+        decl: &StructDeclStmt,
+    ) {
+        let struct_ = self
+            .table
+            .graph
+            .add_node(SymbolTable::from_name(decl.name.value.clone()));
+        self.table.graph.add_edge(struct_, self.current_scope, ());
+        let mut members = Vec::new();
+        for field in &decl.fields {
+            let name = &field.value.name.value;
+            let var_type = self.types.insert_ast_type(&field.ty.value);
+            if let Some(ty) = var_type {
+                members.push(StructMember {
+                    name: name.clone(),
+                    ty,
+                });
+            }
+            self.table.graph[struct_].entries.push(SymbolTableEntry {
+                ty: SymbolTableEntryType::StructMember,
+                name: name.clone(),
+                table: None,
+                span: field.span,
+                var_type,
+                layout: None,
+            });
+        }
+        let var_type = self.types.insert(&Type::StructType(StructType {
+            ident: decl.name.value.clone(),
+            members,
+        }));
+        let entry = SymbolTableEntry {
+            ty: SymbolTableEntryType::Struct,
+            name: decl.name.value.clone(),
+            table: Some(struct_),
+            span,
+            var_type: Some(var_type),
+            layout: None,
+        };
+        self.insert(diag, entry);
     }
 
     fn insert(&mut self, diag: &mut dyn DiagnosticConsumer, entry: SymbolTableEntry) {
@@ -229,19 +306,21 @@ impl<'a> SymbolTableGenerator<'a> {
 }
 
 impl<'a> PipelineStage for SymbolTableGenerator<'a> {
-    type Input = (NamedSource<Arc<String>>, &'a AST);
-    type Output = (SymbolTableGraph, TypeCollection);
+    type Input = (NamedSource<Arc<String>>, &'a Ast, &'a mut TypeCollection);
+    type Options = ();
+    type Output = SymbolTableGraph;
 
-    fn new((src, ast): Self::Input) -> Self {
+    fn new((src, ast, types): Self::Input) -> Self {
         Self {
             ast,
             src,
-            types: Default::default(),
+            types,
             table: Default::default(),
             current_scope: Default::default(),
         }
     }
-    fn exec(mut self, diag: &mut dyn DiagnosticConsumer) -> Option<Self::Output> {
+
+    fn exec(mut self, diag: &mut dyn DiagnosticConsumer, _: Self::Options) -> Option<Self::Output> {
         self.create_scope(
             diag,
             SymbolTableEntry {
@@ -250,70 +329,84 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
                 table: None,
                 span: 0.into(),
                 var_type: None,
+                layout: None,
             },
         );
         self.table.root = self.current_scope;
-        ASTVisitor::default().visit(self.ast, |ty, node| match (ty, node) {
-            (
-                TraversalType::Preorder,
-                ASTNode::Stmt(Sourced {
-                    value:
-                        Stmt::FuncDeclStmt(FuncDeclStmt {
-                            ty,
-                            name,
-                            params,
-                            is_vararg,
-                            ..
-                        }),
-                    ..
-                }),
-            ) => {
-                let param_types = params
-                    .iter()
-                    .map(|p| self.types.insert(&p.ty.value))
-                    .collect::<Vec<_>>();
-                let return_type = ty
-                    .clone()
-                    .map(|ty| self.types.insert(&ty.value))
-                    .unwrap_or_else(|| self.types.insert(&TYPE_UNIT));
-                let var_type = Some(self.types.insert(&Type::FunctionType(FunctionType {
-                    params: param_types,
-                    return_type,
-                    is_vararg: *is_vararg,
-                })));
-                self.create_scope(
-                    diag,
-                    SymbolTableEntry {
-                        ty: SymbolTableEntryType::Function,
-                        name: name.value.clone(),
-                        table: None,
-                        span: name.span,
-                        var_type,
-                    },
-                );
-                for Sourced { value: param, .. } in params {
-                    let var_type = Some(self.types.insert(&param.ty.value));
-                    self.insert(
+        AstVisitor::new().visit(self.ast, |ty, node, _| {
+            match (ty, node) {
+                (
+                    TraversalType::Preorder,
+                    AstNode::Stmt(Sourced {
+                        value:
+                            Stmt::FuncDeclStmt(FuncDeclStmt {
+                                ty,
+                                name,
+                                params,
+                                is_vararg,
+                                ..
+                            }),
+                        ..
+                    }),
+                ) => 'func_decl: {
+                    let param_types = params
+                        .iter()
+                        .map(|p| self.types.insert_ast_type(&p.ty.value))
+                        .collect::<Vec<_>>();
+                    let param_types = if param_types.iter().all(|opt| opt.is_some()) {
+                        param_types
+                            .into_iter()
+                            .map(|opt| opt.unwrap())
+                            .collect::<Vec<_>>()
+                    } else {
+                        break 'func_decl;
+                    };
+                    let return_type = ty
+                        .as_ref()
+                        .and_then(|ty| self.types.insert_ast_type(&ty.value))
+                        .unwrap_or_else(|| self.types.unit());
+                    let var_type = Some(self.types.insert(&Type::FunctionType(FunctionType {
+                        params: param_types,
+                        return_type,
+                        is_vararg: *is_vararg,
+                    })));
+                    self.create_scope(
                         diag,
                         SymbolTableEntry {
-                            ty: SymbolTableEntryType::Parameter,
-                            name: param.name.value.clone(),
+                            ty: SymbolTableEntryType::Function,
+                            name: name.value.clone(),
                             table: None,
-                            span: param.name.span,
+                            span: name.span,
                             var_type,
+                            layout: None,
                         },
                     );
+                    for Sourced { value: param, .. } in params {
+                        let var_type = self.types.insert_ast_type(&param.ty.value);
+                        self.insert(
+                            diag,
+                            SymbolTableEntry {
+                                ty: SymbolTableEntryType::Parameter,
+                                name: param.name.value.clone(),
+                                table: None,
+                                span: param.name.span,
+                                var_type,
+                                layout: None,
+                            },
+                        );
+                    }
                 }
-            }
-            (
-                TraversalType::Preorder,
-                ASTNode::Stmt(Sourced {
-                    value: Stmt::VarDeclStmt(VarDeclStmt { decls, .. }),
-                    ..
-                }),
-            ) => {
-                for decl in decls.iter() {
-                    let var_type = decl.ty.as_ref().map(|ty| self.types.insert(&ty.value));
+                (
+                    TraversalType::Preorder,
+                    AstNode::Stmt(Sourced {
+                        value: Stmt::VarDeclStmt(VarDeclStmt { decl, .. }),
+                        ..
+                    }),
+                ) => {
+                    let var_type = decl
+                        .ty
+                        .as_ref()
+                        .and_then(|ty| self.types.insert_ast_type(&ty.value));
                     self.insert(
                         diag,
                         SymbolTableEntry {
@@ -322,40 +415,77 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
                             span: decl.span,
                             table: None,
                             var_type,
+                            layout: None,
                         },
                     );
                 }
-            }
-            (
-                TraversalType::Preorder,
-                ASTNode::Stmt(Sourced {
-                    value: Stmt::BlockStmt(_),
-                    span,
-                }),
-            ) => {
-                let table = self.table.graph.node_weight(self.current_scope).unwrap();
-                self.create_scope(
-                    diag,
-                    SymbolTableEntry {
-                        ty: SymbolTableEntryType::Scope,
-                        name: format!("{}.{}", table.name, table.entries.len()),
-                        table: None,
-                        span: *span,
-                        var_type: None,
-                    },
-                )
-            }
-            (
-                TraversalType::Postorder,
-                ASTNode::Stmt(Sourced {
-                    value: Stmt::FuncDeclStmt(_) | Stmt::BlockStmt(_),
-                    ..
-                }),
-            ) => {
-                self.parent_scope();
-            }
-            _ => {}
+                (
+                    TraversalType::Preorder,
+                    AstNode::Expr(Sourced {
+                        value:
+                            TypedExpr {
+                                expr: Expr::BlockExpr(_),
+                                ..
+                            },
+                        span,
+                    }),
+                ) => {
+                    let table = self.table.graph.node_weight(self.current_scope).unwrap();
+                    self.create_scope(
+                        diag,
+                        SymbolTableEntry {
+                            ty: SymbolTableEntryType::Scope,
+                            name: format!(
+                                "{}.{}",
+                                table.name,
+                                table
+                                    .entries
+                                    .iter()
+                                    .filter(|e| e.ty == SymbolTableEntryType::Scope)
+                                    .count()
+                            ),
+                            table: None,
+                            span: *span,
+                            var_type: None,
+                            layout: None,
+                        },
+                    )
+                }
+                (
+                    TraversalType::Postorder,
+                    AstNode::Stmt(Sourced {
+                        value: Stmt::FuncDeclStmt(_),
+                        ..
+                    }),
+                ) => {
+                    self.parent_scope();
+                }
+                (
+                    TraversalType::Postorder,
+                    AstNode::Expr(Sourced {
+                        value:
+                            TypedExpr {
+                                expr: Expr::BlockExpr(_),
+                                ..
+                            },
+                        ..
+                    }),
+                ) => {
+                    self.parent_scope();
+                }
+                (
+                    TraversalType::Preorder,
+                    AstNode::Stmt(Sourced {
+                        value: Stmt::StructDeclStmt(stmt),
+                        span,
+                    }),
+                ) => {
+                    self.create_struct(diag, *span, stmt);
+                }
+                _ => {}
+            };
+            AstVisitorAction::Continue
         });
-        Some((self.table, self.types))
+        Some(self.table)
     }
 }

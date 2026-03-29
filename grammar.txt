@@ -4,15 +4,34 @@ StmtList -> StmtList Stmt
 StmtList -> ''
 Stmt -> ReturnStmt
 Stmt -> ExprStmt
+Stmt -> WhileStmt
 Stmt -> VarDeclStmt
 Stmt -> FuncDeclStmt
-Stmt -> BlockStmt
+Stmt -> StructDeclStmt
+Stmt -> IfExpr
+StructDeclStmt -> struct ident { StructFields }
+StructFields -> StructFieldsList OptComma
+StructFields -> ''
+OptComma -> ,
+OptComma -> ''
+StructFieldsList -> StructFieldsList , StructField
+StructFieldsList -> StructField
+StructField -> ident : Type
+WhileStmt -> while Expr { StmtList }
 ReturnStmt -> return Expr ;
 ReturnStmt -> return ;
-ExprStmt -> ;
 ExprStmt -> Expr ;
-Expr -> Expr , AssignExpr
+Expr -> IfExpr
 Expr -> AssignExpr
+Expr -> BlockExpr
+OptExpr -> Expr
+OptExpr -> ''
+BlockExpr -> { StmtList OptExpr }
+IfExpr -> if Expr BlockExpr OptElseExpr
+BlockOrIfExpr -> IfExpr
+BlockOrIfExpr -> BlockExpr
+OptElseExpr -> else BlockOrIfExpr
+OptElseExpr -> ''
 AssignExpr -> UnaryExpr = AssignExpr
 AssignExpr -> CondExpr
 CondExpr -> LogicOrExpr ? Expr : CondExpr
@@ -42,8 +61,6 @@ MulExpr -> MulExpr % CastExpr
 MulExpr -> CastExpr
 CastExpr -> ( Type ) CastExpr
 CastExpr -> UnaryExpr
-UnaryExpr -> ++ UnaryExpr
-UnaryExpr -> -- UnaryExpr
 UnaryExpr -> sizeof UnaryExpr
 UnaryExpr -> ! CastExpr
 UnaryExpr -> ~ CastExpr
@@ -56,8 +73,7 @@ PostfixExpr -> PostfixExpr [ Expr ]
 PostfixExpr -> PostfixExpr ( )
 PostfixExpr -> PostfixExpr ( ArgList )
 PostfixExpr -> PostfixExpr . ident
-PostfixExpr -> PostfixExpr ++
-PostfixExpr -> PostfixExpr --
+PostfixExpr -> PostfixExpr . int_literal
 PostfixExpr -> PrimaryExpr
 PrimaryExpr -> Literal
 PrimaryExpr -> ident
@@ -68,34 +84,35 @@ Literal -> string_literal
 Literal -> int_literal
 Literal -> float_literal
 Literal -> bool_literal
-VarDeclStmt -> let VarDeclList ;
-VarDeclList -> VarDeclList , VarDecl
-VarDeclList -> VarDecl
+VarDeclStmt -> let VarDecl ;
 VarDecl -> ident OptVarType OptVarInit
 OptVarType -> : Type
 OptVarType -> ''
 OptVarInit -> = Expr
 OptVarInit -> ''
-FuncDeclStmt -> FuncDecl BlockStmt
+FuncDeclStmt -> FuncDecl BlockExpr
 FuncDeclStmt -> FuncDecl ;
 FuncDecl -> FuncQual fn ident ( ParamList ) FuncReturn
 FuncQual -> extern
 FuncQual -> ''
 FuncReturn -> -=> Type
 FuncReturn -> ''
-BlockStmt -> { StmtList }
-ParamList -> NonTermParamList
-ParamList -> TermParamList
+ParamList -> ParamListInner OptVararg
+ParamList -> ...
 ParamList -> ''
-NonTermParamList -> Param NonTermParamListTail
-NonTermParamList -> Param
-NonTermParamListTail -> , Param NonTermParamListTail
-NonTermParamListTail -> ''
-TermParamList -> Param TermParamListTail , ...
-TermParamList -> ...
-TermParamListTail -> , Param TermParamListTail
-TermParamListTail -> ''
+OptVararg -> vararg_literal
+OptVararg -> ''
+ParamListInner -> ParamListInner , Param
+ParamListInner -> Param
 Param -> ident : Type
-Type -> TypeRefList ident
-TypeRefList -> TypeRefList &
-TypeRefList -> ''
+Type -> PathType
+Type -> ReferenceType
+Type -> TupleType
+PathType -> Path
+Path -> Path :: ident
+Path -> ident
+ReferenceType -> & Type
+TupleType -> ( TypeList )
+TupleType -> ( )
+TypeList -> TypeList , Type
+TypeList -> Type

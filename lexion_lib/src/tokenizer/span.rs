@@ -1,6 +1,5 @@
 use miette::SourceSpan;
 
-#[allow(dead_code)]
 pub struct SpanBuilder;
 
 impl SpanBuilder {

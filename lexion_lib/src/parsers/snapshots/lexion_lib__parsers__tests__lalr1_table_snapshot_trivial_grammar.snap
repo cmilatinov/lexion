@@ -1,0 +1,8 @@
+---
+source: lexion_lib/src/parsers/tests.rs
+expression: table_canonical_string(parser.get_parse_table())
+---
+(0,'a',s2)
+(0,S,g1)
+(1,$,acc)
+(2,$,r1)

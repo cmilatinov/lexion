@@ -1,14 +1,69 @@
 {
-    "definitions": "",
     "rules": [
         {
             "left": "Grammar",
             "right": [
-                "ProductionList"
+                "ProductionList",
+                "OptParseTableOverrideList"
             ],
             "reduction": {
-                "ty": "Vec<Rule>",
-                "code": "$$ = $1;"
+                "ty": "Grammar",
+                "code": "$$ = Grammar { rules: $1, overrides: $2 };"
+            }
+        },
+        {
+            "left": "OptParseTableOverrideList",
+            "right": [
+                "'==='",
+                "ParseTableOverrideList"
+            ],
+            "reduction": {
+                "ty": "Option<Vec<ParseTableOverride>>",
+                "code": "$$ = Some($2);"
+            }
+        },
+        {
+            "left": "OptParseTableOverrideList",
+            "right": [
+                "ε"
+            ],
+            "reduction": {
+                "ty": "Option<Vec<ParseTableOverride>>",
+                "code": "$$ = None;"
+            }
+        },
+        {
+            "left": "ParseTableOverrideList",
+            "right": [
+                "ParseTableOverrideList",
+                "ParseTableOverride"
+            ],
+            "reduction": {
+                "ty": "Vec<ParseTableOverride>",
+                "code": "$1.push($2); $$ = $1;"
+            }
+        },
+        {
+            "left": "ParseTableOverrideList",
+            "right": [
+                "ParseTableOverride"
+            ],
+            "reduction": {
+                "ty": "Vec<ParseTableOverride>",
+                "code": "$$ = vec![$1];"
+            }
+        },
+        {
+            "left": "ParseTableOverride",
+            "right": [
+                "'int_literal'",
+                "'terminal_literal'",
+                "'parse_action_literal'",
+                "';'"
+            ],
+            "reduction": {
+                "ty": "ParseTableOverride",
+                "code": "$$ = ParseTableOverride { state: $1.value.parse().unwrap(), symbol: $2.value, action: $3.value };"
             }
         },
         {
@@ -175,7 +230,8 @@
         {
             "left": "OptReductionAction",
             "right": [
-                "OptReductionType", "'action_literal'"
+                "OptReductionType",
+                "'action_literal'"
             ],
             "reduction": {
                 "ty": "Option<Reduction>",
@@ -225,9 +281,15 @@
             ]
         },
         {
+            "left": "'parse_action_literal'",
+            "right": [
+                "(:?r|s)(?:[1-9][0-9]*|0)"
+            ]
+        },
+        {
             "left": "'non_terminal_literal'",
             "right": [
-                "(?:[a-zA-Z0-9]+|ε)"
+                "(?:[a-zA-Z][a-zA-Z0-9]*|ε)"
             ]
         },
         {
@@ -240,6 +302,12 @@
             "left": "'regex_literal'",
             "right": [
                 "\\/.+\\/"
+            ]
+        },
+        {
+            "left": "'int_literal'",
+            "right": [
+                "(?:[1-9][0-9]*|0)"
             ]
         }
     ]

@@ -1,12 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Display, Formatter, Result};
-use std::fs::File;
+use crate::grammar::serialize::GrammarData;
+use crate::tokenizer::tokens::*;
+use crate::tokenizer::*;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use crate::tokenizer::*;
-use crate::tokenizer::tokens::*;
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter, Result};
+use std::fs::File;
 
 lazy_static! {
     pub static ref TERMINAL: Regex = Regex::new(r"^'.*'$").unwrap();
@@ -15,7 +16,7 @@ lazy_static! {
 #[derive(Deserialize, Serialize)]
 pub struct GrammarRule {
     pub left: String,
-    pub right: Vec<String>
+    pub right: Vec<String>,
 }
 
 impl PartialEq for GrammarRule {
@@ -38,7 +39,8 @@ pub struct Grammar {
     terminals: StringSet,
     first_sets: StringSetMap,
     follow_sets: StringSetMap,
-    nullable_non_terminals: StringSet
+    nullable_non_terminals: StringSet,
+    token_types: Vec<TokenType>,
 }
 
 impl Display for GrammarRule {
@@ -52,31 +54,34 @@ impl Display for Grammar {
         write!(
             f,
             concat!(
-            "Grammar {{\n",
-            "  {}\n",
-            "  Rules {{\n",
-            "{}\n",
-            "  }}\n",
-            "  Non-terminals {{\n",
-            "{}\n",
-            "  }}\n",
-            "  Tokens {{\n",
-            "{}\n",
-            "  }}\n",
-            "}}"
+                "Grammar {{\n",
+                "  {}\n",
+                "  Rules {{\n",
+                "{}\n",
+                "  }}\n",
+                "  Non-terminals {{\n",
+                "{}\n",
+                "  }}\n",
+                "  Tokens {{\n",
+                "{}\n",
+                "  }}\n",
+                "}}"
             ),
             self.start_symbol,
-            self.rules.iter()
-                .map(|r| format!("    {}", r))
+            self.rules
+                .iter()
+                .map(|r| format!("    {r}"))
                 .intersperse(String::from("\n"))
                 .collect::<String>(),
-            self.non_terminals.iter()
-                .map(|t| format!("    {}", t))
+            self.non_terminals
+                .iter()
+                .map(|t| format!("    {t}"))
                 .intersperse(String::from("\n"))
                 .collect::<String>(),
-            self.get_token_types().iter()
+            self.get_token_types()
+                .iter()
                 .filter(|t| !t.name.is_empty())
-                .map(|t| format!("    {}", t))
+                .map(|t| format!("    {t}"))
                 .intersperse(String::from("\n"))
                 .collect::<String>()
         )
@@ -88,7 +93,8 @@ impl GrammarRule {
         format!(
             "{} -> {}",
             self.left,
-            self.right.iter()
+            self.right
+                .iter()
                 .map(|s| Grammar::stringify_jsmachine(s))
                 .intersperse(String::from(" "))
                 .collect::<String>()
@@ -98,12 +104,21 @@ impl GrammarRule {
 
 impl Grammar {
     pub fn from_json_file(file: &str) -> serde_json::Result<Self> {
-        let rules: Vec<GrammarRule> = serde_json::from_reader(File::open(file).unwrap())?;
-        Ok(Grammar::from_rules(rules))
+        let data: GrammarData = serde_json::from_reader(File::open(file).unwrap())?;
+        Ok(Grammar::from_rules(
+            data.rules
+                .into_iter()
+                .map(|r| GrammarRule {
+                    left: r.left,
+                    right: r.right,
+                })
+                .collect(),
+        ))
     }
 
     pub fn from_rules(rules: Vec<GrammarRule>) -> Self {
-        let (terminal_rules, rules) = rules.into_iter()
+        let (terminal_rules, rules) = rules
+            .into_iter()
             .partition(|r| Grammar::is_terminal(&r.left));
         let mut grammar = Grammar {
             rules,
@@ -114,12 +129,14 @@ impl Grammar {
             non_terminals: HashSet::new(),
             first_sets: HashMap::new(),
             follow_sets: HashMap::new(),
-            nullable_non_terminals: HashSet::new()
+            nullable_non_terminals: HashSet::new(),
+            token_types: Vec::new(),
         };
         grammar.build_symbols();
         grammar.build_props();
         grammar.build_first_sets();
         grammar.build_follow_sets();
+        grammar.build_token_types();
         grammar
     }
 }
@@ -146,7 +163,7 @@ impl Grammar {
         } else if symbol == EPSILON {
             return String::from("''");
         }
-        return Grammar::stringify(symbol)
+        Grammar::stringify(symbol)
     }
 }
 
@@ -158,8 +175,10 @@ impl Grammar {
             }
             self.non_terminals.insert(rule.left.clone());
             for symbol in &rule.right {
-                if symbol == EPSILON { continue; }
-                if Grammar::is_terminal(&symbol) {
+                if symbol == EPSILON {
+                    continue;
+                }
+                if Grammar::is_terminal(symbol) {
                     self.terminals.insert(symbol.clone());
                 } else {
                     self.non_terminals.insert(symbol.clone());
@@ -175,7 +194,7 @@ impl Grammar {
             0,
             GrammarRule {
                 left: self.get_augmented_start_symbol(),
-                right: vec![self.start_symbol.clone()]
+                right: vec![self.start_symbol.clone()],
             },
         );
     }
@@ -185,8 +204,11 @@ impl Grammar {
     }
 
     fn build_props_nullable(&mut self) {
-        for rule in self.rules.iter()
-            .filter(|r| r.right.len() == 1 && r.right[0] == EPSILON) {
+        for rule in self
+            .rules
+            .iter()
+            .filter(|r| r.right.len() == 1 && r.right[0] == EPSILON)
+        {
             self.nullable_non_terminals.insert(rule.left.clone());
         }
 
@@ -194,8 +216,11 @@ impl Grammar {
         while self.nullable_non_terminals.len() != prev_size {
             prev_size = self.nullable_non_terminals.len();
             for rule in self.rules[1..].iter() {
-                if rule.right.iter()
-                    .any(|s| self.nullable_non_terminals.contains(s)) {
+                if rule
+                    .right
+                    .iter()
+                    .all(|s| self.nullable_non_terminals.contains(s))
+                {
                     self.nullable_non_terminals.insert(rule.left.clone());
                 }
             }
@@ -208,9 +233,7 @@ impl Grammar {
             self.first_sets.insert(symbol.clone(), HashSet::new());
             first_rules.insert(
                 symbol.clone(),
-                self.rules.iter()
-                    .filter(|r| r.left == *symbol)
-                    .collect(),
+                self.rules.iter().filter(|r| r.left == *symbol).collect(),
             );
         }
 
@@ -240,11 +263,7 @@ impl Grammar {
                 let mut first: &StringSet;
                 loop {
                     first = first_sets.get(&*rule.right[index]).unwrap();
-                    first_set.extend(
-                        first.iter()
-                            .filter(|s| s.as_str() != EPSILON)
-                            .cloned()
-                    );
+                    first_set.extend(first.iter().filter(|s| s.as_str() != EPSILON).cloned());
                     if first.contains(EPSILON) {
                         index += 1;
                     }
@@ -261,7 +280,7 @@ impl Grammar {
                 }
             }
 
-            return first_set;
+            first_set
         };
 
         let mut iterate = true;
@@ -284,71 +303,74 @@ impl Grammar {
             self.follow_sets.insert(symbol.clone(), HashSet::new());
             follow_rules.insert(
                 symbol.clone(),
-                self.rules.iter()
+                self.rules
+                    .iter()
                     .filter(|r| r.right.contains(symbol))
                     .collect(),
             );
         }
-        self.follow_sets.get_mut(&*self.start_symbol).unwrap().insert(String::from(EOF));
+        self.follow_sets
+            .get_mut(&*self.start_symbol)
+            .unwrap()
+            .insert(String::from(EOF));
 
-        let follow_of = |first_sets: &StringSetMap, follow_sets: &StringSetMap, s: &String| -> StringSet {
-            // 1. FOLLOW(S) = { $ }   // where S is the starting Non-Terminal
-            //
-            // 2. If A -> pBq is a production, where p, B and q are any grammar symbols,
-            //    then everything in FIRST(q)  except Є is in FOLLOW(B).
-            //
-            // 3. If A-> pB is a production, then everything in FOLLOW(A) is in FOLLOW(B).
-            //
-            // 4. If A-> pBq is a production and FIRST(q) contains Є,
-            //    then FOLLOW(B) contains { FIRST(q) – Є } U FOLLOW(A)
-            let mut follow_set: StringSet = HashSet::new();
+        let follow_of =
+            |first_sets: &StringSetMap, follow_sets: &StringSetMap, s: &String| -> StringSet {
+                // 1. FOLLOW(S) = { $ }   // where S is the starting Non-Terminal
+                //
+                // 2. If A -> pBq is a production, where p, B and q are any grammar symbols,
+                //    then everything in FIRST(q) except Є is in FOLLOW(B).
+                //
+                // 3. If A-> pB is a production, then everything in FOLLOW(A) is in FOLLOW(B).
+                //
+                // 4. If A-> pBq is a production and FIRST(q) contains Є,
+                //    then FOLLOW(B) contains { FIRST(q) – Є } U FOLLOW(A)
+                let mut follow_set: StringSet = HashSet::new();
 
-            // Find productions where symbol is in RHS
-            for rule in follow_rules.get(s).unwrap().iter() {
-                // Symbol may occur multiple times in RHS
-                // We need to loop over each occurrence
-                for (i, _) in rule.right.iter().enumerate().filter(|(_, v)| *v == s) {
-                    // Loop over the RHS symbols occurring after symbol
-                    // While ε is in their first set
-                    let mut index = i + 1;
-                    let mut first: &StringSet;
-                    loop {
-                        // We've hit the end of the RHS of the rule
-                        // So everything in FOLLOW(LHS) is also in FOLLOW(symbol)
-                        if index == rule.right.len() {
-                            follow_set.extend(
-                                follow_sets.get(&*rule.left)
-                                    // .unwrap()
-                                    .unwrap_or(&HashSet::new())
-                                    .iter()
-                                    .cloned()
-                            );
-                            break;
-                        }
-                        first = first_sets.get(&*rule.right[index]).unwrap();
-                        follow_set.extend(
-                            first.iter()
-                                .filter(|s| s.as_str() != EPSILON)
-                                .cloned()
-                        );
-                        if first.contains(EPSILON) {
-                            index += 1;
-                        } else {
-                            break;
+                // Find productions where symbol is in RHS
+                for rule in follow_rules.get(s).unwrap().iter() {
+                    // Symbol may occur multiple times in RHS
+                    // We need to loop over each occurrence
+                    for (i, _) in rule.right.iter().enumerate().filter(|(_, v)| *v == s) {
+                        // Loop over the RHS symbols occurring after symbol
+                        // While ε is in their first set
+                        let mut index = i + 1;
+                        let mut first: &StringSet;
+                        loop {
+                            // We've hit the end of the RHS of the rule
+                            // So everything in FOLLOW(LHS) is also in FOLLOW(symbol)
+                            if index == rule.right.len() {
+                                follow_set.extend(
+                                    follow_sets
+                                        .get(&*rule.left)
+                                        // .unwrap()
+                                        .unwrap_or(&HashSet::new())
+                                        .iter()
+                                        .cloned(),
+                                );
+                                break;
+                            }
+                            first = first_sets.get(&*rule.right[index]).unwrap();
+                            follow_set
+                                .extend(first.iter().filter(|s| s.as_str() != EPSILON).cloned());
+                            if first.contains(EPSILON) {
+                                index += 1;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
-            }
 
-            // Add $ to FOLLOW(S)
-            if *s == self.start_symbol {
-                follow_set.insert(String::from(EOF));
-            }
+                // Add $ to FOLLOW(S)
+                if *s == self.start_symbol {
+                    follow_set.insert(String::from(EOF));
+                }
 
-            // Remove epsilon and return the computed follow set
-            follow_set.remove(EPSILON);
-            follow_set
-        };
+                // Remove epsilon and return the computed follow set
+                follow_set.remove(EPSILON);
+                follow_set
+            };
 
         let mut iterate = true;
         while iterate {
@@ -364,6 +386,45 @@ impl Grammar {
         }
     }
 
+    fn build_token_types(&mut self) {
+        self.token_types = vec![
+            TokenType {
+                name: String::from(""),
+                regex: WHITESPACE.clone(),
+            },
+            TokenType {
+                name: String::from(""),
+                regex: SINGLE_LINE_COMMENT.clone(),
+            },
+            TokenType {
+                name: String::from(""),
+                regex: MULTI_LINE_COMMENT.clone(),
+            },
+        ];
+        self.token_types.extend(
+            self.terminals
+                .iter()
+                .filter(|t| **t != EOF)
+                .sorted_by_key(|t| {
+                    self.terminal_rules
+                        .iter()
+                        .position(|r| r.left == **t)
+                        .unwrap_or_default()
+                })
+                .map(|t| {
+                    let rule = self.terminal_rules.iter().find(|r| r.left == *t);
+                    let regex = match rule {
+                        Some(r) => format!("^{}", r.right[0]),
+                        None => format!("^{}", regex::escape(&Grammar::stringify(t))),
+                    };
+                    TokenType {
+                        name: String::from(t),
+                        regex: Regex::new(&regex).unwrap(),
+                    }
+                }),
+        );
+    }
+
     pub fn first_of(&self, symbol: &str) -> Option<&StringSet> {
         self.first_sets.get(symbol)
     }
@@ -373,7 +434,7 @@ impl Grammar {
     }
 
     pub fn is_nullable(&self, symbol: &str) -> bool {
-        self.nullable_non_terminals.contains(symbol)
+        symbol == EPSILON || self.nullable_non_terminals.contains(symbol)
     }
 
     pub fn is_nullable_sequence(&self, sequence: &[String]) -> bool {
@@ -388,34 +449,8 @@ impl Grammar {
         &self.rules
     }
 
-    pub fn get_token_types(&self) -> Vec<TokenType> {
-        let mut token_types = vec![
-            TokenType { name: String::from(""), regex: WHITESPACE.clone() },
-            TokenType { name: String::from(""), regex: SINGLE_LINE_COMMENT.clone() },
-            TokenType { name: String::from(""), regex: MULTI_LINE_COMMENT.clone() },
-        ];
-        token_types.extend(
-            self.terminals.iter()
-                .filter(|t| &**t != EOF)
-                .sorted_by_key(|t| {
-                    self.terminal_rules
-                        .iter()
-                        .position(|r| r.left == **t)
-                        .unwrap_or_default()
-                })
-                .map(|t| {
-                    let rule = self.terminal_rules.iter().find(|r| r.left == *t);
-                    let regex = match rule {
-                        Some(r) => format!("^{}", r.right[0]),
-                        None => format!("^{}", regex::escape(&*Grammar::stringify(t)))
-                    };
-                    TokenType {
-                        name: String::from(t),
-                        regex: Regex::new(&*regex).unwrap(),
-                    }
-                })
-        );
-        token_types
+    pub fn get_token_types(&self) -> &[TokenType] {
+        &self.token_types
     }
 
     pub fn get_start_symbol(&self) -> String {
@@ -431,12 +466,10 @@ impl Grammar {
     }
 
     pub fn to_jsmachine_string(&self) -> String {
-        format!(
-            "{}",
-            self.rules.iter()
-                .map(|r| r.to_jsmachine_string())
-                .intersperse(String::from("\n"))
-                .collect::<String>()
-        )
+        self.rules
+            .iter()
+            .map(|r| r.to_jsmachine_string())
+            .intersperse(String::from("\n"))
+            .collect::<String>()
     }
 }

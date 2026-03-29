@@ -1,6 +1,6 @@
 use crate::grammar::Grammar;
 use crate::parsers::items::{CanonicalCollectionGraph, LR0Item, LRItem};
-use crate::parsers::{GrammarParserLR, ParseTableAction, ParseTableLR, ParseTableOverride};
+use crate::parsers::{GrammarParserLR, ParseTableLR};
 use std::collections::HashSet;
 
 pub struct GrammarParserSLR1 {
@@ -18,15 +18,10 @@ impl GrammarParserSLR1 {
     pub fn from_grammar(grammar: &Grammar) -> Self {
         let collection = CanonicalCollectionGraph::new(grammar, LR0Item::new(0, 0));
         let empty = HashSet::new();
-        let mut table = ParseTableLR::from_collection(grammar, &collection, |i, _, _| {
+        let table = ParseTableLR::from_collection(grammar, &collection, |i, _, _| {
             let rule = i.get_rule(grammar);
-            grammar.follow_of(&*rule.left).unwrap_or(&empty)
+            grammar.follow_of(&rule.left).unwrap_or(&empty)
         });
-        table.apply_conflict_resolutions(vec![ParseTableOverride {
-            state: 114,
-            symbol: "','",
-            action: ParseTableAction::Reduce(96),
-        }]);
         Self { collection, table }
     }
 }

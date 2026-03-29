@@ -1,8 +1,10 @@
 use crate::grammar::Grammar;
 use crate::parsers::items::{ClosurableItem, LRItem};
-use bimap::BiHashMap;
+use derive_more::{Deref, DerefMut};
 use itertools::Itertools;
-use std::collections::{BTreeSet, HashMap};
+use petgraph::prelude::{EdgeRef, NodeIndex};
+use petgraph::Graph;
+use std::collections::BTreeSet;
 use std::hash::Hash;
 
 #[derive(Eq, PartialEq, Hash, Clone)]
@@ -12,14 +14,12 @@ pub struct GraphState<T: Eq + Hash + LRItem + Clone> {
 }
 
 pub struct GraphEdge {
-    pub from: usize,
-    pub to: usize,
     pub symbol: String,
 }
 
+#[derive(Deref, DerefMut)]
 pub struct CanonicalCollectionGraph<T: Eq + Hash + LRItem + Clone> {
-    pub states: BiHashMap<usize, GraphState<T>>,
-    pub edges: HashMap<usize, Vec<GraphEdge>>,
+    graph: Graph<GraphState<T>, GraphEdge>,
 }
 
 impl<T: Eq + Hash + LRItem + Clone + ClosurableItem<T>> GraphState<T> {
@@ -61,29 +61,41 @@ impl<T: Eq + Hash + LRItem + Clone + ClosurableItem<T>> GraphState<T> {
     pub fn to_string(&self, grammar: &Grammar) -> String {
         self.items
             .iter()
-            .map(|i| i.to_string(&grammar))
+            .map(|i| i.to_string(grammar))
             .fold(String::new(), |a, b| a + &*b + "\n")
     }
 }
 
 impl<T: Eq + Ord + Hash + LRItem + Clone + ClosurableItem<T>> CanonicalCollectionGraph<T> {
+    pub fn find_existing_state(&self, state: &GraphState<T>) -> Option<NodeIndex> {
+        self.graph
+            .node_indices()
+            .find(|idx| &self.graph[*idx] == state)
+    }
+
+    pub fn goto(&self, state_index: NodeIndex, symbol: &str) -> Option<NodeIndex> {
+        self.graph
+            .edges(state_index)
+            .find(|edge| &edge.weight().symbol == symbol)
+            .map(|edge| edge.target())
+    }
+
     pub fn new(grammar: &Grammar, initial_item: T) -> CanonicalCollectionGraph<T> {
-        type StackItem<T> = (BTreeSet<T>, Option<GraphState<T>>, String);
+        type StackItem<T> = (BTreeSet<T>, Option<NodeIndex>, String);
         let mut item_stack: Vec<StackItem<T>> =
             vec![(BTreeSet::from([initial_item]), None, String::from(""))];
-        let mut states: BiHashMap<usize, GraphState<T>> = BiHashMap::new();
-        let mut edges: HashMap<usize, Vec<GraphEdge>> = HashMap::new();
-        let mut state_index = 0;
+        let mut graph: Graph<GraphState<T>, GraphEdge> = Graph::new();
 
-        while item_stack.len() > 0 {
-            let (item_set, prev_state, trans_symbol) = item_stack.pop().unwrap();
+        while let Some((item_set, prev_state_index, trans_symbol)) = item_stack.pop() {
             let mut state = GraphState::new(item_set);
             state.closure(grammar);
 
-            let existing_state = states.get_by_right(&state);
-            if existing_state.is_none() {
-                states.insert(state_index, state.clone());
-                state_index += 1;
+            let state_index: NodeIndex;
+            let existing_state_index = graph.node_indices().find(|idx| &graph[*idx] == &state);
+            if let Some(existing_state_index) = existing_state_index {
+                state_index = existing_state_index;
+            } else {
+                state_index = graph.add_node(state.clone());
                 item_stack.extend(
                     state
                         .items
@@ -92,50 +104,44 @@ impl<T: Eq + Ord + Hash + LRItem + Clone + ClosurableItem<T>> CanonicalCollectio
                         .map(|i| i.get_rule(grammar).right[i.get_dot_index()].clone())
                         .collect::<BTreeSet<String>>()
                         .into_iter()
-                        .map(|s| (state.goto(grammar, &s), Some(state.clone()), s)),
+                        .map(|s| (state.goto(grammar, &s), Some(state_index), s)),
                 );
             }
 
-            if prev_state.is_some() {
-                let from = *states.get_by_right(&prev_state.unwrap()).unwrap();
-                let to = *states.get_by_right(&state).unwrap();
-                let edge = GraphEdge {
-                    from,
-                    to,
-                    symbol: trans_symbol.clone(),
-                };
-                match edges.get_mut(&from) {
-                    Some(v) => {
-                        v.push(edge);
-                    }
-                    None => {
-                        edges.insert(from, vec![edge]);
-                    }
-                }
+            if let Some(prev_state_index) = prev_state_index {
+                graph.add_edge(
+                    prev_state_index,
+                    state_index,
+                    GraphEdge {
+                        symbol: trans_symbol.clone(),
+                    },
+                );
             }
         }
 
-        CanonicalCollectionGraph { states, edges }
+        CanonicalCollectionGraph { graph }
     }
 
     pub fn to_string(&self, grammar: &Grammar) -> String {
         let mut states = self
-            .states
-            .iter()
-            .map(|(i, s)| {
+            .graph
+            .node_indices()
+            .map(|idx| {
+                let state = &self.graph[idx];
                 (
-                    *i,
+                    idx.index(),
                     format!(
                         "{}{}:\n{}",
-                        i,
-                        if s.is_accept(grammar) {
+                        idx.index(),
+                        if state.is_accept(grammar) {
                             "**"
-                        } else if s.is_final(grammar) {
+                        } else if state.is_final(grammar) {
                             "*"
                         } else {
                             ""
                         },
-                        s.items
+                        state
+                            .items
                             .iter()
                             .map(|i| i.to_string(grammar))
                             .intersperse(String::from("\n"))

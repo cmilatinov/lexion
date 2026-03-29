@@ -1,7 +1,10 @@
 use crate::grammar::Grammar;
-use crate::parsers::items::{CanonicalCollectionGraph, GraphState, LR0Item, LRItem};
-use crate::parsers::ParseTableLR;
-use crate::tokenizer::tokens::{EOF, EPSILON};
+use crate::parsers::items::{CanonicalCollectionGraph, LR0Item, LRItem};
+use crate::parsers::{GrammarParserLR, ParseTableLR};
+use crate::tokenizer::tokens::EOF;
+use petgraph::prelude::{EdgeIndex, EdgeRef, NodeIndex};
+use petgraph::visit::IntoEdgesDirected;
+use petgraph::Direction;
 use std::collections::{HashMap, HashSet};
 
 pub struct GrammarParserLALR1 {
@@ -15,9 +18,16 @@ pub struct GrammarParserLALR1 {
 struct SetConstructorLALR1<'a> {
     grammar: &'a Grammar,
     collection: &'a CanonicalCollectionGraph<LR0Item>,
-    lookaheads: HashSet<String>,
-    tm: HashSet<GraphState<LR0Item>>,
-    visited: HashSet<(String, GraphState<LR0Item>)>,
+}
+
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+struct Transition(EdgeIndex);
+
+impl Transition {
+    fn state_symbol(&self, collection: &CanonicalCollectionGraph<LR0Item>) -> (NodeIndex, String) {
+        let (source, _target) = collection.edge_endpoints(self.0).unwrap();
+        (source, collection[self.0].symbol.clone())
+    }
 }
 
 impl<'a> SetConstructorLALR1<'a> {
@@ -28,131 +38,215 @@ impl<'a> SetConstructorLALR1<'a> {
         Self {
             grammar,
             collection,
-            lookaheads: HashSet::new(),
-            tm: HashSet::new(),
-            visited: HashSet::new(),
         }
     }
 
-    fn goto(&self, state: &GraphState<LR0Item>, symbol: &str) -> GraphState<LR0Item> {
-        let mut result = GraphState::new(state.goto(self.grammar, symbol));
-        result.closure(self.grammar);
-        result
+    // DirectRead(q, A)
+    fn direct_read(&self, transition: Transition) -> HashSet<String> {
+        let (state_index, symbol) = transition.state_symbol(self.collection);
+        let Some(r) = self.collection.goto(state_index, &symbol) else {
+            return HashSet::new();
+        };
+        self.collection
+            .edges_directed(r, Direction::Outgoing)
+            .filter_map(|edge| {
+                if Grammar::is_terminal(&edge.weight().symbol) {
+                    Some(edge.weight().symbol.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
-    fn pred(
-        &self,
-        state: &GraphState<LR0Item>,
-        sequence: &[String],
-    ) -> HashSet<GraphState<LR0Item>> {
-        if sequence.len() == 0 || *sequence == vec![String::from(EPSILON)] {
-            return HashSet::from([state.clone()]);
-        }
+    // Reads(q, A)
+    fn reads_relation(&self, transition: Transition) -> Vec<Transition> {
+        let (state_index, symbol) = transition.state_symbol(self.collection);
+        let Some(r) = self.collection.goto(state_index, &symbol) else {
+            return vec![];
+        };
+        self.collection
+            .edges(r)
+            .filter_map(|edge| {
+                let symbol = &edge.weight().symbol;
+                if Grammar::is_non_terminal(symbol) && self.grammar.is_nullable(symbol) {
+                    Some(Transition(edge.id()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 
-        let mut pred = HashSet::new();
-        let last = sequence.last().unwrap();
-        for (_, s) in self.collection.states.iter() {
-            let goto = self.goto(s, &**last);
-            if goto.eq(state) {
-                pred.extend(self.pred(s, &sequence[..sequence.len() - 1]).into_iter());
+    // Includes(q, A)
+    fn includes_relation(&self, transition: Transition) -> Vec<Transition> {
+        let mut relations = Vec::new();
+        let (state_index, symbol) = transition.state_symbol(self.collection);
+        for rule in self.grammar.get_rules().iter().skip(1) {
+            for (i, rule_symbol) in rule.right.iter().enumerate() {
+                let gamma = &rule.right[i + 1..];
+                if &symbol != rule_symbol || !self.grammar.is_nullable_sequence(gamma) {
+                    continue;
+                }
+                let beta = &rule.right[0..i];
+                relations.extend(
+                    self.trace_backwards(state_index, beta)
+                        .into_iter()
+                        .filter_map(|r| {
+                            self.collection.edges(r).find_map(|edge| {
+                                if edge.weight().symbol == rule.left {
+                                    Some(Transition(edge.id()))
+                                } else {
+                                    None
+                                }
+                            })
+                        }),
+                );
             }
         }
-        pred
+        relations
     }
 
-    fn trans(&mut self, state: &GraphState<LR0Item>) {
-        let state_index = self.collection.states.get_by_right(state);
-        if let Some(index) = state_index {
-            println!("trans({})", index);
-        } else {
-            println!("trans(-1)");
+    fn trace_backwards(
+        &self,
+        current_state_index: NodeIndex,
+        symbols: &[String],
+    ) -> Vec<NodeIndex> {
+        if symbols.is_empty() {
+            return vec![current_state_index];
         }
-        self.tm.insert(state.clone());
-        if state.is_accept(self.grammar) {
-            self.lookaheads.insert(String::from(EOF));
-            return;
-        }
-        for i in state
-            .get_items()
-            .iter()
-            .filter(|i| i.dot_index < i.get_rule(self.grammar).right.len())
-        {
-            let rule = i.get_rule(self.grammar);
-            let x = rule.right[i.dot_index].as_str();
-            if x != EPSILON && Grammar::is_terminal(x) {
-                self.lookaheads.insert(String::from(x));
-            } else if self.grammar.is_nullable(x) {
-                let goto = self.goto(state, x);
-                if self.tm.contains(&goto) {
-                    self.trans(&goto);
+        let last_symbol = &symbols[symbols.len() - 1];
+        let remaining_symbols = &symbols[..symbols.len() - 1];
+        self.collection
+            .edges_directed(current_state_index, Direction::Incoming)
+            .filter_map(|edge| {
+                if &edge.weight().symbol == last_symbol {
+                    Some(self.trace_backwards(edge.source(), remaining_symbols))
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn follow_sets(&self) -> HashMap<Transition, HashSet<String>> {
+        let mut read_sets: HashMap<Transition, HashSet<String>> = self
+            .collection
+            .edge_indices()
+            .filter_map(|edge| {
+                let transition = Transition(edge);
+                if Grammar::is_non_terminal(&self.collection[edge].symbol) {
+                    Some((transition, self.direct_read(transition)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.propagate(&mut read_sets, |t| self.reads_relation(t));
+
+        let mut follow_sets = read_sets.clone();
+        let first_transition = Transition(
+            self.collection
+                .edges(NodeIndex::new(0))
+                .find(|edge| edge.weight().symbol == self.grammar.get_start_symbol())
+                .map(|edge| edge.id())
+                .unwrap(),
+        );
+        follow_sets
+            .entry(first_transition)
+            .or_default()
+            .insert(String::from(EOF));
+
+        self.propagate(&mut follow_sets, |t| self.includes_relation(t));
+
+        follow_sets
+    }
+
+    fn propagate<F>(&self, sets: &mut HashMap<Transition, HashSet<String>>, relation_fn: F)
+    where
+        F: Fn(Transition) -> Vec<Transition>,
+    {
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let keys: Vec<Transition> = sets.keys().cloned().collect();
+            for (transition, related_transition) in keys.into_iter().flat_map(|t| {
+                relation_fn(t)
+                    .into_iter()
+                    .map(move |related_t| (t, related_t))
+            }) {
+                if let Some(related_set) = sets.get(&related_transition).cloned() {
+                    let current_set = sets.get_mut(&transition).unwrap();
+                    let old_size = current_set.len();
+                    current_set.extend(related_set);
+                    if current_set.len() > old_size {
+                        changed = true;
+                    }
                 }
             }
         }
     }
 
-    fn lalr(&mut self, item: &LR0Item, state: &GraphState<LR0Item>) {
-        let rule = item.get_rule(self.grammar);
-        let a = &*rule.left;
-        let alpha = &rule.right[0..item.dot_index];
-
-        println!(
-            "lalr([{}], {})",
-            item.to_string(self.grammar),
-            self.collection.states.get_by_right(state).unwrap()
-        );
-
-        let visited = self.visited.clone();
-        for s in self
-            .pred(state, alpha)
-            .iter()
-            .filter(|s| !visited.contains(&(String::from(a), (*s).clone())))
-        {
-            self.visited.insert((String::from(a), s.clone()));
-            self.trans(&self.goto(&s, a));
-            for i in s.get_items().iter().filter(|i| {
-                let i_rule = i.get_rule(self.grammar);
-                i_rule.right[i.dot_index] == rule.left
-                    && self
-                        .grammar
-                        .is_nullable_sequence(&i_rule.right[i.dot_index + 1..])
-            }) {
-                self.lalr(i, s);
-            }
-        }
+    fn final_state_items(&'a self) -> impl Iterator<Item = (NodeIndex, &'a LR0Item)> + 'a {
+        self.collection
+            .node_indices()
+            .filter_map(move |idx| {
+                let state = &self.collection[idx];
+                if !state.is_final(self.grammar) {
+                    return None;
+                }
+                Some(state.get_items().iter().filter_map(move |item| {
+                    if item.is_final(self.grammar) {
+                        Some((idx, item))
+                    } else {
+                        None
+                    }
+                }))
+            })
+            .flatten()
     }
 
-    fn lalr1(&mut self, item: &LR0Item, state: &GraphState<LR0Item>) {
-        let rule = item.get_rule(self.grammar);
-        if self.grammar.get_augmented_start_symbol() == rule.left {
-            return;
+    fn lookahead_sets(&self) -> HashMap<(usize, LR0Item), HashSet<String>> {
+        let follow_sets = self.follow_sets();
+        let mut lookahead_sets = HashMap::new();
+        for (index, item) in self.final_state_items() {
+            let rule = item.get_rule(self.grammar);
+            // Trace back through the rule's RHS to find predecessor states,
+            // then look up the goto transition for rule.left from each predecessor.
+            let lookaheads: HashSet<String> = self
+                .trace_backwards(index, &rule.right)
+                .into_iter()
+                .flat_map(|pred| {
+                    self.collection
+                        .edges(pred)
+                        .filter_map(|edge| {
+                            if edge.weight().symbol == rule.left {
+                                follow_sets.get(&Transition(edge.id())).cloned()
+                            } else {
+                                None
+                            }
+                        })
+                        .flatten()
+                        .collect::<HashSet<String>>()
+                })
+                .collect();
+            lookahead_sets.insert((index.index(), *item), lookaheads);
         }
-
-        self.lalr(item, state);
+        lookahead_sets
     }
 }
 
 impl GrammarParserLALR1 {
     pub fn from_grammar(grammar: &Grammar) -> Self {
         let collection = CanonicalCollectionGraph::new(grammar, LR0Item::new(0, 0));
-        let mut lookahead_sets = HashMap::new();
-
-        for (index, state) in collection
-            .states
-            .iter()
-            .filter(|(_, s)| s.is_final(grammar))
-        {
-            for item in state.get_items().iter().filter(|i| i.is_final(grammar)) {
-                let mut constructor = SetConstructorLALR1::from_grammar(grammar, &collection);
-                constructor.lalr1(item, state);
-                lookahead_sets.insert((*index, *item), constructor.lookaheads);
-            }
-        }
-
+        let lookahead_sets =
+            SetConstructorLALR1::from_grammar(grammar, &collection).lookahead_sets();
         let empty = HashSet::new();
         let table = ParseTableLR::from_collection(grammar, &collection, |i, _, si| {
             lookahead_sets.get(&(si, *i)).unwrap_or(&empty)
         });
-
         Self {
             collection,
             table,
@@ -161,8 +255,8 @@ impl GrammarParserLALR1 {
     }
 }
 
-impl GrammarParserLALR1 {
-    pub fn get_parse_table(&self) -> &ParseTableLR {
+impl GrammarParserLR for GrammarParserLALR1 {
+    fn get_parse_table(&self) -> &ParseTableLR {
         &self.table
     }
 }

@@ -1,17 +1,20 @@
-use std::collections::{BTreeSet};
 use crate::grammar::{Grammar, GrammarRule};
 use crate::parsers::items::{ClosurableItem, LRItem};
 use crate::tokenizer::tokens::EPSILON;
+use std::collections::BTreeSet;
 
 #[derive(Eq, PartialEq, Hash, Copy, Clone, PartialOrd, Ord)]
 pub struct LR0Item {
     pub rule_index: usize,
-    pub dot_index: usize
+    pub dot_index: usize,
 }
 
 impl LR0Item {
     pub fn new(rule_index: usize, dot_index: usize) -> Self {
-        LR0Item { rule_index, dot_index }
+        LR0Item {
+            rule_index,
+            dot_index,
+        }
     }
 }
 
@@ -24,7 +27,7 @@ impl LRItem for LR0Item {
         self.rule_index
     }
 
-    fn get_rule<'a>(&'a self, grammar: &'a Grammar) -> &GrammarRule {
+    fn get_rule<'a>(&self, grammar: &'a Grammar) -> &'a GrammarRule {
         &grammar.get_rules()[self.rule_index]
     }
 
@@ -35,9 +38,9 @@ impl LRItem for LR0Item {
 
     fn is_accept(&self, grammar: &Grammar) -> bool {
         let rule = self.get_rule(grammar);
-        rule.left == grammar.get_augmented_start_symbol() &&
-            rule.right == vec![grammar.get_start_symbol()] &&
-            self.dot_index == 1
+        rule.left == grammar.get_augmented_start_symbol()
+            && rule.right == vec![grammar.get_start_symbol()]
+            && self.dot_index == 1
     }
 
     fn to_string(&self, grammar: &Grammar) -> String {
@@ -50,13 +53,16 @@ impl LRItem for LR0Item {
 
 impl ClosurableItem<LR0Item> for LR0Item {
     fn goto(grammar: &Grammar, items: &BTreeSet<LR0Item>, symbol: &str) -> BTreeSet<LR0Item> {
-        items.iter()
+        items
+            .iter()
             .filter(|i| {
                 let rule = i.get_rule(grammar);
-                i.dot_index < rule.right.len() &&
-                    rule.right[i.dot_index] == symbol
+                i.dot_index < rule.right.len() && rule.right[i.dot_index] == symbol
             })
-            .map(|i| LR0Item { rule_index: i.rule_index, dot_index: i.dot_index + 1 })
+            .map(|i| LR0Item {
+                rule_index: i.rule_index,
+                dot_index: i.dot_index + 1,
+            })
             .collect()
     }
 
@@ -65,12 +71,19 @@ impl ClosurableItem<LR0Item> for LR0Item {
         let mut additions: Vec<LR0Item> = Vec::new();
         loop {
             for item in items.iter() {
-                if item.is_final(grammar) { continue }
+                if item.is_final(grammar) {
+                    continue;
+                }
                 let rule = item.get_rule(grammar);
-                for (rule_index, _r1) in rules.iter()
+                for (rule_index, _r1) in rules
+                    .iter()
                     .enumerate()
-                    .filter(|(_, r)| r.left == rule.right[item.dot_index]) {
-                    additions.push(LR0Item { rule_index, dot_index: 0 });
+                    .filter(|(_, r)| r.left == rule.right[item.dot_index])
+                {
+                    additions.push(LR0Item {
+                        rule_index,
+                        dot_index: 0,
+                    });
                 }
             }
             let prev_size = items.len();

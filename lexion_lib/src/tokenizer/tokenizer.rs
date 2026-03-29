@@ -1,23 +1,39 @@
 use std::fs;
+use std::io::Read;
 use std::sync::Arc;
 
 use miette::{NamedSource, SourceOffset};
 
 use crate::error::SyntaxError;
-use crate::tokenizer::*;
 use crate::tokenizer::tokens::*;
+use crate::tokenizer::*;
 
 type Result<T> = std::result::Result<T, SyntaxError>;
 
-pub struct Tokenizer {
-    file: &'static str,
+pub struct Tokenizer<'a> {
+    file: &'a str,
     string: Arc<String>,
     cursor: usize,
-    token_types: Vec<TokenType>,
+    token_types: &'a [TokenType],
 }
 
-impl Tokenizer {
-    pub fn from_string(input: Arc<String>, token_types: Vec<TokenType>) -> Tokenizer {
+impl<'a> Tokenizer<'a> {
+    pub fn from_reader<R: Read>(
+        name: &'a str,
+        mut reader: R,
+        token_types: &'a [TokenType],
+    ) -> std::io::Result<Tokenizer<'a>> {
+        let mut string = String::new();
+        reader.read_to_string(&mut string)?;
+        Ok(Self {
+            file: name,
+            string: Arc::new(string),
+            cursor: 0,
+            token_types,
+        })
+    }
+
+    pub fn from_string(input: Arc<String>, token_types: &[TokenType]) -> Tokenizer {
         Tokenizer {
             file: "inline",
             string: input,
@@ -26,22 +42,20 @@ impl Tokenizer {
         }
     }
 
-    pub fn from_file(file: &'static str, token_types: Vec<TokenType>) -> Tokenizer {
-        Tokenizer {
-            file,
-            string: Arc::new(fs::read_to_string(file).unwrap()),
-            cursor: 0,
-            token_types,
-        }
+    pub fn from_file(
+        file: &'a str,
+        token_types: &'a [TokenType],
+    ) -> std::io::Result<Tokenizer<'a>> {
+        Self::from_reader(file, fs::File::open(file)?, token_types)
     }
 }
 
-impl Tokenizer {
+impl<'a> Tokenizer<'a> {
     pub fn has_next(&self) -> bool {
         self.cursor < self.string.len()
     }
 
-    pub fn next(&mut self) -> Result<TokenInstance> {
+    pub fn next_token(&mut self) -> Result<TokenInstance> {
         let offset = self.cursor_offset();
         if !self.has_next() {
             return Ok(TokenInstance {
@@ -55,7 +69,7 @@ impl Tokenizer {
         let token: &TokenType = &self.token_types[i];
         self.cursor += s.len();
         if token.name.is_empty() {
-            return self.next();
+            return self.next_token();
         }
 
         Ok(TokenInstance {
@@ -88,7 +102,7 @@ impl Tokenizer {
             return Err(SyntaxError {
                 src: self.source(),
                 span: (offset, unexpected.len()).into(),
-                message: format!("unexpected token '{}'", unexpected),
+                message: format!("unexpected token '{unexpected}'"),
             });
         }
 

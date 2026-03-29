@@ -3,14 +3,76 @@ Program -> StmtList [Vec<SourcedStmt>] {{ $$ = $1; }} ;
 StmtList -> StmtList Stmt [Vec<SourcedStmt>] {{ $1.push($2); $$ = $1; }} ;
 StmtList -> [Vec<SourcedStmt>] {{ $$ = vec![]; }} ;
 
-Stmt -> ReturnStmt | ExprStmt | VarDeclStmt | FuncDeclStmt
+Stmt -> ReturnStmt 
+      | ExprStmt 
+      | WhileStmt
+      | VarDeclStmt 
+      | FuncDeclStmt 
+      | StructDeclStmt 
 [SourcedStmt] {{
     $$ = $1;
 }} ;
-Stmt -> BlockStmt [SourcedStmt] {{
+Stmt -> IfExpr [SourcedStmt] {{
     $$ = (
         $1.span,
-        Stmt::BlockStmt($1.value)
+        Stmt::ExprStmt(ExprStmt {
+            expr: $1
+        })
+    ).into();
+}} ;
+
+StructDeclStmt -> 'struct' 'ident' '{' StructFields '}' 
+[SourcedStmt] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $5.span),
+        Stmt::StructDeclStmt(StructDeclStmt {
+            name: ($2.span, $2.value).into(),
+            fields: $4
+        })
+    ).into(); 
+}} ;
+
+StructFields -> StructFieldsList OptComma [Vec<Sourced<StructField>>] {{ $$ = $1; }} ; 
+StructFields -> [Vec<Sourced<StructField>>] {{ $$ = vec![]; }} ;
+
+OptComma -> ',' ;
+OptComma -> ;
+
+StructFieldsList -> StructFieldsList ',' StructField 
+[Vec<Sourced<StructField>>] {{
+    $1.push($3);
+    $$ = $1;
+}} ; 
+StructFieldsList -> StructField
+[Vec<Sourced<StructField>>] {{
+    $$ = vec![$1];
+}} ;
+
+StructField -> 'ident' ':' Type 
+[Sourced<StructField>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $3.span),
+        StructField {
+            name: ($1.span, $1.value).into(),
+            ty: $3
+        }
+    ).into();
+}} ;
+
+WhileStmt -> 'while' Expr '{' StmtList '}' 
+[SourcedStmt] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $3.span),
+        Stmt::WhileStmt(WhileStmt {
+            condition: $2,
+            body: Box::new((
+                SpanBuilder::merge($3.span, $5.span),
+                Expr::BlockExpr(BlockExpr {
+                    stmts: $4,
+                    expr: None
+                }).into()
+            ).into())
+        })
     ).into();
 }} ;
 
@@ -33,15 +95,6 @@ ReturnStmt -> 'return' ';'
     ).into();
 }} ;
 
-ExprStmt -> ';'
-[SourcedStmt] {{
-    $$ = (
-        $1.span,
-        Stmt::ExprStmt(ExprStmt {
-            expr: Box::new(($1.span, Expr::NoneExpr).into())
-        })
-    ).into();
-}} ;
 ExprStmt -> Expr ';'
 [SourcedStmt] {{
     $$ = (
@@ -52,19 +105,57 @@ ExprStmt -> Expr ';'
     ).into();
 }} ;
 
-Expr -> Expr ',' AssignExpr
-[Box<SourcedExpr>] {{
-    $$ = Box::new((
-        SpanBuilder::merge($1.span, $3.span),
-        Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
-            args: vec![*$1, *$3]
-        })
-    ).into());
-}} ;
-Expr -> AssignExpr
+Expr -> IfExpr
+      | AssignExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
+}} ;
+Expr -> BlockExpr 
+[Box<SourcedExpr>] {{
+    $$ = Box::new($1);
+}} ;
+
+OptExpr -> Expr [Option<Box<SourcedExpr>>] {{ $$ = Some($1); }} ;
+OptExpr -> [Option<Box<SourcedExpr>>] {{ $$ = None; }} ;
+
+BlockExpr -> '{' StmtList OptExpr '}'
+[SourcedExpr] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $4.span),
+        Expr::BlockExpr(BlockExpr {
+            stmts: $2,
+            expr: $3
+        }).into()
+    ).into();
+}} ;
+
+IfExpr -> 'if' Expr BlockExpr OptElseExpr
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, if $4.is_some() { $4.as_ref().unwrap().span } else { $3.span }),
+        Expr::IfExpr(IfExpr {
+            condition: $2,
+            then: Box::new($3),
+            else_: $4
+        }).into()
+    ).into());
+}} ;
+
+BlockOrIfExpr -> IfExpr 
+[Box<SourcedExpr>] {{
+    $$ = $1;
+}} ;
+BlockOrIfExpr -> BlockExpr 
+[Box<SourcedExpr>] {{
+    $$ = Box::new($1);
+}} ;
+
+OptElseExpr -> 'else' BlockOrIfExpr 
+[Option<Box<SourcedExpr>>] {{ 
+    $$ = Some($2);
+}} ;
+OptElseExpr -> [Option<Box<SourcedExpr>>] {{ 
+    $$ = None;
 }} ;
 
 AssignExpr -> UnaryExpr '=' AssignExpr
@@ -72,9 +163,9 @@ AssignExpr -> UnaryExpr '=' AssignExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: "=",
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 AssignExpr -> CondExpr
@@ -87,9 +178,9 @@ CondExpr -> LogicOrExpr '?' Expr ':' CondExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $5.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: String::from("?:"),
+            operator: "?:",
             args: vec![*$1, *$3, *$5]
-        })
+        }).into()
     ).into());
 }} ;
 CondExpr -> LogicOrExpr
@@ -102,9 +193,9 @@ LogicOrExpr -> LogicOrExpr '||' LogicAndExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: "||",
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 LogicOrExpr -> LogicAndExpr
@@ -117,9 +208,9 @@ LogicAndExpr -> LogicAndExpr '&&' BitwiseOrExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: "&&",
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 LogicAndExpr -> BitwiseOrExpr
@@ -132,9 +223,9 @@ BitwiseOrExpr -> BitwiseOrExpr '|' BitwiseXorExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: "|",
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 BitwiseOrExpr -> BitwiseXorExpr
@@ -147,9 +238,9 @@ BitwiseXorExpr -> BitwiseXorExpr '^' BitwiseAndExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: "^",
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 BitwiseXorExpr -> BitwiseAndExpr
@@ -162,9 +253,9 @@ BitwiseAndExpr -> BitwiseAndExpr '&' EqExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: "&",
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 BitwiseAndExpr -> EqExpr
@@ -177,9 +268,13 @@ EqExpr -> EqExpr 'eq_op' RelExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: match $2.value.as_str() {
+                "==" => "==",
+                "!=" => "!=",
+                _ => unreachable!()
+            },
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 EqExpr -> RelExpr
@@ -192,9 +287,15 @@ RelExpr -> RelExpr 'rel_op' ShiftExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: match $2.value.as_str() {
+                "<" => "<",
+                "<=" => "<=",
+                ">" => ">",
+                ">=" => ">=",
+                _ => unreachable!()
+            },
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 RelExpr -> ShiftExpr
@@ -207,9 +308,13 @@ ShiftExpr -> ShiftExpr 'shift_op' AddExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: match $2.value.as_str() {
+                "<<" => "<<",
+                ">>" => ">>",
+                _ => unreachable!()
+            },
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 ShiftExpr -> AddExpr
@@ -222,9 +327,13 @@ AddExpr -> AddExpr '+' MulExpr | AddExpr '-' MulExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: match $2.value.as_str() {
+                "+" => "+",
+                "-" => "-",
+                _ => unreachable!()
+            },
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 AddExpr -> MulExpr
@@ -237,9 +346,14 @@ MulExpr -> MulExpr '*' CastExpr | MulExpr '/' CastExpr | MulExpr '%' CastExpr
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
+            operator: match $2.value.as_str() {
+                "*" => "*",
+                "/" => "/",
+                "%" => "%",
+                _ => unreachable!()
+            },
             args: vec![*$1, *$3]
-        })
+        }).into()
     ).into());
 }} ;
 MulExpr -> CastExpr
@@ -247,14 +361,14 @@ MulExpr -> CastExpr
     $$ = $1;
 }} ;
 
-CastExpr -> '(' Type ')' CastExpr
+CastExpr -> UnaryExpr 'as' Type
 [Box<SourcedExpr>] {{
     $$ = Box::new((
-        SpanBuilder::merge($1.span, $4.span),
+        SpanBuilder::merge($1.span, $3.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: String::from("()"),
-            args: vec![*$4]
-        })
+            operator: "type()",
+            args: vec![*$1]
+        }).into()
     ).into());
 }} ;
 CastExpr -> UnaryExpr
@@ -262,9 +376,7 @@ CastExpr -> UnaryExpr
     $$ = $1;
 }} ;
 
-UnaryExpr -> '++' UnaryExpr |
-             '--' UnaryExpr |
-             'sizeof' UnaryExpr |
+UnaryExpr -> 'sizeof' UnaryExpr |
              '!' CastExpr |
              '~' CastExpr |
              '&' CastExpr |
@@ -275,12 +387,21 @@ UnaryExpr -> '++' UnaryExpr |
     $$ = Box::new((
         SpanBuilder::merge($1.span, $2.span),
         Expr::OperatorExpr(OperatorExpr {
-            operator: $1.value,
+            operator: match $1.value.as_str() {
+                "sizeof" => "sizeof",
+                "!" => "!",
+                "~" => "~",
+                "&" => "&",
+                "*" => "*",
+                "+" => "+",
+                "-" => "-",
+                _ => unreachable!()
+            },
             args: vec![*$2]
-        })
+        }).into()
     ).into());
 }} ;
-UnaryExpr ->  PostfixExpr
+UnaryExpr -> PostfixExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
 }} ;
@@ -292,7 +413,7 @@ PostfixExpr -> PostfixExpr '[' Expr ']'
         Expr::IndexExpr(IndexExpr {
             expr: $1,
             index: $3
-        })
+        }).into()
     ).into());
 }} ;
 PostfixExpr -> PostfixExpr '(' ')'
@@ -302,7 +423,7 @@ PostfixExpr -> PostfixExpr '(' ')'
         Expr::CallExpr(CallExpr {
             expr: $1,
             args: vec![]
-        })
+        }).into()
     ).into());
 }} ;
 PostfixExpr -> PostfixExpr '(' ArgList ')'
@@ -312,33 +433,17 @@ PostfixExpr -> PostfixExpr '(' ArgList ')'
         Expr::CallExpr(CallExpr {
             expr: $1,
             args: $3
-        })
+        }).into()
     ).into());
 }} ;
-PostfixExpr -> PostfixExpr '.' 'ident'
+PostfixExpr -> PostfixExpr '.' 'ident' | PostfixExpr '.' 'int_literal'
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
         Expr::MemberExpr(MemberExpr {
             expr: $1,
             ident: $3.value
-        })
-    ).into());
-}} ;
-PostfixExpr -> PostfixExpr '++' | PostfixExpr '--'
-[Box<SourcedExpr>] {{
-    $$ = Box::new((
-        SpanBuilder::merge($1.span, $2.span),
-        Expr::OperatorExpr(OperatorExpr {
-            operator: $2.value,
-            args: vec![
-                *$1,
-                (
-                    SpanBuilder::end($2.span),
-                    Expr::NoneExpr
-                ).into()
-            ]
-        })
+        }).into()
     ).into());
 }} ;
 PostfixExpr -> PrimaryExpr
@@ -352,7 +457,7 @@ PrimaryExpr -> Literal
         $1.span,
         Expr::LitExpr(LitExpr {
             lit: $1.value
-        })
+        }).into()
     ).into());
 }} ;
 PrimaryExpr -> 'ident'
@@ -361,7 +466,7 @@ PrimaryExpr -> 'ident'
         $1.span,
         Expr::IdentExpr(IdentExpr {
             ident: $1.value
-        })
+        }).into()
     ).into());
 }} ;
 PrimaryExpr -> '(' Expr ')'
@@ -396,25 +501,14 @@ Literal -> 'bool_literal'
     $$ = ($1.span, Lit::Boolean($1.value.parse::<bool>().unwrap())).into();
 }} ;
 
-VarDeclStmt -> 'let' VarDeclList ';'
+VarDeclStmt -> 'let' VarDecl ';'
 [SourcedStmt] {{
     $$ = (
         SpanBuilder::merge($1.span, $3.span),
         Stmt::VarDeclStmt(VarDeclStmt {
-            decls: $2
+            decl: $2
         })
     ).into();
-}} ;
-
-VarDeclList -> VarDeclList ',' VarDecl
-[Vec<Sourced<VarDecl>>] {{
-    $1.push($3);
-    $$ = $1;
-}} ;
-
-VarDeclList -> VarDecl
-[Vec<Sourced<VarDecl>>] {{
-    $$ = vec![$1];
 }} ;
 
 VarDecl -> 'ident' OptVarType OptVarInit
@@ -445,7 +539,7 @@ OptVarType -> [Option<Sourced<Type>>] {{ $$ = None; }} ;
 OptVarInit -> '=' Expr [Option<Box<SourcedExpr>>] {{ $$ = Some($2); }} ;
 OptVarInit -> [Option<Box<SourcedExpr>>] {{ $$ = None; }} ;
 
-FuncDeclStmt -> FuncDecl BlockStmt
+FuncDeclStmt -> FuncDecl BlockExpr
 [SourcedStmt] {{
     $$ = (
         $1.3,
@@ -455,6 +549,7 @@ FuncDeclStmt -> FuncDecl BlockStmt
             ty: $1.2,
             body: Some($2),
             is_vararg: $1.4,
+            is_extern: $1.5,
         })
     ).into();
 }} ;
@@ -468,14 +563,16 @@ FuncDeclStmt -> FuncDecl ';'
             ty: $1.2,
             body: None,
             is_vararg: $1.4,
+            is_extern: $1.5,
         })
     ).into();
 }} ;
 
 FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
-[(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool)] {{
+[(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool, bool)] {{
     let mut ty = None;
     let mut span = $2.span;
+    let is_extern = $1.is_some();
     if let Some(sp) = $1 {
         span = SpanBuilder::merge(sp, span);
     }
@@ -493,7 +590,8 @@ FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
         $5.0,
         ty,
         span,
-        $5.1
+        $5.1,
+        is_extern
     );
 }} ;
 
@@ -503,31 +601,18 @@ FuncQual -> [Option<SourceSpan>] {{ $$ = None; }} ;
 FuncReturn -> '->' Type [Option<Sourced<Type>>] {{ $$ = Some($2); }} ;
 FuncReturn ->  [Option<Sourced<Type>>] {{ $$ = None; }} ;
 
-BlockStmt -> '{' StmtList '}'
-[Sourced<BlockStmt>] {{
-    $$ = (
-        SpanBuilder::merge($1.span, $3.span),
-        BlockStmt {
-            stmts: $2
-        }
-    ).into();
-}};
-
-ParamList -> NonTermParamList [(Vec<Sourced<Param>>, bool)] {{ $$ = ($1, false); }} ;
-ParamList -> TermParamList [(Vec<Sourced<Param>>, bool)] {{ $$ = ($1, true); }} ;
+ParamList -> ParamListInner OptVararg [(Vec<Sourced<Param>>, bool)] {{ $$ = ($1, $2); }} ;
+ParamList -> '...' [(Vec<Sourced<Param>>, bool)] {{ $$ = (vec![], true); }} ;
 ParamList -> [(Vec<Sourced<Param>>, bool)] {{ $$ = (vec![], false); }} ;
 
-NonTermParamList -> Param NonTermParamListTail [Vec<Sourced<Param>>] {{ $2.push($1); $$ = $2; }} ;
-NonTermParamList -> Param [Vec<Sourced<Param>>] {{ $$ = vec![$1]; }} ;
+OptVararg -> 'vararg_literal' [bool] {{ $$ = true; }} ;
+OptVararg -> [bool] {{ $$ = false; }} ;
 
-NonTermParamListTail -> ',' Param NonTermParamListTail [Vec<Sourced<Param>>] {{ $3.push($2); $$ = $3; }} ;
-NonTermParamListTail -> [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
-
-TermParamList -> Param TermParamListTail ',' '...' [Vec<Sourced<Param>>] {{ $2.push($1); $$ = $2; }} ;
-TermParamList -> '...' [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
-
-TermParamListTail -> ',' Param TermParamListTail [Vec<Sourced<Param>>] {{ $3.push($2); $$ = $3; }} ;
-TermParamListTail -> [Vec<Sourced<Param>>] {{ $$ = vec![]; }} ;
+ParamListInner -> ParamListInner ',' Param [Vec<Sourced<Param>>] {{ 
+    $1.push($3);
+    $$ = $1;
+}} ;
+ParamListInner -> Param [Vec<Sourced<Param>>] {{ $$ = vec![$1]; }} ;
 
 Param -> 'ident' ':' Type [Sourced<Param>] {{
     $$ = (
@@ -539,36 +624,72 @@ Param -> 'ident' ':' Type [Sourced<Param>] {{
     ).into();
 }};
 
-Type -> TypeRefList 'ident'
+
+Type -> PathType | ReferenceType | TupleType [Sourced<Type>] {{ $$ = $1; }} ;
+
+PathType -> Path 
 [Sourced<Type>] {{
-    $$ = match $1 {
-        Some((_count, span)) => (
-            SpanBuilder::merge(span, $2.span),
-            Type::StructType(StructType {
-                ident: $2.value
-            })
-        ).into(),
-        None => (
-            $2.span,
-            Type::StructType(StructType {
-                ident: $2.value
-            })
-        ).into()
-    };
+    $$ = (
+        $1.span,
+        Type::Path(PathType { path: $1.value })
+    ).into(); 
 }} ;
 
-TypeRefList -> TypeRefList '&'
-[Option<(usize, SourceSpan)>] {{
-    $$ = match $1 {
-        Some((count, span)) => Some((
-            count + 1,
-            SpanBuilder::merge(span, $2.span)
-        )),
-        None => Some((1, $2.span))
-    };
+Path -> Path '::' 'ident' 
+[Sourced<Path>] {{
+    $1.value.segments.push(($3.span, $3.value).into());
+    $$ = (
+        SpanBuilder::merge($1.span, $3.span),
+        Path { segments: $1.value.segments }
+    ).into();
 }} ;
-TypeRefList -> [Option<(usize, SourceSpan)>] {{
-    $$ = None;
+Path -> 'ident' 
+[Sourced<Path>] {{ 
+    $$ = (
+        $1.span,
+        Path {
+            segments: vec![($1.span, $1.value).into()]
+        }
+    ).into();
+}} ;
+
+ReferenceType -> '&' Type 
+[Sourced<Type>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $2.span),
+        Type::Reference(ReferenceType {
+            to: Box::new($2)
+        })
+    ).into();
+}} ;
+
+TupleType -> '(' TypeList ')' 
+[Sourced<Type>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $3.span),
+        Type::Tuple(TupleType {
+            types: $2
+        })
+    ).into();
+}} ;
+TupleType -> '(' ')'
+[Sourced<Type>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $2.span),
+        Type::Tuple(TupleType {
+            types: vec![]
+        })
+    ).into();
+}} ;
+
+TypeList -> TypeList ',' Type 
+[Vec<Sourced<Type>>] {{
+    $1.push($3);
+    $$ = $1;
+}} ;
+TypeList -> Type
+[Vec<Sourced<Type>>] {{
+    $$ = vec![$1];
 }} ;
 
 'unary_op' -> /[&*+\-~!]/ ;
@@ -579,8 +700,10 @@ TypeRefList -> [Option<(usize, SourceSpan)>] {{
 'mul_op' -> /[*\/%]/ ;
 
 'int_literal' -> /(?:[1-9][0-9]*|0)/ ;
-'float_literal' -> /[+\-]?(?:[1-9][0-9]*|0)?(?:\.[0-9]*[1-9]|\.0)(?:[eE][+\-]?(?:[1-9][0-9]*|0))?/ ;
+'float_literal' -> /[+\-]?(?:[1-9][0-9]*|0)(?:\.[0-9]*[1-9]|\.0)(?:[eE][+\-]?(?:[1-9][0-9]*|0))?/ ;
 'bool_literal' -> /(?:true|false)/ ;
 'string_literal' -> /(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/ ;
+
+'vararg_literal' -> /,\s*?\.{3}/ ;
 
 'ident' -> /[A-Za-z_][A-Za-z0-9_]*/ ;

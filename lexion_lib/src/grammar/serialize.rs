@@ -1,27 +1,27 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Reduction {
+pub struct ReductionData {
     pub ty: String,
     pub code: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Rule {
+pub struct RuleData {
     pub left: String,
     pub right: Vec<String>,
-    pub reduction: Option<Reduction>,
+    pub reduction: Option<ReductionData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParseTableOverride {
+pub struct ParseTableOverrideData {
     pub symbol: String,
     pub state: usize,
     pub action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Grammar {
-    pub definitions: String,
-    pub rules: Vec<Rule>,
+pub struct GrammarData {
+    pub rules: Vec<RuleData>,
+    pub overrides: Option<Vec<ParseTableOverrideData>>,
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use generational_arena::Index;
 
-use crate::ast::{FunctionType, TypeCollection};
+use crate::ast::types::{FunctionType, TypeCollection};
 use crate::diagnostic::LexionDiagnosticError;
 
 pub type OperatorRule =
@@ -33,8 +33,7 @@ impl OperatorTable {
             .entry(operator.clone())
             .or_default()
             .iter()
-            .find(|d| definition.eq(d))
-            .is_some()
+            .any(|d| definition.eq(d))
         {
             return false;
         }
@@ -49,6 +48,7 @@ impl OperatorTable {
         self.rules.entry(operator).or_default().push(rule);
     }
 
+    #[allow(unused)]
     pub fn add_rule_multiple<F: Fn() -> Box<OperatorRule>>(&mut self, operators: &[&str], rule: F) {
         for operator in operators {
             self.add_rule((*operator).into(), rule());

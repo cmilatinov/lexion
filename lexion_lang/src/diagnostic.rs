@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use miette::{Diagnostic, NamedSource, SourceSpan};
 
-use lexion_lib::{miette, thiserror};
-use lexion_lib::error::SyntaxError;
+use lexion_lib::error::{ParseError, SyntaxError};
 use lexion_lib::miette::Report;
 use lexion_lib::thiserror::Error;
+use lexion_lib::{miette, thiserror};
 
 #[derive(Debug, Error, Diagnostic)]
 #[error("{message}")]
@@ -41,6 +41,29 @@ pub struct LexionDiagnosticInfo {
     pub message: String,
 }
 
+impl From<SyntaxError> for LexionDiagnosticError {
+    fn from(value: SyntaxError) -> Self {
+        LexionDiagnosticError {
+            src: value.src,
+            span: value.span,
+            message: value.message,
+        }
+    }
+}
+
+impl From<(NamedSource<Arc<String>>, ParseError)> for LexionDiagnosticError {
+    fn from((src, value): (NamedSource<Arc<String>>, ParseError)) -> Self {
+        match value {
+            ParseError::Syntax(err) => err.into(),
+            ParseError::Io(err) => LexionDiagnosticError {
+                src,
+                span: SourceSpan::from(0),
+                message: err.to_string(),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Error, Diagnostic)]
 pub enum LexionDiagnostic {
     #[error(transparent)]
@@ -56,11 +79,7 @@ pub enum LexionDiagnostic {
 
 impl From<SyntaxError> for LexionDiagnostic {
     fn from(value: SyntaxError) -> Self {
-        Self::Error(LexionDiagnosticError {
-            src: value.src,
-            span: value.span,
-            message: value.message,
-        })
+        Self::Error(value.into())
     }
 }
 

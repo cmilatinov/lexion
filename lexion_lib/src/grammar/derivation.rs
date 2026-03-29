@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter, Result};
 
-use petgraph::Graph;
 use petgraph::graph::NodeIndex;
+use petgraph::Graph;
 
 use crate::grammar::{Grammar, GrammarRule};
 use crate::tokenizer::TokenInstance;
@@ -12,11 +12,14 @@ pub struct DerivationNode {
     pub rule_index: usize,
 }
 
-pub struct Derivation(pub NodeIndex, pub Graph<DerivationNode, usize>);
+pub struct Derivation {
+    pub graph: Graph<DerivationNode, usize>,
+    pub root: NodeIndex,
+}
 
 impl Display for DerivationNode {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let token = Grammar::stringify(&*self.token.token);
+        let token = Grammar::stringify(&self.token.token);
         write!(
             f,
             "[{}]{}",
@@ -32,13 +35,13 @@ impl Display for DerivationNode {
 
 impl Derivation {
     fn write(
-        node_id: NodeIndex,
         graph: &Graph<DerivationNode, usize>,
+        node_id: NodeIndex,
         f: &mut Formatter<'_>,
         mut indent: String,
         last: usize,
     ) -> Result {
-        write!(f, "{}", indent)?;
+        write!(f, "{indent}")?;
         if last == 0 {
             write!(f, "├─")?;
             indent += "│ ";
@@ -46,13 +49,12 @@ impl Derivation {
             write!(f, "└─")?;
             indent += "  ";
         }
-
-        write!(f, "{}\n", graph.node_weight(node_id).unwrap())?;
+        writeln!(f, "{}", graph.node_weight(node_id).ok_or(std::fmt::Error)?)?;
         let num_children = graph.neighbors(node_id).count();
         for (i, child) in graph.neighbors(node_id).enumerate() {
             Derivation::write(
-                child,
                 graph,
+                child,
                 f,
                 indent.clone(),
                 if i == num_children - 1 { 1 } else { 0 },
@@ -64,7 +66,13 @@ impl Derivation {
 
 impl Display for Derivation {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        Self::write(self.0, &self.1, f, String::from(""), 2)
+        Self::write(&self.graph, self.root, f, String::from(""), 2)
+    }
+}
+
+impl Default for DerivationNode {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
