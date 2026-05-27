@@ -3,22 +3,14 @@ Program -> StmtList [Vec<SourcedStmt>] {{ $$ = $1; }} ;
 StmtList -> StmtList Stmt [Vec<SourcedStmt>] {{ $1.push($2); $$ = $1; }} ;
 StmtList -> [Vec<SourcedStmt>] {{ $$ = vec![]; }} ;
 
-Stmt -> ReturnStmt 
-      | ExprStmt 
+Stmt -> ReturnStmt
+      | ExprStmt
       | WhileStmt
-      | VarDeclStmt 
-      | FuncDeclStmt 
-      | StructDeclStmt 
+      | VarDeclStmt
+      | FuncDeclStmt
+      | StructDeclStmt
 [SourcedStmt] {{
     $$ = $1;
-}} ;
-Stmt -> IfExpr [SourcedStmt] {{
-    $$ = (
-        $1.span,
-        Stmt::ExprStmt(ExprStmt {
-            expr: $1
-        })
-    ).into();
 }} ;
 
 StructDeclStmt -> 'struct' 'ident' '{' StructFields '}' 
@@ -97,12 +89,7 @@ ReturnStmt -> 'return' ';'
 
 ExprStmt -> Expr ';'
 [SourcedStmt] {{
-    $$ = (
-        $1.span,
-        Stmt::ExprStmt(ExprStmt {
-            expr: $1
-        })
-    ).into();
+    $$ = ($1.span, Stmt::ExprStmt(ExprStmt { expr: $1 })).into();
 }} ;
 
 Expr -> IfExpr
@@ -110,7 +97,7 @@ Expr -> IfExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
 }} ;
-Expr -> BlockExpr 
+Expr -> BlockExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new($1);
 }} ;
@@ -361,7 +348,7 @@ MulExpr -> CastExpr
     $$ = $1;
 }} ;
 
-CastExpr -> UnaryExpr 'as' Type
+CastExpr -> CastExpr 'as' Type
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
@@ -377,12 +364,12 @@ CastExpr -> UnaryExpr
 }} ;
 
 UnaryExpr -> 'sizeof' UnaryExpr |
-             '!' CastExpr |
-             '~' CastExpr |
-             '&' CastExpr |
-             '*' CastExpr |
-             '+' CastExpr |
-             '-' CastExpr
+             '!' UnaryExpr |
+             '~' UnaryExpr |
+             '&' UnaryExpr |
+             '*' UnaryExpr |
+             '+' UnaryExpr |
+             '-' UnaryExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $2.span),

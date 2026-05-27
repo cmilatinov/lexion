@@ -92,16 +92,6 @@
       }
     },
     {
-      "left": "Stmt",
-      "right": [
-        "IfExpr"
-      ],
-      "reduction": {
-        "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        $1.span,\r\n        Stmt::ExprStmt(ExprStmt {\r\n            expr: $1\r\n        })\r\n    ).into();"
-      }
-    },
-    {
       "left": "StructDeclStmt",
       "right": [
         "'struct'",
@@ -229,7 +219,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        $1.span,\r\n        Stmt::ExprStmt(ExprStmt {\r\n            expr: $1\r\n        })\r\n    ).into();"
+        "code": "$$ = ($1.span, Stmt::ExprStmt(ExprStmt { expr: $1 })).into();"
       }
     },
     {
@@ -654,13 +644,13 @@
     {
       "left": "CastExpr",
       "right": [
-        "UnaryExpr",
+        "CastExpr",
         "'as'",
         "Type"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"type()\",\r\n            args: vec![*$1]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"type()\",\n            args: vec![*$1]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -688,7 +678,7 @@
       "left": "UnaryExpr",
       "right": [
         "'!'",
-        "CastExpr"
+        "UnaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -699,7 +689,7 @@
       "left": "UnaryExpr",
       "right": [
         "'~'",
-        "CastExpr"
+        "UnaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -710,7 +700,7 @@
       "left": "UnaryExpr",
       "right": [
         "'&'",
-        "CastExpr"
+        "UnaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -721,7 +711,7 @@
       "left": "UnaryExpr",
       "right": [
         "'*'",
-        "CastExpr"
+        "UnaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -732,7 +722,7 @@
       "left": "UnaryExpr",
       "right": [
         "'+'",
-        "CastExpr"
+        "UnaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -743,7 +733,7 @@
       "left": "UnaryExpr",
       "right": [
         "'-'",
-        "CastExpr"
+        "UnaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",

@@ -16,6 +16,7 @@ pub type DerivationResult = Result<Derivation, ParseError>;
 
 pub trait GrammarParserLR {
     fn get_parse_table(&self) -> &ParseTableLR;
+    fn get_parse_table_mut(&mut self) -> &mut ParseTableLR;
 
     fn parse_from_file(&self, grammar: &Grammar, file: &'static str) -> DerivationResult {
         let tokenizer = Tokenizer::from_file(file, grammar.get_token_types())?;

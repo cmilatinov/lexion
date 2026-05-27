@@ -19,6 +19,14 @@ mod serialize;
 struct ParserOptions {
     ident: Ident,
     path: String,
+    #[darling(default = "ParserOptions::default_parser")]
+    parser: String,
+}
+
+impl ParserOptions {
+    fn default_parser() -> String {
+        String::from("lalr1")
+    }
 }
 
 #[proc_macro_derive(Parser, attributes(grammar))]
@@ -32,7 +40,7 @@ pub fn derive_parser(input: TokenStream) -> TokenStream {
     let json: GrammarData = serde_json::from_reader(file).unwrap();
 
     let (start_symbol, parse_result) = symbol_result_impl(&json.rules);
-    let grammar = grammar_impl(&json);
+    let grammar = grammar_impl(&json, &opts.parser);
     let methods = methods_impl(&json.rules);
 
     quote! {
@@ -89,17 +97,21 @@ fn symbol_result_impl(rules: &[RuleData]) -> (proc_macro2::TokenStream, proc_mac
     (start_symbol, parse_result)
 }
 
-fn grammar_impl(json: &GrammarData) -> proc_macro2::TokenStream {
+fn grammar_impl(json: &GrammarData, parser_type: &str) -> proc_macro2::TokenStream {
+    let parser_ty = match parser_type {
+        "slr1" => quote::quote!(#FQGrammarParserSLR1),
+        _ => quote::quote!(#FQGrammarParserLALR1),
+    };
     let rules = rules_impl(&json.rules);
     let overrides = overrides_impl(&json.overrides);
     quote! {
         #FQLazyStatic {
             pub static ref GRAMMAR: #FQGrammar = #FQGrammar::from_rules(vec![#rules]);
-            pub static ref PARSER: #FQGrammarParserSLR1 = {
-                let mut parser = #FQGrammarParserSLR1::from_grammar(&GRAMMAR);
-                parser.table.apply_conflict_resolutions([
+            pub static ref PARSER: #parser_ty = {
+                let mut parser = #parser_ty::from_grammar(&GRAMMAR);
+                parser.get_parse_table_mut().apply_conflict_resolutions([
                     #overrides
-                ].iter());
+                ].iter()).expect("invalid parse table conflict resolution");
                 parser
             };
         }

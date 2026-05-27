@@ -22,6 +22,7 @@ pub(crate) struct FQGrammar;
 pub(crate) struct FQGrammarRule;
 pub(crate) struct FQGrammarParserLR;
 pub(crate) struct FQGrammarParserSLR1;
+pub(crate) struct FQGrammarParserLALR1;
 pub(crate) struct FQParseError;
 pub(crate) struct FQParser;
 pub(crate) struct FQTokenizer;
@@ -146,6 +147,11 @@ impl ToTokens for FQGrammarParserSLR1 {
     }
 }
 
+impl ToTokens for FQGrammarParserLALR1 {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        quote!(lexion_lib::parsers::GrammarParserLALR1).to_tokens(tokens)
+    }
+}
 impl ToTokens for FQParseError {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(lexion_lib::error::ParseError).to_tokens(tokens)
