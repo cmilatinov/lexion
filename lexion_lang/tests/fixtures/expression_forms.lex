@@ -4,5 +4,6 @@ fn choose(flag: bool) -> i32 {
 
 fn main() {
     let x = { choose(true) };
-    if true { let y = x; } else { let y = 0; };
+    if true { let y = x; } else { let y = 0; }
+    let z = x;
 }

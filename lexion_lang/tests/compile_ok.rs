@@ -67,6 +67,24 @@ fn test_cast_expression_parses() {
 }
 
 #[test]
+fn test_if_else_expr_statement_semicolon_optional() {
+    use lexion_lang::parser::ParserLexion;
+    use lexion_lib::Parser;
+    use std::sync::Arc;
+
+    let mut parser = ParserLexion::new();
+    assert!(parser
+        .parse_from_string(Arc::new(
+            "fn main() {
+                if true { let y = 1; } else { let y = 0; }
+                let z = { if true { 1 } else { 0 } };
+            }"
+            .into()
+        ))
+        .is_ok());
+}
+
+#[test]
 fn test_structs() {
     assert!(common::compile("structs.lex").is_ok());
 }
