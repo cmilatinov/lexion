@@ -52,14 +52,14 @@ Examples:
 - Use conventional commit prefixes in pull request titles, matching the commit style.
 - Supported pull request title prefixes are the same as commit prefixes: `fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, and `perf:`.
 - Do not add agent-identifying tags such as `[codex]`, `[claude]`, `[kiro]`, `[ai]`, or similar to pull request titles.
-- Every PR must reference at least one Todoist task from the `Lexion` project.
-- Every PR should reference at most three Todoist tasks, and the referenced tasks must be related by feature, compiler stage, parser algorithm, or implementation scope.
-- If no existing Todoist task matches the changes, create a new task in the appropriate `Lexion` section before opening the PR, then reference that new task in the PR body.
-- For maintenance-only, repo process, or steering changes, use or create a task in `Codebase Improvements` unless another section is clearly more specific.
+- Documentation-only PRs must not create Todoist tasks and should omit the `Tasks Addressed` section.
+- Non-documentation PRs must reference at least one Todoist task from the `Lexion` project.
+- Non-documentation PRs should reference at most three Todoist tasks, and the referenced tasks must be related by feature, compiler stage, parser algorithm, or implementation scope.
+- For non-documentation changes, if no existing Todoist task matches the changes, create a new task in the appropriate `Lexion` section before opening the PR, then reference that new task in the PR body.
 - PR descriptions must include:
   - `Summary`: summary plus motivation, 2 sentences maximum.
   - `Design Decisions`: architectural or design decisions made, if applicable.
-  - `Tasks Addressed`: Todoist tasks addressed by name.
+  - `Tasks Addressed`: Todoist tasks addressed by name; omit for documentation-only PRs.
   - `Tests Added`: new tests added, or `None` with a brief reason.
   - `Validation Performed`: validation run, always as the final section.
 - Follow `.steering/todoist.md` for Todoist task references in PR comments and descriptions.

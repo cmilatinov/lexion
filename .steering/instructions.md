@@ -51,6 +51,7 @@ The language compiler supports dump flags such as `parse_table`, `parse_trace`, 
 
 - Use Todoist as the planning source of truth when choosing the next task or opening a PR.
 - Use the `Lexion` Todoist project for this repo. If the project does not exist yet, create or request it before opening a PR that needs task references.
+- Do not create Todoist tasks for documentation-only changes. Docs-only PRs should omit Todoist and `Tasks Addressed` sections.
 - Keep one PR to one coherent parser, compiler, grammar, or documentation change.
 - Do not mix unrelated cleanup with behavior fixes.
 - When a PR is merged, close the linked Todoist task only if the merged code satisfies the task's stated goal or acceptance criteria.

@@ -6,6 +6,8 @@ inclusion: auto
 
 Use the Todoist `Lexion` project as the source of truth for planned work, scope selection, progress tracking, and PR references.
 
+Documentation-only changes are exempt from Todoist tracking. Do not create Todoist tasks for docs-only PRs, and omit Todoist or `Tasks Addressed` sections from those PR descriptions.
+
 ## Board Structure
 
 Use the actual `Lexion` board sections if they already exist. If the board is being created or reorganized, prefer these sections:
@@ -54,7 +56,7 @@ The repo is a parser/compiler workspace. Prefer work that advances this sequence
 
 ## Progress Cross-Reference Rules
 
-- Before starting user-directed implementation, find the matching `Lexion` Todoist task. If none exists and a PR will be opened, create one in the most appropriate section.
+- Before starting user-directed implementation, find the matching `Lexion` Todoist task. If none exists and a non-documentation PR will be opened, create one in the most appropriate section.
 - Add a Todoist comment when a task is partially completed, blocked, or split into follow-up work.
 - In commit and PR summaries, reference the Todoist task title and, when available, task id.
 - When the implementation reveals follow-up work, create or comment on Todoist instead of burying the information only in chat.
@@ -62,13 +64,14 @@ The repo is a parser/compiler workspace. Prefer work that advances this sequence
 
 ## PR Reference Rules
 
-- Every PR must reference at least one Todoist task from the `Lexion` project.
-- Every PR should reference at most three Todoist tasks, and those tasks must be related by feature, compiler stage, parser algorithm, or implementation scope.
+- Documentation-only PRs do not need Todoist references and must not create new Todoist tasks.
+- Non-documentation PRs must reference at least one Todoist task from the `Lexion` project.
+- Non-documentation PRs should reference at most three Todoist tasks, and those tasks must be related by feature, compiler stage, parser algorithm, or implementation scope.
 - Reference tasks by Todoist task title and, when available, task id in the PR body.
 - Include a concise "Architectural Decisions" section in the PR body when the code makes or changes a relevant design decision. Keep it brief and omit the section if there is no meaningful architecture impact.
-- If no existing Todoist item matches the PR changes, create a new task in the most appropriate `Lexion` section before opening the PR.
+- If no existing Todoist item matches a non-documentation PR, create a new task in the most appropriate `Lexion` section before opening the PR.
 - For maintenance-only changes, use `Codebase Improvements` unless another section is clearly more specific.
-- For repo/process/steering changes, create or use a `Codebase Improvements` or `Docs and Process` task.
+- For repo/process/steering changes, skip Todoist when the change is documentation-only; otherwise use `Codebase Improvements` unless another section is clearly more specific.
 - Mention created tasks explicitly in the PR body so the planning history remains connected to the code change.
 
 ## Merged PR Housekeeping

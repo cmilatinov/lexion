@@ -19,6 +19,8 @@ After a branch has been pushed or a PR has been opened, make review updates as n
 
 When asked what is or is not implemented, or asked to fetch or pick the next highest-priority task, consult the Todoist `Lexion` project first. For maintenance, process, or steering work, use `Codebase Improvements` or `Docs and Process` unless another section is clearly more specific.
 
+Do not create Todoist tasks for documentation-only changes. Docs-only PRs should omit Todoist and `Tasks Addressed` sections.
+
 When the user says a PR was merged and asks to continue or move on, sync `staging`, create a fresh Gitflow branch, pick the next highest-priority Todoist task plus tightly connected tasks, implement, validate, push, and open a PR.
 
 For parser or grammar changes, check `.steering/parsers.md` and run the language grammar conflict test. For compiler pipeline changes, check `.steering/compilers.md` and add focused fixtures or snapshots around the affected stage.
