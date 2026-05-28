@@ -123,7 +123,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $5.span),\r\n        Stmt::StructDeclStmt(StructDeclStmt {\r\n            name: ($2.span, $2.value).into(),\r\n            fields: $4\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $5.span),\n        Stmt::StructDeclStmt(StructDeclStmt {\n            name: ($2.span, $2.value).into(),\n            fields: $4\n        })\n    ).into();"
       }
     },
     {
@@ -170,7 +170,7 @@
       ],
       "reduction": {
         "ty": "Vec<Sourced<StructField>>",
-        "code": "$1.push($3);\r\n    $$ = $1;"
+        "code": "$1.push($3);\n    $$ = $1;"
       }
     },
     {
@@ -192,7 +192,7 @@
       ],
       "reduction": {
         "ty": "Sourced<StructField>",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        StructField {\r\n            name: ($1.span, $1.value).into(),\r\n            ty: $3\r\n        }\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        StructField {\n            name: ($1.span, $1.value).into(),\n            ty: $3\n        }\n    ).into();"
       }
     },
     {
@@ -206,7 +206,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Stmt::WhileStmt(WhileStmt {\r\n            condition: $2,\r\n            body: Box::new((\r\n                SpanBuilder::merge($3.span, $5.span),\r\n                Expr::BlockExpr(BlockExpr {\r\n                    stmts: $4,\r\n                    expr: None\r\n                }).into()\r\n            ).into())\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        Stmt::WhileStmt(WhileStmt {\n            condition: $2,\n            body: Box::new((\n                SpanBuilder::merge($3.span, $5.span),\n                Expr::BlockExpr(BlockExpr {\n                    stmts: $4,\n                    expr: None\n                }).into()\n            ).into())\n        })\n    ).into();"
       }
     },
     {
@@ -218,7 +218,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Stmt::ReturnStmt(ReturnStmt {\r\n            expr: Some($2)\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        Stmt::ReturnStmt(ReturnStmt {\n            expr: Some($2)\n        })\n    ).into();"
       }
     },
     {
@@ -229,7 +229,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Stmt::ReturnStmt(ReturnStmt {\r\n            expr: None\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $2.span),\n        Stmt::ReturnStmt(ReturnStmt {\n            expr: None\n        })\n    ).into();"
       }
     },
     {
@@ -313,7 +313,7 @@
       ],
       "reduction": {
         "ty": "SourcedExpr",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::BlockExpr(BlockExpr {\r\n            stmts: $2,\r\n            expr: $3\r\n        }).into()\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $4.span),\n        Expr::BlockExpr(BlockExpr {\n            stmts: $2,\n            expr: $3\n        }).into()\n    ).into();"
       }
     },
     {
@@ -391,7 +391,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"=\",\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"=\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -415,7 +415,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $5.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"?:\",\r\n            args: vec![*$1, *$3, *$5]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $5.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"?:\",\n            args: vec![*$1, *$3, *$5]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -437,7 +437,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"||\",\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"||\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -459,7 +459,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"&&\",\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"&&\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -481,7 +481,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"|\",\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"|\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -503,7 +503,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"^\",\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"^\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -525,7 +525,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: \"&\",\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"&\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -547,7 +547,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"==\" => \"==\",\r\n                \"!=\" => \"!=\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"==\" => \"==\",\n                \"!=\" => \"!=\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -569,7 +569,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"<\" => \"<\",\r\n                \"<=\" => \"<=\",\r\n                \">\" => \">\",\r\n                \">=\" => \">=\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"<\" => \"<\",\n                \"<=\" => \"<=\",\n                \">\" => \">\",\n                \">=\" => \">=\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -591,7 +591,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"<<\" => \"<<\",\r\n                \">>\" => \">>\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"<<\" => \"<<\",\n                \">>\" => \">>\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -613,7 +613,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -625,7 +625,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -647,7 +647,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"*\" => \"*\",\r\n                \"/\" => \"/\",\r\n                \"%\" => \"%\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"*\" => \"*\",\n                \"/\" => \"/\",\n                \"%\" => \"%\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -659,7 +659,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"*\" => \"*\",\r\n                \"/\" => \"/\",\r\n                \"%\" => \"%\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"*\" => \"*\",\n                \"/\" => \"/\",\n                \"%\" => \"%\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -671,7 +671,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $2.value.as_str() {\r\n                \"*\" => \"*\",\r\n                \"/\" => \"/\",\r\n                \"%\" => \"%\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$1, *$3]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $2.value.as_str() {\n                \"*\" => \"*\",\n                \"/\" => \"/\",\n                \"%\" => \"%\",\n                _ => unreachable!()\n            },\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -714,7 +714,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -725,7 +725,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -736,7 +736,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -747,7 +747,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -758,7 +758,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -769,7 +769,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -780,7 +780,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Expr::OperatorExpr(OperatorExpr {\r\n            operator: match $1.value.as_str() {\r\n                \"sizeof\" => \"sizeof\",\r\n                \"!\" => \"!\",\r\n                \"~\" => \"~\",\r\n                \"&\" => \"&\",\r\n                \"*\" => \"*\",\r\n                \"+\" => \"+\",\r\n                \"-\" => \"-\",\r\n                _ => unreachable!()\r\n            },\r\n            args: vec![*$2]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: match $1.value.as_str() {\n                \"sizeof\" => \"sizeof\",\n                \"!\" => \"!\",\n                \"~\" => \"~\",\n                \"&\" => \"&\",\n                \"*\" => \"*\",\n                \"+\" => \"+\",\n                \"-\" => \"-\",\n                _ => unreachable!()\n            },\n            args: vec![*$2]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -803,7 +803,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::IndexExpr(IndexExpr {\r\n            expr: $1,\r\n            index: $3\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $4.span),\n        Expr::IndexExpr(IndexExpr {\n            expr: $1,\n            index: $3\n        }).into()\n    ).into());"
       }
     },
     {
@@ -815,7 +815,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::CallExpr(CallExpr {\r\n            expr: $1,\r\n            args: vec![]\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::CallExpr(CallExpr {\n            expr: $1,\n            args: vec![]\n        }).into()\n    ).into());"
       }
     },
     {
@@ -828,7 +828,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $4.span),\r\n        Expr::CallExpr(CallExpr {\r\n            expr: $1,\r\n            args: $3\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $4.span),\n        Expr::CallExpr(CallExpr {\n            expr: $1,\n            args: $3\n        }).into()\n    ).into());"
       }
     },
     {
@@ -840,7 +840,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::MemberExpr(MemberExpr {\r\n            expr: $1,\r\n            ident: $3.value\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::MemberExpr(MemberExpr {\n            expr: $1,\n            ident: $3.value\n        }).into()\n    ).into());"
       }
     },
     {
@@ -852,7 +852,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Expr::MemberExpr(MemberExpr {\r\n            expr: $1,\r\n            ident: $3.value\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::MemberExpr(MemberExpr {\n            expr: $1,\n            ident: $3.value\n        }).into()\n    ).into());"
       }
     },
     {
@@ -872,7 +872,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        $1.span,\r\n        Expr::LitExpr(LitExpr {\r\n            lit: $1.value\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        $1.span,\n        Expr::LitExpr(LitExpr {\n            lit: $1.value\n        }).into()\n    ).into());"
       }
     },
     {
@@ -882,7 +882,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\r\n        $1.span,\r\n        Expr::IdentExpr(IdentExpr {\r\n            ident: $1.value\r\n        }).into()\r\n    ).into());"
+        "code": "$$ = Box::new((\n        $1.span,\n        Expr::IdentExpr(IdentExpr {\n            ident: $1.value\n        }).into()\n    ).into());"
       }
     },
     {
@@ -906,7 +906,7 @@
       ],
       "reduction": {
         "ty": "Vec<SourcedExpr>",
-        "code": "$1.push(*$3);\r\n    $$ = $1;"
+        "code": "$1.push(*$3);\n    $$ = $1;"
       }
     },
     {
@@ -968,7 +968,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Stmt::VarDeclStmt(VarDeclStmt {\r\n            decl: $2\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        Stmt::VarDeclStmt(VarDeclStmt {\n            decl: $2\n        })\n    ).into();"
       }
     },
     {
@@ -980,7 +980,7 @@
       ],
       "reduction": {
         "ty": "Sourced<VarDecl>",
-        "code": "$$ = match $2 {\r\n        Some(ty) => (\r\n            SpanBuilder::merge($1.span, ty.span),\r\n            VarDecl {\r\n                name: ($1.span, $1.value).into(),\r\n                ty: Some(ty),\r\n                init: $3\r\n            }\r\n        ).into(),\r\n        None => (\r\n            $1.span,\r\n            VarDecl {\r\n                name: ($1.span, $1.value).into(),\r\n                ty: None,\r\n                init: $3\r\n            }\r\n        ).into()\r\n    };"
+        "code": "$$ = match $2 {\n        Some(ty) => (\n            SpanBuilder::merge($1.span, ty.span),\n            VarDecl {\n                name: ($1.span, $1.value).into(),\n                ty: Some(ty),\n                init: $3\n            }\n        ).into(),\n        None => (\n            $1.span,\n            VarDecl {\n                name: ($1.span, $1.value).into(),\n                ty: None,\n                init: $3\n            }\n        ).into()\n    };"
       }
     },
     {
@@ -1033,7 +1033,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: Some($2),\r\n            is_vararg: $1.4,\r\n            is_extern: $1.5,\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        $1.3,\n        Stmt::FuncDeclStmt(FuncDeclStmt {\n            name: $1.0,\n            params: $1.1,\n            ty: $1.2,\n            body: Some($2),\n            is_vararg: $1.4,\n            is_extern: $1.5,\n        })\n    ).into();"
       }
     },
     {
@@ -1044,7 +1044,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\r\n        $1.3,\r\n        Stmt::FuncDeclStmt(FuncDeclStmt {\r\n            name: $1.0,\r\n            params: $1.1,\r\n            ty: $1.2,\r\n            body: None,\r\n            is_vararg: $1.4,\r\n            is_extern: $1.5,\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        $1.3,\n        Stmt::FuncDeclStmt(FuncDeclStmt {\n            name: $1.0,\n            params: $1.1,\n            ty: $1.2,\n            body: None,\n            is_vararg: $1.4,\n            is_extern: $1.5,\n        })\n    ).into();"
       }
     },
     {
@@ -1060,7 +1060,7 @@
       ],
       "reduction": {
         "ty": "(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool, bool)",
-        "code": "let mut ty = None;\r\n    let mut span = $2.span;\r\n    let is_extern = $1.is_some();\r\n    if let Some(sp) = $1 {\r\n        span = SpanBuilder::merge(sp, span);\r\n    }\r\n    match $7 {\r\n        Some(typ) => {\r\n            span = SpanBuilder::merge(span, typ.span);\r\n            ty = Some(typ);\r\n        }\r\n        None => {\r\n            span = SpanBuilder::merge(span, $6.span);\r\n        }\r\n    };\r\n    $$ = (\r\n        ($3.span, $3.value).into(),\r\n        $5.0,\r\n        ty,\r\n        span,\r\n        $5.1,\r\n        is_extern\r\n    );"
+        "code": "let mut ty = None;\n    let mut span = $2.span;\n    let is_extern = $1.is_some();\n    if let Some(sp) = $1 {\n        span = SpanBuilder::merge(sp, span);\n    }\n    match $7 {\n        Some(typ) => {\n            span = SpanBuilder::merge(span, typ.span);\n            ty = Some(typ);\n        }\n        None => {\n            span = SpanBuilder::merge(span, $6.span);\n        }\n    };\n    $$ = (\n        ($3.span, $3.value).into(),\n        $5.0,\n        ty,\n        span,\n        $5.1,\n        is_extern\n    );"
       }
     },
     {
@@ -1164,7 +1164,7 @@
       ],
       "reduction": {
         "ty": "Vec<Sourced<Param>>",
-        "code": "$1.push($3);\r\n    $$ = $1;"
+        "code": "$1.push($3);\n    $$ = $1;"
       }
     },
     {
@@ -1186,7 +1186,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Param>",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Param {\r\n            name: ($1.span, $1.value).into(),\r\n            ty: $3\r\n        }\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        Param {\n            name: ($1.span, $1.value).into(),\n            ty: $3\n        }\n    ).into();"
       }
     },
     {
@@ -1226,7 +1226,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Type>",
-        "code": "$$ = (\r\n        $1.span,\r\n        Type::Path(PathType { path: $1.value })\r\n    ).into();"
+        "code": "$$ = (\n        $1.span,\n        Type::Path(PathType { path: $1.value })\n    ).into();"
       }
     },
     {
@@ -1238,7 +1238,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Path>",
-        "code": "$1.value.segments.push(($3.span, $3.value).into());\r\n    $$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Path { segments: $1.value.segments }\r\n    ).into();"
+        "code": "$1.value.segments.push(($3.span, $3.value).into());\n    $$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        Path { segments: $1.value.segments }\n    ).into();"
       }
     },
     {
@@ -1248,7 +1248,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Path>",
-        "code": "$$ = (\r\n        $1.span,\r\n        Path {\r\n            segments: vec![($1.span, $1.value).into()]\r\n        }\r\n    ).into();"
+        "code": "$$ = (\n        $1.span,\n        Path {\n            segments: vec![($1.span, $1.value).into()]\n        }\n    ).into();"
       }
     },
     {
@@ -1259,7 +1259,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Type>",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Type::Reference(ReferenceType {\r\n            to: Box::new($2)\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $2.span),\n        Type::Reference(ReferenceType {\n            to: Box::new($2)\n        })\n    ).into();"
       }
     },
     {
@@ -1271,7 +1271,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Type>",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $3.span),\r\n        Type::Tuple(TupleType {\r\n            types: $2\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        Type::Tuple(TupleType {\n            types: $2\n        })\n    ).into();"
       }
     },
     {
@@ -1282,7 +1282,7 @@
       ],
       "reduction": {
         "ty": "Sourced<Type>",
-        "code": "$$ = (\r\n        SpanBuilder::merge($1.span, $2.span),\r\n        Type::Tuple(TupleType {\r\n            types: vec![]\r\n        })\r\n    ).into();"
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $2.span),\n        Type::Tuple(TupleType {\n            types: vec![]\n        })\n    ).into();"
       }
     },
     {
@@ -1294,7 +1294,7 @@
       ],
       "reduction": {
         "ty": "Vec<Sourced<Type>>",
-        "code": "$1.push($3);\r\n    $$ = $1;"
+        "code": "$1.push($3);\n    $$ = $1;"
       }
     },
     {

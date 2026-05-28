@@ -24,7 +24,10 @@ fn main() {
             } else {
                 r.right
             },
-            reduction: r.reduction,
+            reduction: r.reduction.map(|mut reduction| {
+                reduction.code = reduction.code.replace("\r\n", "\n");
+                reduction
+            }),
         })
         .collect::<Vec<_>>();
     let result = std::fs::OpenOptions::new()

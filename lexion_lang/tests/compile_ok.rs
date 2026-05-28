@@ -85,6 +85,32 @@ fn test_if_else_expr_statement_semicolon_optional() {
 }
 
 #[test]
+fn test_keyword_identifier_terminal_precedence() {
+    use lexion_lang::parser::ParserLexion;
+    use lexion_lib::tokenizer::Tokenizer;
+    use lexion_lib::Parser;
+    use std::sync::Arc;
+
+    fn first_token(source: &str) -> String {
+        let mut tokenizer =
+            Tokenizer::from_string(Arc::new(source.into()), ParserLexion::token_types());
+        tokenizer.next_token().unwrap().token
+    }
+
+    assert_eq!(first_token("let"), "'let'");
+    assert_eq!(first_token("letdown"), "'ident'");
+    assert_eq!(first_token("true"), "'bool_literal'");
+    assert_eq!(first_token("true_value"), "'ident'");
+    assert_eq!(first_token("as"), "'as'");
+    assert_eq!(first_token("assert"), "'ident'");
+    assert_eq!(first_token("->"), "'->'");
+    assert_eq!(first_token("=="), "'eq_op'");
+    assert_eq!(first_token(">="), "'rel_op'");
+    assert_eq!(first_token(">>"), "'shift_op'");
+    assert_eq!(first_token(", ..."), "'vararg_literal'");
+}
+
+#[test]
 fn test_structs() {
     assert!(common::compile("structs.lex").is_ok());
 }
