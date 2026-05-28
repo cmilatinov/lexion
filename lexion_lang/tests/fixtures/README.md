@@ -21,6 +21,6 @@ can add or update coverage without changing unrelated snapshots.
 
 ## Ignored Error Fixtures
 
-Ignored fixtures must include the Todoist task id in the `#[ignore = "..."]`
-reason. Remove the ignore only in the PR that implements the diagnostic and
-updates the snapshot.
+Ignored fixtures must include a concise `#[ignore = "..."]` reason describing
+the missing compiler behavior. Remove the ignore only in the PR that implements
+the diagnostic and updates the snapshot.
