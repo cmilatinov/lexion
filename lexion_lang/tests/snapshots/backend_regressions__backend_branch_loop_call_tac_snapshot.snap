@@ -31,7 +31,6 @@ $lend_1:
 
 $cthen_1:
   return total
-  goto $cend_1
 
 $celse_1:
   return 0

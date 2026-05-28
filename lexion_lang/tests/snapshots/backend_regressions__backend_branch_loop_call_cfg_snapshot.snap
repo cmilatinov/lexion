@@ -11,5 +11,3 @@ function 1..6
 2($lstart_1) -> 3($lend_1)
 3($lend_1) -> 4($cthen_1)
 3($lend_1) -> 5($celse_1)
-4($cthen_1) -> 6($cend_1)
-5($celse_1) -> 6($cend_1)
