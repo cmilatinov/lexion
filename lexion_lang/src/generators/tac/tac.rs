@@ -1,8 +1,8 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, Sourced,
-    SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, ReturnStmt,
+    Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -264,6 +264,13 @@ impl<'a> CodeGeneratorTac<'a> {
             (
                 TraversalType::Preorder,
                 AstNode::Stmt(Sourced {
+                    value: Stmt::ReturnStmt(stmt),
+                    ..
+                }),
+            ) => self.return_stmt(stmt),
+            (
+                TraversalType::Preorder,
+                AstNode::Stmt(Sourced {
                     value: Stmt::WhileStmt(stmt),
                     ..
                 }),
@@ -346,6 +353,11 @@ impl<'a> CodeGeneratorTac<'a> {
 
     fn expr_stmt(&mut self, stmt: &ExprStmt) {
         let _ = self.expr(&stmt.expr);
+    }
+
+    fn return_stmt(&mut self, stmt: &ReturnStmt) {
+        let value = stmt.expr.as_ref().map(|expr| self.expr(expr));
+        self._return(value);
     }
 
     fn expr(&mut self, expr: &SourcedExpr) -> Operand {

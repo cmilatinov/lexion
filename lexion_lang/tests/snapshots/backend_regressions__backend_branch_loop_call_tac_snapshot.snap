@@ -1,0 +1,40 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+add_one:
+  fn add_one
+  $t1 = value + 1
+  return $t1
+  endfn add_one
+
+main:
+  fn main
+  total = 0
+  i = 0
+
+$lstart_1:
+  $t1 = i < 3
+  if true == $t1 then goto $lend_1
+  param i
+  $t2 = call add_one
+  $t3 = total + $t2
+  total = $t3
+  $t4 = i + 1
+  i = $t4
+  goto $lstart_1
+
+$lend_1:
+  $t5 = total > 3
+  if false == $t5 then goto $celse_1
+
+$cthen_1:
+  return total
+  goto $cend_1
+
+$celse_1:
+  return 0
+
+$cend_1:
+  endfn main
