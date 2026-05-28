@@ -201,14 +201,11 @@ pub struct ReturnInstruction {
 
 impl Display for ReturnInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.value
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or(String::from(""))
-        )
+        if let Some(value) = &self.value {
+            write!(f, "return {value}")
+        } else {
+            write!(f, "return")
+        }
     }
 }
 

@@ -1,8 +1,8 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, Sourced,
-    SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, ReturnStmt,
+    Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -19,7 +19,6 @@ use crate::symbol_table::{SymbolTableEntry, SymbolTableEntryType, SymbolTableGra
 use generational_arena::Index;
 use lexion_lib::miette::SourceSpan;
 use lexion_lib::petgraph::prelude::NodeIndex;
-use lexion_lib::petgraph::visit::{Dfs, Reversed, Walker};
 use lexion_lib::petgraph::Direction;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -75,6 +74,22 @@ impl<'a> CodeGeneratorTac<'a> {
         block.instructions.push(instruction);
         let instruction = block.instructions.len() - 1;
         CodeLocation::new(self.current_block.unwrap(), instruction)
+    }
+
+    fn block_can_fallthrough(&self, block: NodeIndex) -> bool {
+        !matches!(
+            self.cfg[block]
+                .instructions
+                .last()
+                .map(|inst| &inst.instruction),
+            Some(Instruction::Jump(_) | Instruction::Return(_))
+        )
+    }
+
+    fn current_block_can_fallthrough(&self) -> bool {
+        self.current_block
+            .map(|block| self.block_can_fallthrough(block))
+            .unwrap_or(false)
     }
 
     fn assign(
@@ -264,6 +279,13 @@ impl<'a> CodeGeneratorTac<'a> {
             (
                 TraversalType::Preorder,
                 AstNode::Stmt(Sourced {
+                    value: Stmt::ReturnStmt(stmt),
+                    ..
+                }),
+            ) => self.return_stmt(stmt),
+            (
+                TraversalType::Preorder,
+                AstNode::Stmt(Sourced {
                     value: Stmt::WhileStmt(stmt),
                     ..
                 }),
@@ -317,7 +339,7 @@ impl<'a> CodeGeneratorTac<'a> {
             Operand::Placeholder,
             operators::EQUALS,
             condition,
-            Some(Operand::Literal(Lit::Boolean(true))),
+            Some(Operand::Literal(Lit::Boolean(false))),
         );
         self.loop_stack.push(PartialLoop {
             jump_instruction,
@@ -346,6 +368,11 @@ impl<'a> CodeGeneratorTac<'a> {
 
     fn expr_stmt(&mut self, stmt: &ExprStmt) {
         let _ = self.expr(&stmt.expr);
+    }
+
+    fn return_stmt(&mut self, stmt: &ReturnStmt) {
+        let value = stmt.expr.as_ref().map(|expr| self.expr(expr));
+        self._return(value);
     }
 
     fn expr(&mut self, expr: &SourcedExpr) -> Operand {
@@ -515,14 +542,16 @@ impl<'a> CodeGeneratorTac<'a> {
         let prev_block = self.current_block.unwrap();
 
         let label = self.labels.cond_then.next().to_string();
-        let then_block = self.block(label, true, false);
+        self.block(label, true, false);
         let then = self.expr(&expr.then);
         if let Some(temp) = &temp {
             self.copy(temp.clone(), then);
         }
 
         if let Some(else_) = &expr.else_ {
-            let jump = self.jump(Operand::Placeholder);
+            let then_falls_through = self.current_block_can_fallthrough();
+            let then_exit = self.current_block;
+            let jump = then_falls_through.then(|| self.jump(Operand::Placeholder));
 
             let label = self.labels.cond_else.next().to_string();
             if let Instruction::ConditionalJump(jump) = cond_jump.instruction_mut(&mut self.cfg) {
@@ -534,20 +563,39 @@ impl<'a> CodeGeneratorTac<'a> {
             if let Some(temp) = &temp {
                 self.copy(temp.clone(), else_);
             }
+            let else_falls_through = self.current_block_can_fallthrough();
+            let else_exit = self.current_block;
 
             let label = self.labels.cond_end.next().to_string();
-            if let Instruction::Jump(jump) = &mut jump.instruction_mut(&mut self.cfg) {
-                jump.target = Operand::Label(label.clone());
+            if let Some(jump_location) = jump {
+                if let Instruction::Jump(jump) = &mut jump_location.instruction_mut(&mut self.cfg) {
+                    jump.target = Operand::Label(label.clone());
+                }
             }
             let next_block = self.block(label, false, false);
-            self.cfg.add_edge(then_block, next_block, ());
-            self.cfg.add_edge(else_block, next_block, ());
+            if then_falls_through {
+                if let Some(then_exit) = then_exit {
+                    self.cfg.add_edge(then_exit, next_block, ());
+                }
+            }
+            if else_falls_through {
+                if let Some(else_exit) = else_exit {
+                    self.cfg.add_edge(else_exit, next_block, ());
+                }
+            }
         } else {
+            let then_falls_through = self.current_block_can_fallthrough();
+            let then_exit = self.current_block;
             let label = self.labels.cond_end.next().to_string();
             if let Instruction::ConditionalJump(jump) = cond_jump.instruction_mut(&mut self.cfg) {
                 jump.target = Operand::Label(label.clone());
             }
-            let next_block = self.block(label, true, false);
+            let next_block = self.block(label, false, false);
+            if then_falls_through {
+                if let Some(then_exit) = then_exit {
+                    self.cfg.add_edge(then_exit, next_block, ());
+                }
+            }
             self.cfg.add_edge(prev_block, next_block, ());
         }
 
@@ -641,12 +689,7 @@ impl<'a> CodeGeneratorTac<'a> {
     fn liveness_analysis(&mut self) -> Vec<LivenessInterval> {
         self.liveness_read_written();
 
-        let exit_block = self.current_block.unwrap();
-        let reversed_blocks = Reversed(&self.cfg.graph);
-
-        let mut worklist = Dfs::new(&reversed_blocks, exit_block)
-            .iter(&reversed_blocks)
-            .collect::<VecDeque<_>>();
+        let mut worklist = self.cfg.node_indices().collect::<VecDeque<_>>();
         let mut in_worklist = worklist.iter().cloned().collect::<HashSet<_>>();
 
         while let Some(block_idx) = worklist.pop_front() {
@@ -691,38 +734,56 @@ impl<'a> CodeGeneratorTac<'a> {
 
     pub fn liveness_intervals(&self) -> Vec<LivenessInterval> {
         let mut result: Vec<LivenessInterval> = Default::default();
-        let mut active_intervals: HashMap<String, LivenessInterval> = HashMap::new();
-        for node in self.cfg.node_indices() {
-            let block = &self.cfg[node];
-            for (inst_idx, inst) in block.instructions.iter().enumerate() {
-                let loc = CodeLocation::new(node, inst_idx);
-                for live_var in &inst.live.input {
-                    active_intervals
-                        .entry(live_var.clone())
-                        .or_insert_with(|| LivenessInterval {
-                            variable: live_var.clone(),
-                            span: CodeSpan::from_location(loc),
-                            uses: Vec::new(),
-                        });
-                }
-                for read_var in &inst.live.read {
-                    if let Some(interval) = active_intervals.get_mut(read_var) {
-                        interval.uses.push(loc);
+
+        for func in &self.cfg.functions {
+            let mut intervals: HashMap<String, LivenessInterval> = HashMap::new();
+
+            for node in self.cfg.function_nodes(func) {
+                let block = &self.cfg[node];
+                for (inst_idx, inst) in block.instructions.iter().enumerate() {
+                    let loc = CodeLocation::new(node, inst_idx);
+                    let after = CodeLocation::new(node, inst_idx + 1);
+
+                    for live_var in &inst.live.input {
+                        Self::record_interval_location(&mut intervals, live_var, loc, after);
+                    }
+                    for live_var in &inst.live.output {
+                        Self::record_interval_location(&mut intervals, live_var, loc, after);
+                    }
+                    for written_var in &inst.live.written {
+                        if inst.live.output.contains(written_var) {
+                            Self::record_interval_location(&mut intervals, written_var, loc, after);
+                        }
+                    }
+                    for read_var in &inst.live.read {
+                        Self::record_interval_location(&mut intervals, read_var, loc, after);
+                        if let Some(interval) = intervals.get_mut(read_var) {
+                            interval.uses.push(loc);
+                        }
                     }
                 }
-                let (mut still_live, now_dead) = active_intervals
-                    .drain()
-                    .partition::<HashMap<_, _>, _>(|(v, _)| inst.live.output.contains(v));
-                for (_, interval) in still_live.iter_mut() {
-                    interval.span.end = loc;
-                }
-                active_intervals = still_live;
-                for (_, mut interval) in now_dead {
-                    interval.span.end = CodeLocation::new(node, inst_idx + 1);
-                    result.push(interval);
-                }
             }
+
+            result.extend(intervals.into_values());
         }
+
         result
+    }
+
+    fn record_interval_location(
+        intervals: &mut HashMap<String, LivenessInterval>,
+        variable: &str,
+        start: CodeLocation,
+        end: CodeLocation,
+    ) {
+        let interval = intervals
+            .entry(variable.to_string())
+            .or_insert_with(|| LivenessInterval {
+                variable: variable.to_string(),
+                span: CodeSpan::new(start, end),
+                uses: Vec::new(),
+            });
+        interval.span.start = interval.span.start.min(start);
+        interval.span.end = interval.span.end.max(end);
     }
 }
