@@ -743,7 +743,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn begin_struct_stmt(&mut self, stmt: &StructDeclStmt) {}
+    fn begin_struct_stmt(&mut self, _stmt: &StructDeclStmt) {}
 
     fn begin_while_stmt(&mut self, diag: &mut dyn DiagnosticConsumer, stmt: &mut WhileStmt) {
         self.tc(diag, &mut stmt.condition, Some(self.types.bool()));

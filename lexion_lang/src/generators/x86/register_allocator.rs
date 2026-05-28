@@ -27,7 +27,7 @@ pub struct LinearRegisterAllocator<'a> {
     registers: Vec<Register>,
     active: Vec<AssignedLivenessInterval>,
     available: VecDeque<Register>,
-    cfg: &'a ControlFlowGraph,
+    _cfg: &'a ControlFlowGraph,
     stack_offset: usize,
 }
 
@@ -41,7 +41,7 @@ impl<'a> PipelineStage for LinearRegisterAllocator<'a> {
             available: VecDeque::from_iter(registers.iter().cloned()),
             registers,
             active: Default::default(),
-            cfg,
+            _cfg: cfg,
             stack_offset: 0,
         }
     }

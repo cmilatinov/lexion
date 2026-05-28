@@ -15,7 +15,7 @@ impl<'a> Display for AstView<'a> {
         writeln!(f, "[Program]")?;
         let mut stack = Vec::new();
         let mut err = Ok(());
-        AstVisitor::new().visit(&self.0, |ty, node, node_ty| {
+        AstVisitor::new().visit(self.0, |ty, node, node_ty| {
             if ty == TraversalType::Preorder {
                 let name = match node {
                     AstNode::Stmt(stmt) => stmt.value.as_ref(),
