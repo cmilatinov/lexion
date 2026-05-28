@@ -36,22 +36,22 @@ fn grammar_conflicts(
 
 #[test]
 fn test_variables() {
-    assert!(common::compile("variables.lex").is_ok());
+    assert!(common::compile("semantics/variables.lex").is_ok());
 }
 
 #[test]
 fn test_functions() {
-    assert!(common::compile("functions.lex").is_ok());
+    assert!(common::compile("semantics/functions.lex").is_ok());
 }
 
 #[test]
 fn test_control_flow() {
-    assert!(common::compile("control_flow.lex").is_ok());
+    assert!(common::compile("control_flow/if_else_returns.lex").is_ok());
 }
 
 #[test]
 fn test_expression_forms() {
-    assert!(common::compile("expression_forms.lex").is_ok());
+    assert!(common::compile("parser/expression_forms.lex").is_ok());
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn test_keyword_identifier_terminal_precedence() {
 
 #[test]
 fn test_structs() {
-    assert!(common::compile("structs.lex").is_ok());
+    assert!(common::compile("semantics/structs.lex").is_ok());
 }
 
 #[test]
