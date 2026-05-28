@@ -324,7 +324,7 @@ impl<'a> CodeGeneratorTac<'a> {
             Operand::Placeholder,
             operators::EQUALS,
             condition,
-            Some(Operand::Literal(Lit::Boolean(true))),
+            Some(Operand::Literal(Lit::Boolean(false))),
         );
         self.loop_stack.push(PartialLoop {
             jump_instruction,

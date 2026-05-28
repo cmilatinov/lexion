@@ -16,7 +16,7 @@ main:
 
 $lstart_1:
   $t1 = i < 3
-  if true == $t1 then goto $lend_1
+  if false == $t1 then goto $lend_1
   param i
   $t2 = call add_one
   $t3 = total + $t2
