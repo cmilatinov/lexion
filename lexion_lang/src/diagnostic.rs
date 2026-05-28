@@ -95,6 +95,12 @@ impl LexionDiagnosticList {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
     }
+
+    pub fn has_errors(&self) -> bool {
+        self.list
+            .iter()
+            .any(|diagnostic| matches!(diagnostic, LexionDiagnostic::Error(_)))
+    }
 }
 
 pub trait DiagnosticConsumer {

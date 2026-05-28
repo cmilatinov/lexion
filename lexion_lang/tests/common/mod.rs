@@ -3,7 +3,7 @@
 use enumflags2::BitFlag;
 use lexion_lang::compiler::{LexionCompiler, LexionCompilerOptions};
 use lexion_lang::{Dump, DumpFlags};
-use lexion_lib::miette::NamedSource;
+use lexion_lib::miette::{GraphicalReportHandler, GraphicalTheme, NamedSource};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -42,7 +42,7 @@ fn compile_with_options(
 ) -> Result<(), Vec<String>> {
     let path = fixture_path(fixture);
     let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
-    let source_name = path.to_string_lossy().into_owned();
+    let source_name = path.to_string_lossy().replace('\\', "/");
     let source = NamedSource::new(source_name, source_code);
     let options = LexionCompilerOptions {
         dump_flags,
@@ -51,5 +51,16 @@ fn compile_with_options(
     LexionCompiler::new(options)
         .exec(source)
         .map(|_| ())
-        .map_err(|diag| diag.list.iter().map(|d| d.to_string()).collect())
+        .map_err(|diag| {
+            diag.list
+                .into_iter()
+                .map(|diagnostic| {
+                    let mut rendered = String::new();
+                    GraphicalReportHandler::new_themed(GraphicalTheme::none())
+                        .render_report(&mut rendered, &diagnostic)
+                        .expect("failed to render diagnostic");
+                    rendered
+                })
+                .collect()
+        })
 }

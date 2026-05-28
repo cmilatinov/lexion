@@ -702,33 +702,24 @@ impl<'a> TypeChecker<'a> {
         stmt: &mut ReturnStmt,
         span: SourceSpan,
     ) {
-        let Some(parent_ty) = self
-            .table
-            .parent_entry(self.current_scope)
-            .and_then(|(_, _, entry)| entry.var_type)
-        else {
+        let mut scope = self.current_scope;
+        let mut fn_ret_ty = None;
+        while let Some((parent_scope, _, entry)) = self.table.parent_entry(scope) {
+            if let Some(parent_ty) = entry.var_type {
+                if let Some(Type::FunctionType(FunctionType { return_type, .. })) =
+                    self.types.get(parent_ty)
+                {
+                    fn_ret_ty = Some(*return_type);
+                    break;
+                }
+            }
+            scope = parent_scope;
+        }
+        let Some(fn_ret_ty) = fn_ret_ty else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),
                 span,
                 message: String::from("return statement outside of function"),
-            });
-            return;
-        };
-        let Some(fn_ret_ty) = self.types.get(parent_ty).and_then(|ty| {
-            if let Type::FunctionType(FunctionType {
-                return_type: fn_ret_ty,
-                ..
-            }) = ty
-            {
-                Some(*fn_ret_ty)
-            } else {
-                None
-            }
-        }) else {
-            diag.error(LexionDiagnosticError {
-                src: self.src.clone(),
-                span,
-                message: String::from("expected return statement to be within a function"),
             });
             return;
         };
