@@ -409,9 +409,6 @@ impl<'a> TypeChecker<'a> {
             }
             (TraversalType::Preorder, _) => AstVisitorAction::Continue,
             _ => {
-                if let AstNode::Expr(expr) = node {
-                    println!("{expr:?}");
-                }
                 result = false;
                 AstVisitorAction::Terminate
             }
