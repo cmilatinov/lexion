@@ -13,6 +13,16 @@ pub struct AssignedLivenessInterval {
     location: Location,
 }
 
+impl AssignedLivenessInterval {
+    pub fn interval(&self) -> &LivenessInterval {
+        &self.interval
+    }
+
+    pub fn location(&self) -> &Location {
+        &self.location
+    }
+}
+
 pub struct LinearRegisterAllocator<'a> {
     registers: Vec<Register>,
     active: Vec<AssignedLivenessInterval>,

@@ -1,15 +1,29 @@
+use iced_x86::Register;
 use lexion_lang::diagnostic::LexionDiagnosticList;
-use lexion_lang::generators::tac::instructions::ControlFlowGraph;
+use lexion_lang::generators::tac::instructions::{
+    ControlFlowGraph, FunctionRange, LivenessInterval,
+};
 use lexion_lang::generators::tac::CodeGeneratorTac;
+use lexion_lang::generators::x86::{AssignedLivenessInterval, LinearRegisterAllocator};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
 use lexion_lang::type_checker::TypeChecker;
 use lexion_lib::miette::NamedSource;
 use lexion_lib::petgraph::visit::EdgeRef;
+use std::collections::HashMap;
 use std::sync::Arc;
 
+struct BackendOutput {
+    cfg: ControlFlowGraph,
+    intervals: HashMap<FunctionRange, Vec<LivenessInterval>>,
+}
+
 fn compile_cfg(fixture: &str) -> ControlFlowGraph {
+    compile_backend(fixture).cfg
+}
+
+fn compile_backend(fixture: &str) -> BackendOutput {
     let path = format!("tests/fixtures/{fixture}");
     let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
     let source = NamedSource::new(&path, source_code);
@@ -25,10 +39,10 @@ fn compile_cfg(fixture: &str) -> ControlFlowGraph {
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
-    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+    let (cfg, intervals) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
-    cfg
+    BackendOutput { cfg, intervals }
 }
 
 fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
@@ -87,6 +101,110 @@ fn cfg_snapshot(cfg: &ControlFlowGraph) -> String {
     format!("{}\n\n{}", functions.join("\n"), edges.join("\n"))
 }
 
+fn liveness_snapshot(output: &BackendOutput) -> String {
+    sorted_intervals(&output.intervals)
+        .into_iter()
+        .map(|(range, interval)| format_interval(range, interval))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn allocation_snapshot(output: BackendOutput) -> String {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let assigned = LinearRegisterAllocator::new((
+        &output.cfg,
+        vec![
+            Register::RAX,
+            Register::RCX,
+            Register::RDX,
+            Register::RSI,
+            Register::RDI,
+            Register::R8,
+            Register::R9,
+            Register::R10,
+            Register::R11,
+        ],
+    ))
+    .exec(&mut diagnostics, output.intervals)
+    .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    sorted_assignments(&assigned)
+        .into_iter()
+        .map(|(range, assigned)| {
+            format!(
+                "{} -> {:?}",
+                format_interval(range, assigned.interval()),
+                assigned.location()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn sorted_intervals(
+    intervals: &HashMap<FunctionRange, Vec<LivenessInterval>>,
+) -> Vec<(FunctionRange, &LivenessInterval)> {
+    let mut result = intervals
+        .iter()
+        .flat_map(|(range, intervals)| intervals.iter().map(|interval| (*range, interval)))
+        .collect::<Vec<_>>();
+    result.sort_by_key(|(range, interval)| {
+        (
+            range.start.index(),
+            range.end.index(),
+            interval.variable.clone(),
+            interval.span.start.block.index(),
+            interval.span.start.instruction,
+            interval.span.end.block.index(),
+            interval.span.end.instruction,
+        )
+    });
+    result
+}
+
+fn sorted_assignments(
+    assigned: &HashMap<FunctionRange, Vec<AssignedLivenessInterval>>,
+) -> Vec<(FunctionRange, &AssignedLivenessInterval)> {
+    let mut result = assigned
+        .iter()
+        .flat_map(|(range, assigned)| assigned.iter().map(|assigned| (*range, assigned)))
+        .collect::<Vec<_>>();
+    result.sort_by_key(|(range, assigned)| {
+        let interval = assigned.interval();
+        (
+            range.start.index(),
+            range.end.index(),
+            interval.variable.clone(),
+            interval.span.start.block.index(),
+            interval.span.start.instruction,
+            interval.span.end.block.index(),
+            interval.span.end.instruction,
+            format!("{:?}", assigned.location()),
+        )
+    });
+    result
+}
+
+fn format_interval(range: FunctionRange, interval: &LivenessInterval) -> String {
+    let uses = interval
+        .uses
+        .iter()
+        .map(|loc| format!("{}:{}", loc.block.index(), loc.instruction))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "function {}..{} {} [{}:{}..{}:{}] uses [{}]",
+        range.start.index(),
+        range.end.index(),
+        interval.variable,
+        interval.span.start.block.index(),
+        interval.span.start.instruction,
+        interval.span.end.block.index(),
+        interval.span.end.instruction,
+        uses
+    )
+}
+
 #[test]
 fn backend_branch_loop_call_tac_snapshot() {
     let cfg = compile_cfg("backend/branch_loop_call.lex");
@@ -99,4 +217,18 @@ fn backend_branch_loop_call_cfg_snapshot() {
     let cfg = compile_cfg("backend/branch_loop_call.lex");
 
     insta::assert_snapshot!(cfg_snapshot(&cfg));
+}
+
+#[test]
+fn backend_branch_loop_call_liveness_snapshot() {
+    let output = compile_backend("backend/branch_loop_call.lex");
+
+    insta::assert_snapshot!(liveness_snapshot(&output));
+}
+
+#[test]
+fn backend_branch_loop_call_register_allocation_snapshot() {
+    let output = compile_backend("backend/branch_loop_call.lex");
+
+    insta::assert_snapshot!(allocation_snapshot(output));
 }
