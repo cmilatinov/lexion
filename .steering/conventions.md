@@ -64,6 +64,7 @@ inclusion: auto
 ## Formatting And Tooling
 
 - Before committing Rust changes, run `cargo fmt --all`.
+- Before committing Rust, parser, compiler, grammar, or test changes, run `cargo clippy --workspace --all-targets -- -D warnings` and fix all warnings.
 - Prefer `cargo test -p <crate>` for focused validation and `cargo test` for cross-crate parser/compiler changes.
 - Do not commit `target/` artifacts.
 - Do not commit dump output unless explicitly requested.

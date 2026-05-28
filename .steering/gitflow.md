@@ -12,7 +12,8 @@ inclusion: auto
 - Always create a separate work branch for changes.
 - Use Gitflow-style branch names.
 - Branch names should use one of these prefixes: `fix/`, `feature/`, `chore/`, `docs/`, `refactor/`, `perf/`.
-- If work depends on a feature that is not yet merged, branch from that feature branch and create the PR on top of that feature's PR.
+- Prefer branches that start from current `staging` and PRs that can merge independently.
+- Avoid stacked PR chains unless an unmerged dependency is required; when stacking is unavoidable, keep the dependency explicit and narrow.
 - Use a dedicated git worktree for repository changes when practical. Create the worktree from the intended base branch and keep each worktree scoped to one branch or PR.
 - If there are uncommitted changes in another worktree, leave them untouched and do the new work in a separate worktree instead of stashing or switching branches in place.
 
