@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x type 'Point' has no member 'y'
+   ,-[tests/fixtures/errors/semantics/invalid_member.lex:6:12]
+ 5 | fn get_y(p: Point) -> i32 {
+ 6 |     return p.y;
+   :            ^|^
+   :             `-- here
+ 7 | }
+   `----

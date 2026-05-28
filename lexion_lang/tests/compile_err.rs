@@ -43,6 +43,30 @@ fn test_invalid_tuple_index() {
 }
 
 #[test]
+fn test_invalid_member() {
+    let errors = common::assert_fails("errors/semantics/invalid_member.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_if_branch_type_mismatch() {
+    let errors = common::assert_fails("errors/semantics/if_branch_type_mismatch.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_if_without_else_must_be_unit() {
+    let errors = common::assert_fails("errors/semantics/if_without_else_value.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_while_condition_must_be_bool() {
+    let errors = common::assert_fails("errors/semantics/while_condition_must_be_bool.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn test_undefined_var() {
     let errors = common::assert_fails("errors/semantics/undefined_var.lex");
     insta::assert_snapshot!(errors.join("\n"));

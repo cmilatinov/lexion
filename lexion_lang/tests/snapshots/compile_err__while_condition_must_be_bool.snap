@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x expected type 'bool', instead got 'i32'
+   ,-[tests/fixtures/errors/semantics/while_condition_must_be_bool.lex:2:11]
+ 1 | fn main() {
+ 2 |     while 1 {
+   :           |
+   :           `-- here
+ 3 |         let value = 0;
+   `----
