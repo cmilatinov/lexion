@@ -156,19 +156,12 @@ impl<'a> TypeChecker<'a> {
 
     fn if_(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &mut IfExpr) -> Option<Index> {
         self.tc(diag, &mut expr.condition, Some(self.types.bool()))?;
-        let then = self.tc(
-            diag,
-            &mut expr.then,
-            if expr.else_.is_some() {
-                None
-            } else {
-                Some(self.types.unit())
-            },
-        );
         if let Some(else_) = &mut expr.else_ {
+            let then = self.tc(diag, &mut expr.then, None);
             self.tc(diag, else_, Some(then.unwrap_or(self.types.unknown())))
         } else {
-            then
+            self.tc(diag, &mut expr.then, Some(self.types.unit()));
+            Some(self.types.unit())
         }
     }
 

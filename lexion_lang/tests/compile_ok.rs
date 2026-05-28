@@ -60,6 +60,11 @@ fn test_core_expression_typing() {
 }
 
 #[test]
+fn test_control_flow_expression_typing() {
+    common::assert_compiles("control_flow/expression_typing.lex");
+}
+
+#[test]
 fn test_cast_expression_parses() {
     use lexion_lang::parser::ParserLexion;
     use lexion_lib::Parser;
