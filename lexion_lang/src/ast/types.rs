@@ -56,11 +56,15 @@ pub enum PrimitiveType {
 
 pub struct PrimitiveTypeLayout {
     primitive: PrimitiveType,
+    _bitness: Bitness,
 }
 
 impl PrimitiveType {
-    pub fn layout(&self, _bitness: Bitness) -> PrimitiveTypeLayout {
-        PrimitiveTypeLayout { primitive: *self }
+    pub fn layout(&self, bitness: Bitness) -> PrimitiveTypeLayout {
+        PrimitiveTypeLayout {
+            primitive: *self,
+            _bitness: bitness,
+        }
     }
 }
 
