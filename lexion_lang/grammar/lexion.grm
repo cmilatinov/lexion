@@ -1,24 +1,27 @@
 Program -> StmtList [Vec<SourcedStmt>] {{ $$ = $1; }} ;
 
-StmtList -> StmtList Stmt [Vec<SourcedStmt>] {{ $1.push($2); $$ = $1; }} ;
+StmtList -> StmtList StmtChain [Vec<SourcedStmt>] {{ $1.extend($2); $$ = $1; }} ;
 StmtList -> [Vec<SourcedStmt>] {{ $$ = vec![]; }} ;
 
-Stmt -> ReturnStmt 
-      | ExprStmt 
+StmtChain -> Stmt
+[Vec<SourcedStmt>] {{
+    $$ = vec![$1];
+}} ;
+StmtChain -> IfElseExprStmt StmtChain
+[Vec<SourcedStmt>] {{
+    let mut stmts = vec![$1];
+    stmts.extend($2);
+    $$ = stmts;
+}} ;
+
+Stmt -> ReturnStmt
+      | ExprStmt
       | WhileStmt
-      | VarDeclStmt 
-      | FuncDeclStmt 
-      | StructDeclStmt 
+      | VarDeclStmt
+      | FuncDeclStmt
+      | StructDeclStmt
 [SourcedStmt] {{
     $$ = $1;
-}} ;
-Stmt -> IfExpr [SourcedStmt] {{
-    $$ = (
-        $1.span,
-        Stmt::ExprStmt(ExprStmt {
-            expr: $1
-        })
-    ).into();
 }} ;
 
 StructDeclStmt -> 'struct' 'ident' '{' StructFields '}' 
@@ -97,12 +100,12 @@ ReturnStmt -> 'return' ';'
 
 ExprStmt -> Expr ';'
 [SourcedStmt] {{
-    $$ = (
-        $1.span,
-        Stmt::ExprStmt(ExprStmt {
-            expr: $1
-        })
-    ).into();
+    $$ = ($1.span, Stmt::ExprStmt(ExprStmt { expr: $1 })).into();
+}} ;
+
+IfElseExprStmt -> IfElseExpr
+[SourcedStmt] {{
+    $$ = ($1.span, Stmt::ExprStmt(ExprStmt { expr: $1 })).into();
 }} ;
 
 Expr -> IfExpr
@@ -110,7 +113,7 @@ Expr -> IfExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
 }} ;
-Expr -> BlockExpr 
+Expr -> BlockExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new($1);
 }} ;
@@ -129,14 +132,36 @@ BlockExpr -> '{' StmtList OptExpr '}'
     ).into();
 }} ;
 
-IfExpr -> 'if' Expr BlockExpr OptElseExpr
+IfExpr -> IfElseExpr
+[Box<SourcedExpr>] {{
+    $$ = $1;
+}} ;
+
+IfExpr -> IfThenExpr
+[Box<SourcedExpr>] {{
+    $$ = $1;
+}} ;
+
+IfThenExpr -> 'if' Expr BlockExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
-        SpanBuilder::merge($1.span, if $4.is_some() { $4.as_ref().unwrap().span } else { $3.span }),
+        SpanBuilder::merge($1.span, $3.span),
         Expr::IfExpr(IfExpr {
             condition: $2,
             then: Box::new($3),
-            else_: $4
+            else_: None
+        }).into()
+    ).into());
+}} ;
+
+IfElseExpr -> 'if' Expr BlockExpr 'else' BlockOrIfExpr
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $5.span),
+        Expr::IfExpr(IfExpr {
+            condition: $2,
+            then: Box::new($3),
+            else_: Some($5)
         }).into()
     ).into());
 }} ;
@@ -148,14 +173,6 @@ BlockOrIfExpr -> IfExpr
 BlockOrIfExpr -> BlockExpr 
 [Box<SourcedExpr>] {{
     $$ = Box::new($1);
-}} ;
-
-OptElseExpr -> 'else' BlockOrIfExpr 
-[Option<Box<SourcedExpr>>] {{ 
-    $$ = Some($2);
-}} ;
-OptElseExpr -> [Option<Box<SourcedExpr>>] {{ 
-    $$ = None;
 }} ;
 
 AssignExpr -> UnaryExpr '=' AssignExpr
@@ -361,7 +378,7 @@ MulExpr -> CastExpr
     $$ = $1;
 }} ;
 
-CastExpr -> UnaryExpr 'as' Type
+CastExpr -> CastExpr 'as' Type
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
@@ -377,12 +394,12 @@ CastExpr -> UnaryExpr
 }} ;
 
 UnaryExpr -> 'sizeof' UnaryExpr |
-             '!' CastExpr |
-             '~' CastExpr |
-             '&' CastExpr |
-             '*' CastExpr |
-             '+' CastExpr |
-             '-' CastExpr
+             '!' UnaryExpr |
+             '~' UnaryExpr |
+             '&' UnaryExpr |
+             '*' UnaryExpr |
+             '+' UnaryExpr |
+             '-' UnaryExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $2.span),

@@ -1,7 +1,7 @@
 use crate::grammar::Grammar;
 use crate::parsers::items::{CanonicalCollectionGraph, LR0Item, LRItem};
 use crate::parsers::{GrammarParserLR, ParseTableLR};
-use crate::tokenizer::tokens::EOF;
+use crate::tokenizer::tokens::{EOF, EPSILON};
 use petgraph::prelude::{EdgeIndex, EdgeRef, NodeIndex};
 use petgraph::visit::IntoEdgesDirected;
 use petgraph::Direction;
@@ -213,10 +213,14 @@ impl<'a> SetConstructorLALR1<'a> {
         let mut lookahead_sets = HashMap::new();
         for (index, item) in self.final_state_items() {
             let rule = item.get_rule(self.grammar);
+            let rhs: &[String] = match rule.right.as_slice() {
+                [symbol] if symbol == EPSILON => &[],
+                rhs => rhs,
+            };
             // Trace back through the rule's RHS to find predecessor states,
             // then look up the goto transition for rule.left from each predecessor.
             let lookaheads: HashSet<String> = self
-                .trace_backwards(index, &rule.right)
+                .trace_backwards(index, rhs)
                 .into_iter()
                 .flat_map(|pred| {
                     self.collection
@@ -253,10 +257,18 @@ impl GrammarParserLALR1 {
             lookahead_sets,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn lookahead_sets(&self) -> &HashMap<(usize, LR0Item), HashSet<String>> {
+        &self.lookahead_sets
+    }
 }
 
 impl GrammarParserLR for GrammarParserLALR1 {
     fn get_parse_table(&self) -> &ParseTableLR {
         &self.table
+    }
+    fn get_parse_table_mut(&mut self) -> &mut ParseTableLR {
+        &mut self.table
     }
 }

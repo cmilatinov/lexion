@@ -12,6 +12,9 @@ impl GrammarParserLR for GrammarParserLR0 {
     fn get_parse_table(&self) -> &ParseTableLR {
         &self.table
     }
+    fn get_parse_table_mut(&mut self) -> &mut ParseTableLR {
+        &mut self.table
+    }
 }
 
 impl GrammarParserLR0 {

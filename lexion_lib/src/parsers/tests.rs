@@ -1,7 +1,11 @@
 use crate::grammar::{Derivation, Grammar, GrammarRule};
-use crate::parsers::{GrammarParserLALR1, GrammarParserLR, GrammarParserSLR1, ParseTableAction};
+use crate::parsers::items::LR0Item;
+use crate::parsers::{
+    GrammarParserLALR1, GrammarParserLR, GrammarParserSLR1, ParseTableAction, ParseTableOverride,
+};
 use crate::tokenizer::tokens::*;
 use petgraph::visit::Dfs;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tabled::builder::Builder;
 use tabled::settings::{Alignment, Style};
@@ -56,6 +60,87 @@ fn trivial_grammar() -> Grammar {
         left: "S".into(),
         right: vec!["'a'".into()],
     }])
+}
+
+/// Program -> List
+/// List -> List Item
+/// List -> epsilon
+/// Item -> 'a'
+fn nullable_list_grammar() -> Grammar {
+    Grammar::from_rules(vec![
+        GrammarRule {
+            left: "Program".into(),
+            right: vec!["List".into()],
+        },
+        GrammarRule {
+            left: "List".into(),
+            right: vec!["List".into(), "Item".into()],
+        },
+        GrammarRule {
+            left: "List".into(),
+            right: vec![EPSILON.into()],
+        },
+        GrammarRule {
+            left: "Item".into(),
+            right: vec!["'a'".into()],
+        },
+    ])
+}
+
+/// LR(1), but not SLR(1).
+fn lr1_not_slr_grammar() -> Grammar {
+    Grammar::from_rules(vec![
+        GrammarRule {
+            left: "S".into(),
+            right: vec!["L".into(), "'='".into(), "R".into()],
+        },
+        GrammarRule {
+            left: "S".into(),
+            right: vec!["R".into()],
+        },
+        GrammarRule {
+            left: "L".into(),
+            right: vec!["'*'".into(), "R".into()],
+        },
+        GrammarRule {
+            left: "L".into(),
+            right: vec!["'id'".into()],
+        },
+        GrammarRule {
+            left: "R".into(),
+            right: vec!["L".into()],
+        },
+    ])
+}
+
+/// LR(1), but not LALR(1).
+fn lr1_not_lalr_grammar() -> Grammar {
+    Grammar::from_rules(vec![
+        GrammarRule {
+            left: "S".into(),
+            right: vec!["'a'".into(), "A".into(), "'d'".into()],
+        },
+        GrammarRule {
+            left: "S".into(),
+            right: vec!["'b'".into(), "A".into(), "'e'".into()],
+        },
+        GrammarRule {
+            left: "S".into(),
+            right: vec!["'a'".into(), "B".into(), "'e'".into()],
+        },
+        GrammarRule {
+            left: "S".into(),
+            right: vec!["'b'".into(), "B".into(), "'d'".into()],
+        },
+        GrammarRule {
+            left: "A".into(),
+            right: vec!["'c'".into()],
+        },
+        GrammarRule {
+            left: "B".into(),
+            right: vec!["'c'".into()],
+        },
+    ])
 }
 
 // --- Table test helpers ---
@@ -122,6 +207,21 @@ fn has_conflicts(table: &crate::parsers::ParseTableLR) -> bool {
     table
         .entries()
         .any(|(_, _, a)| matches!(a, ParseTableAction::Conflict(_)))
+}
+
+fn conflict_actions(
+    table: &crate::parsers::ParseTableLR,
+) -> Vec<(usize, String, Vec<ParseTableAction>)> {
+    table
+        .entries()
+        .filter_map(|(state, symbol, action)| {
+            if let ParseTableAction::Conflict(actions) = action {
+                Some((state, symbol.to_string(), actions.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 // --- ParseTableAction ---
@@ -291,6 +391,72 @@ fn test_lalr1_trivial_grammar() {
         .is_err());
 }
 
+#[test]
+fn test_lalr1_lookaheads_include_epsilon_reductions() {
+    let grammar = nullable_list_grammar();
+    let parser = GrammarParserLALR1::from_grammar(&grammar);
+    let epsilon_list_item = LR0Item::new(3, 0);
+    let lookaheads: HashSet<String> = parser
+        .lookahead_sets()
+        .iter()
+        .filter(|((_, item), _)| *item == epsilon_list_item)
+        .flat_map(|(_, lookahead)| lookahead.iter().cloned())
+        .collect();
+
+    assert!(lookaheads.contains(EOF));
+    assert!(lookaheads.contains("'a'"));
+}
+
+#[test]
+fn test_lalr1_parses_nullable_list_grammar() {
+    let grammar = nullable_list_grammar();
+    let parser = GrammarParserLALR1::from_grammar(&grammar);
+
+    let empty = parser
+        .parse_from_string(&grammar, Arc::new(String::new()))
+        .unwrap();
+    assert_eq!(root_symbol(&empty, &grammar), "Program");
+
+    let items = parser
+        .parse_from_string(&grammar, Arc::new("a a".into()))
+        .unwrap();
+    assert_eq!(root_symbol(&items, &grammar), "Program");
+    assert_eq!(
+        leaf_values(&items)
+            .into_iter()
+            .filter(|value| value == "a")
+            .collect::<Vec<_>>(),
+        vec!["a", "a"]
+    );
+}
+
+#[test]
+fn test_lalr1_resolves_lr1_not_slr_lookaheads() {
+    let grammar = lr1_not_slr_grammar();
+    let slr = GrammarParserSLR1::from_grammar(&grammar);
+    let lalr = GrammarParserLALR1::from_grammar(&grammar);
+
+    assert!(has_conflicts(slr.get_parse_table()));
+    assert!(!has_conflicts(lalr.get_parse_table()));
+    assert!(lalr
+        .parse_from_string(&grammar, Arc::new("id = id".into()))
+        .is_ok());
+}
+
+#[test]
+fn test_lalr1_reports_lr1_not_lalr_reduce_reduce_conflict() {
+    let grammar = lr1_not_lalr_grammar();
+    let parser = GrammarParserLALR1::from_grammar(&grammar);
+    let conflicts = conflict_actions(parser.get_parse_table());
+
+    assert!(conflicts.iter().any(|(_, _, actions)| {
+        actions.len() >= 2
+            && actions
+                .iter()
+                .all(|action| matches!(action, ParseTableAction::Reduce(_)))
+    }));
+}
+
 // --- Derivation tree ---
 
 #[test]
@@ -358,4 +524,48 @@ fn test_lalr1_table_snapshot_trivial_grammar() {
     let grammar = trivial_grammar();
     let parser = GrammarParserLALR1::from_grammar(&grammar);
     insta::assert_snapshot!(table_canonical_string(parser.get_parse_table()));
+}
+
+#[test]
+fn test_conflict_resolution_requires_existing_conflict() {
+    let grammar = lr1_not_slr_grammar();
+    let mut parser = GrammarParserSLR1::from_grammar(&grammar);
+    let (state, _, actions) = conflict_actions(parser.get_parse_table())
+        .into_iter()
+        .find(|(_, symbol, _)| symbol == "'='")
+        .expect("expected SLR conflict on '='");
+
+    let wrong_action = ParseTableOverride {
+        state,
+        symbol: "'='",
+        action: ParseTableAction::Accept,
+    };
+    assert!(parser
+        .get_parse_table_mut()
+        .apply_conflict_resolutions([wrong_action].iter())
+        .is_err());
+
+    let override_action = ParseTableOverride {
+        state,
+        symbol: "'='",
+        action: actions[0].clone(),
+    };
+    assert!(parser
+        .get_parse_table_mut()
+        .apply_conflict_resolutions([override_action].iter())
+        .is_ok());
+    assert!(!matches!(
+        parser.get_parse_table().get_action(state, "'='").as_ref(),
+        ParseTableAction::Conflict(_)
+    ));
+
+    let stale_override = ParseTableOverride {
+        state,
+        symbol: "'='",
+        action: actions[0].clone(),
+    };
+    assert!(parser
+        .get_parse_table_mut()
+        .apply_conflict_resolutions([stale_override].iter())
+        .is_err());
 }
