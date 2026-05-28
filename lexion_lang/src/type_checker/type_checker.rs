@@ -292,29 +292,6 @@ impl<'a> TypeChecker<'a> {
         let indexed_ty = self.types.dereference_all(base_ty);
         match self.types.get(indexed_ty) {
             Some(Type::PrimitiveType(PrimitiveType::STR)) => Some(self.types.char()),
-            Some(Type::TupleType(tuple_ty)) => {
-                let Some(index) = Self::integer_literal(&expr.index) else {
-                    diag.error(LexionDiagnosticError {
-                        src: self.src.clone(),
-                        span: expr.index.span,
-                        message: String::from("tuple index must be an integer literal"),
-                    });
-                    return None;
-                };
-                if index < 0 || index as usize >= tuple_ty.types.len() {
-                    diag.error(LexionDiagnosticError {
-                        src: self.src.clone(),
-                        span: expr.index.span,
-                        message: format!(
-                            "tuple index {index} is out of range for type '{}'",
-                            self.types.to_string_index(indexed_ty)
-                        ),
-                    });
-                    None
-                } else {
-                    Some(tuple_ty.types[index as usize])
-                }
-            }
             _ => {
                 diag.error(LexionDiagnosticError {
                     src: self.src.clone(),
@@ -389,23 +366,6 @@ impl<'a> TypeChecker<'a> {
             self.types.get(self.types.canonicalize(ty)),
             Some(Type::RefType(_))
         )
-    }
-
-    fn integer_literal(expr: &SourcedExpr) -> Option<isize> {
-        match expr {
-            Sourced {
-                value:
-                    TypedExpr {
-                        expr:
-                            Expr::LitExpr(LitExpr {
-                                lit: Lit::Integer(value),
-                            }),
-                        ..
-                    },
-                ..
-            } => Some(*value),
-            _ => None,
-        }
     }
 
     fn call(

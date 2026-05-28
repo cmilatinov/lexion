@@ -37,6 +37,12 @@ fn test_invalid_index_type() {
 }
 
 #[test]
+fn test_invalid_tuple_index() {
+    let errors = common::assert_fails("errors/semantics/invalid_tuple_index.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn test_undefined_var() {
     let errors = common::assert_fails("errors/semantics/undefined_var.lex");
     insta::assert_snapshot!(errors.join("\n"));
