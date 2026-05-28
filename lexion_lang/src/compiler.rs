@@ -68,11 +68,9 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        let Some(assigned) = self.assign_registers(&mut diagnostics, &cfg, intervals) else {
+        let Some(_) = self.assign_registers(&mut diagnostics, &cfg, intervals) else {
             return Err(diagnostics);
         };
-
-        println!("{assigned:#?}");
 
         Ok(diagnostics)
     }
@@ -86,7 +84,6 @@ impl LexionCompiler {
     ) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(self.options.dump_dir.as_path())?;
         let path = self.options.dump_dir.join(name);
-        println!("{path:?}");
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)

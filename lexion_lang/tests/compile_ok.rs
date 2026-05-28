@@ -36,22 +36,22 @@ fn grammar_conflicts(
 
 #[test]
 fn test_variables() {
-    assert!(common::compile("semantics/variables.lex").is_ok());
+    common::assert_compiles("semantics/variables.lex");
 }
 
 #[test]
 fn test_functions() {
-    assert!(common::compile("semantics/functions.lex").is_ok());
+    common::assert_compiles("semantics/functions.lex");
 }
 
 #[test]
 fn test_control_flow() {
-    assert!(common::compile("control_flow/if_else_returns.lex").is_ok());
+    common::assert_compiles("control_flow/if_else_returns.lex");
 }
 
 #[test]
 fn test_expression_forms() {
-    assert!(common::compile("parser/expression_forms.lex").is_ok());
+    common::assert_compiles("parser/expression_forms.lex");
 }
 
 #[test]
@@ -112,7 +112,20 @@ fn test_keyword_identifier_terminal_precedence() {
 
 #[test]
 fn test_structs() {
-    assert!(common::compile("semantics/structs.lex").is_ok());
+    common::assert_compiles("semantics/structs.lex");
+}
+
+#[test]
+fn test_compile_with_dumps_writes_artifacts() {
+    let dump_dir = std::path::Path::new("target/test-dumps/compile_with_dumps_writes_artifacts");
+    if dump_dir.exists() {
+        std::fs::remove_dir_all(dump_dir).unwrap();
+    }
+
+    assert!(common::compile_with_dumps_to("semantics/variables.lex", dump_dir).is_ok());
+    assert!(dump_dir.join("parse_table.table").is_file());
+    assert!(dump_dir.join("ast.tree").is_file());
+    assert!(dump_dir.join("ir.table").is_file());
 }
 
 #[test]
