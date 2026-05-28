@@ -51,6 +51,9 @@ impl LexionCompiler {
         else {
             return Err(diagnostics);
         };
+        if diagnostics.has_errors() {
+            return Err(diagnostics);
+        }
 
         let Some(_) = self.type_check(
             &mut diagnostics,
@@ -61,6 +64,9 @@ impl LexionCompiler {
         ) else {
             return Err(diagnostics);
         };
+        if diagnostics.has_errors() {
+            return Err(diagnostics);
+        }
 
         let Some((cfg, intervals)) =
             self.generate_ir(&mut diagnostics, source, &ast, &mut symbols, &types)

@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x undeclared identifier 'y'
+   ,-[tests/fixtures/errors/semantics/undefined_var.lex:2:13]
+ 1 | fn main() {
+ 2 |     let x = y + 1;
+   :             |
+   :             `-- here
+ 3 | }
+   `----
