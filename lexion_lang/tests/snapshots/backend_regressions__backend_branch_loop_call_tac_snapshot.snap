@@ -26,16 +26,17 @@ $lstart_1:
   goto $lstart_1
 
 $lend_1:
-  $t6 = total > 3
-  if false == $t6 then goto $celse_1
+  selected = 0
+  $t5 = total > 3
+  if false == $t5 then goto $celse_1
 
 $cthen_1:
-  $t5 = total
+  selected = total
   goto $cend_1
 
 $celse_1:
-  $t5 = 0
+  selected = 0
 
 $cend_1:
-  return $t5
+  return selected
   endfn main

@@ -9,9 +9,11 @@ fn main() -> i32 {
         total = total + add_one(i);
         i = i + 1;
     }
-    return if total > 3 {
-        total
+    let selected: i32 = 0;
+    if total > 3 {
+        selected = total;
     } else {
-        0
-    };
+        selected = 0;
+    }
+    return selected;
 }
