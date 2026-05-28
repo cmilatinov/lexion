@@ -382,9 +382,9 @@ CastExpr -> CastExpr 'as' Type
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
-        Expr::OperatorExpr(OperatorExpr {
-            operator: "type()",
-            args: vec![*$1]
+        Expr::CastExpr(CastExpr {
+            expr: $1,
+            ty: $3
         }).into()
     ).into());
 }} ;

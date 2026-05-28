@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x index expression must be an integer, instead got 'bool'
+   ,-[tests/fixtures/errors/semantics/invalid_index_type.lex:2:23]
+ 1 | fn main() {
+ 2 |     let value = "abc"[true];
+   :                       ^^|^
+   :                         `-- here
+ 3 | }
+   `----
