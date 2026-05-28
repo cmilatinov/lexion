@@ -5,13 +5,13 @@ use generational_arena::Index;
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 
-use crate::ast::types::{FunctionType, Type, TypeCollection};
+use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
 use crate::ast::visitor::{
     AstNode, AstNodeMut, AstVisitor, AstVisitorAction, NodeType, TraversalType,
 };
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr, Lit,
-    LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
+    Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr,
+    Lit, LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
     TypedExpr, VarDecl, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
@@ -91,6 +91,14 @@ impl<'a> TypeChecker<'a> {
                     },
                 span,
             } => self.operator(diag, expr, *span),
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::CastExpr(expr),
+                        ..
+                    },
+                span,
+            } => self.cast(diag, expr, *span),
             Sourced {
                 value:
                     TypedExpr {
@@ -260,15 +268,104 @@ impl<'a> TypeChecker<'a> {
         None
     }
 
-    #[allow(unused)]
     fn index(
         &mut self,
         diag: &mut dyn DiagnosticConsumer,
         expr: &mut IndexExpr,
         span: SourceSpan,
     ) -> Option<Index> {
-        // TODO
-        None
+        let base_ty = self.expr(diag, &mut expr.expr)?;
+        let index_ty = self.expr(diag, &mut expr.index)?;
+        if !self.is_integer_index(index_ty) {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: expr.index.span,
+                message: format!(
+                    "index expression must be an integer, instead got '{}'",
+                    self.types.to_string_index(index_ty)
+                ),
+            });
+            return None;
+        }
+
+        let base_ty = self.types.canonicalize(base_ty);
+        let indexed_ty = self.types.dereference_all(base_ty);
+        match self.types.get(indexed_ty) {
+            Some(Type::PrimitiveType(PrimitiveType::STR)) => Some(self.types.char()),
+            _ => {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span,
+                    message: format!(
+                        "type '{}' cannot be indexed",
+                        self.types.to_string_index(base_ty)
+                    ),
+                });
+                None
+            }
+        }
+    }
+
+    fn cast(
+        &mut self,
+        diag: &mut dyn DiagnosticConsumer,
+        expr: &mut CastExpr,
+        span: SourceSpan,
+    ) -> Option<Index> {
+        let from_ty = self.expr(diag, &mut expr.expr)?;
+        let Some(to_ty) = self.types.insert_ast_type(&expr.ty.value) else {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: expr.ty.span,
+                message: String::from("unknown cast target type"),
+            });
+            return None;
+        };
+
+        if self.types.eq(from_ty, to_ty)
+            || (self.is_scalar_cast_type(from_ty) && self.is_scalar_cast_type(to_ty))
+            || (self.is_reference_type(from_ty) && self.is_reference_type(to_ty))
+        {
+            Some(to_ty)
+        } else {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span,
+                message: format!(
+                    "cannot cast type '{}' to '{}'",
+                    self.types.to_string_index(from_ty),
+                    self.types.to_string_index(to_ty)
+                ),
+            });
+            None
+        }
+    }
+
+    fn is_integer_index(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::PrimitiveType(PrimitiveType::I32 | PrimitiveType::U32))
+        )
+    }
+
+    fn is_scalar_cast_type(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::PrimitiveType(
+                PrimitiveType::U32
+                    | PrimitiveType::I32
+                    | PrimitiveType::F32
+                    | PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+            ))
+        )
+    }
+
+    fn is_reference_type(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::RefType(_))
+        )
     }
 
     fn call(

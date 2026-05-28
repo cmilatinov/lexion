@@ -1,8 +1,8 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, ReturnStmt,
-    Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IndexExpr, Lit,
+    LitExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -404,6 +404,22 @@ impl<'a> CodeGeneratorTac<'a> {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::CastExpr(_),
+                        ..
+                    },
+                ..
+            } => self.cast_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::IndexExpr(_),
+                        ..
+                    },
+                ..
+            } => self.index_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::CallExpr(_),
                         ..
                     },
@@ -471,6 +487,47 @@ impl<'a> CodeGeneratorTac<'a> {
         } else {
             unreachable!()
         }
+    }
+
+    fn cast_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let Sourced {
+            value:
+                TypedExpr {
+                    ty,
+                    expr: Expr::CastExpr(CastExpr { expr: inner, .. }),
+                },
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        let right = self.expr(inner);
+        if inner.ty == *ty {
+            right
+        } else {
+            let temp = self.alloc_temp(*ty, *span);
+            self.assign(temp.clone(), operators::TYPE_CAST, right, None);
+            temp
+        }
+    }
+
+    fn index_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let Sourced {
+            value:
+                TypedExpr {
+                    ty,
+                    expr: Expr::IndexExpr(IndexExpr { expr: base, index }),
+                },
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        let base = self.expr(base);
+        let index = self.expr(index);
+        let temp = self.alloc_temp(*ty, *span);
+        self.assign(temp.clone(), operators::INDEX, index, Some(base));
+        temp
     }
 
     fn call_expr(&mut self, expr: &SourcedExpr) -> Option<Operand> {

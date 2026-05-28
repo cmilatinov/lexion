@@ -693,7 +693,7 @@
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
-        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"type()\",\n            args: vec![*$1]\n        }).into()\n    ).into());"
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::CastExpr(CastExpr {\n            expr: $1,\n            ty: $3\n        }).into()\n    ).into());"
       }
     },
     {

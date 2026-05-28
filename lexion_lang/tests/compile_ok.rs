@@ -55,6 +55,11 @@ fn test_expression_forms() {
 }
 
 #[test]
+fn test_core_expression_typing() {
+    common::assert_compiles("semantics/core_expressions.lex");
+}
+
+#[test]
 fn test_cast_expression_parses() {
     use lexion_lang::parser::ParserLexion;
     use lexion_lib::Parser;

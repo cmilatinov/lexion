@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x type '(i32, bool)' cannot be indexed
+   ,-[tests/fixtures/errors/semantics/invalid_tuple_index.lex:4:17]
+ 3 | fn main() {
+ 4 |     let value = pair()[0];
+   :                 ^^^^|^^^^
+   :                     `-- here
+ 5 | }
+   `----
