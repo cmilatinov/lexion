@@ -1,8 +1,8 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, Sourced,
-    SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, Lit, LitExpr, ReturnStmt,
+    Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -75,6 +75,22 @@ impl<'a> CodeGeneratorTac<'a> {
         block.instructions.push(instruction);
         let instruction = block.instructions.len() - 1;
         CodeLocation::new(self.current_block.unwrap(), instruction)
+    }
+
+    fn block_can_fallthrough(&self, block: NodeIndex) -> bool {
+        !matches!(
+            self.cfg[block]
+                .instructions
+                .last()
+                .map(|inst| &inst.instruction),
+            Some(Instruction::Jump(_) | Instruction::Return(_))
+        )
+    }
+
+    fn current_block_can_fallthrough(&self) -> bool {
+        self.current_block
+            .map(|block| self.block_can_fallthrough(block))
+            .unwrap_or(false)
     }
 
     fn assign(
@@ -264,6 +280,13 @@ impl<'a> CodeGeneratorTac<'a> {
             (
                 TraversalType::Preorder,
                 AstNode::Stmt(Sourced {
+                    value: Stmt::ReturnStmt(stmt),
+                    ..
+                }),
+            ) => self.return_stmt(stmt),
+            (
+                TraversalType::Preorder,
+                AstNode::Stmt(Sourced {
                     value: Stmt::WhileStmt(stmt),
                     ..
                 }),
@@ -317,7 +340,7 @@ impl<'a> CodeGeneratorTac<'a> {
             Operand::Placeholder,
             operators::EQUALS,
             condition,
-            Some(Operand::Literal(Lit::Boolean(true))),
+            Some(Operand::Literal(Lit::Boolean(false))),
         );
         self.loop_stack.push(PartialLoop {
             jump_instruction,
@@ -346,6 +369,11 @@ impl<'a> CodeGeneratorTac<'a> {
 
     fn expr_stmt(&mut self, stmt: &ExprStmt) {
         let _ = self.expr(&stmt.expr);
+    }
+
+    fn return_stmt(&mut self, stmt: &ReturnStmt) {
+        let value = stmt.expr.as_ref().map(|expr| self.expr(expr));
+        self._return(value);
     }
 
     fn expr(&mut self, expr: &SourcedExpr) -> Operand {
@@ -515,14 +543,16 @@ impl<'a> CodeGeneratorTac<'a> {
         let prev_block = self.current_block.unwrap();
 
         let label = self.labels.cond_then.next().to_string();
-        let then_block = self.block(label, true, false);
+        self.block(label, true, false);
         let then = self.expr(&expr.then);
         if let Some(temp) = &temp {
             self.copy(temp.clone(), then);
         }
 
         if let Some(else_) = &expr.else_ {
-            let jump = self.jump(Operand::Placeholder);
+            let then_falls_through = self.current_block_can_fallthrough();
+            let then_exit = self.current_block;
+            let jump = then_falls_through.then(|| self.jump(Operand::Placeholder));
 
             let label = self.labels.cond_else.next().to_string();
             if let Instruction::ConditionalJump(jump) = cond_jump.instruction_mut(&mut self.cfg) {
@@ -534,20 +564,39 @@ impl<'a> CodeGeneratorTac<'a> {
             if let Some(temp) = &temp {
                 self.copy(temp.clone(), else_);
             }
+            let else_falls_through = self.current_block_can_fallthrough();
+            let else_exit = self.current_block;
 
             let label = self.labels.cond_end.next().to_string();
-            if let Instruction::Jump(jump) = &mut jump.instruction_mut(&mut self.cfg) {
-                jump.target = Operand::Label(label.clone());
+            if let Some(jump_location) = jump {
+                if let Instruction::Jump(jump) = &mut jump_location.instruction_mut(&mut self.cfg) {
+                    jump.target = Operand::Label(label.clone());
+                }
             }
             let next_block = self.block(label, false, false);
-            self.cfg.add_edge(then_block, next_block, ());
-            self.cfg.add_edge(else_block, next_block, ());
+            if then_falls_through {
+                if let Some(then_exit) = then_exit {
+                    self.cfg.add_edge(then_exit, next_block, ());
+                }
+            }
+            if else_falls_through {
+                if let Some(else_exit) = else_exit {
+                    self.cfg.add_edge(else_exit, next_block, ());
+                }
+            }
         } else {
+            let then_falls_through = self.current_block_can_fallthrough();
+            let then_exit = self.current_block;
             let label = self.labels.cond_end.next().to_string();
             if let Instruction::ConditionalJump(jump) = cond_jump.instruction_mut(&mut self.cfg) {
                 jump.target = Operand::Label(label.clone());
             }
-            let next_block = self.block(label, true, false);
+            let next_block = self.block(label, false, false);
+            if then_falls_through {
+                if let Some(then_exit) = then_exit {
+                    self.cfg.add_edge(then_exit, next_block, ());
+                }
+            }
             self.cfg.add_edge(prev_block, next_block, ());
         }
 
