@@ -6,10 +6,10 @@ use crate::symbol_table::SymbolTable;
 use iced_x86::code_asm::*;
 
 pub struct CodeGeneratorX86<'a> {
-    cfg: &'a ControlFlowGraph,
-    types: &'a TypeCollection,
-    symbols: &'a SymbolTable,
-    assembler: CodeAssembler,
+    _cfg: &'a ControlFlowGraph,
+    _types: &'a TypeCollection,
+    _symbols: &'a SymbolTable,
+    _assembler: CodeAssembler,
 }
 
 impl<'a> PipelineStage for CodeGeneratorX86<'a> {
@@ -19,14 +19,18 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
 
     fn new((cfg, types, symbols): Self::Input) -> Self {
         Self {
-            cfg,
-            types,
-            symbols,
-            assembler: CodeAssembler::new(64).unwrap(),
+            _cfg: cfg,
+            _types: types,
+            _symbols: symbols,
+            _assembler: CodeAssembler::new(64).unwrap(),
         }
     }
 
-    fn exec(self, diag: &mut dyn DiagnosticConsumer, opts: Self::Options) -> Option<Self::Output> {
+    fn exec(
+        self,
+        _diag: &mut dyn DiagnosticConsumer,
+        _opts: Self::Options,
+    ) -> Option<Self::Output> {
         None
     }
 }

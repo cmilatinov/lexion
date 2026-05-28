@@ -62,7 +62,6 @@ impl CallingConvention for SystemV64 {
                             });
                             stack_offset += 2;
                         }
-                    } else {
                     }
                 }
                 TypeKind::Unknown => {

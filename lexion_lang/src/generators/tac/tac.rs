@@ -19,7 +19,6 @@ use crate::symbol_table::{SymbolTableEntry, SymbolTableEntryType, SymbolTableGra
 use generational_arena::Index;
 use lexion_lib::miette::SourceSpan;
 use lexion_lib::petgraph::prelude::NodeIndex;
-use lexion_lib::petgraph::visit::{Dfs, Reversed, Walker};
 use lexion_lib::petgraph::Direction;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -690,12 +689,7 @@ impl<'a> CodeGeneratorTac<'a> {
     fn liveness_analysis(&mut self) -> Vec<LivenessInterval> {
         self.liveness_read_written();
 
-        let exit_block = self.current_block.unwrap();
-        let reversed_blocks = Reversed(&self.cfg.graph);
-
-        let mut worklist = Dfs::new(&reversed_blocks, exit_block)
-            .iter(&reversed_blocks)
-            .collect::<VecDeque<_>>();
+        let mut worklist = self.cfg.node_indices().collect::<VecDeque<_>>();
         let mut in_worklist = worklist.iter().cloned().collect::<HashSet<_>>();
 
         while let Some(block_idx) = worklist.pop_front() {
@@ -740,38 +734,56 @@ impl<'a> CodeGeneratorTac<'a> {
 
     pub fn liveness_intervals(&self) -> Vec<LivenessInterval> {
         let mut result: Vec<LivenessInterval> = Default::default();
-        let mut active_intervals: HashMap<String, LivenessInterval> = HashMap::new();
-        for node in self.cfg.node_indices() {
-            let block = &self.cfg[node];
-            for (inst_idx, inst) in block.instructions.iter().enumerate() {
-                let loc = CodeLocation::new(node, inst_idx);
-                for live_var in &inst.live.input {
-                    active_intervals
-                        .entry(live_var.clone())
-                        .or_insert_with(|| LivenessInterval {
-                            variable: live_var.clone(),
-                            span: CodeSpan::from_location(loc),
-                            uses: Vec::new(),
-                        });
-                }
-                for read_var in &inst.live.read {
-                    if let Some(interval) = active_intervals.get_mut(read_var) {
-                        interval.uses.push(loc);
+
+        for func in &self.cfg.functions {
+            let mut intervals: HashMap<String, LivenessInterval> = HashMap::new();
+
+            for node in self.cfg.function_nodes(func) {
+                let block = &self.cfg[node];
+                for (inst_idx, inst) in block.instructions.iter().enumerate() {
+                    let loc = CodeLocation::new(node, inst_idx);
+                    let after = CodeLocation::new(node, inst_idx + 1);
+
+                    for live_var in &inst.live.input {
+                        Self::record_interval_location(&mut intervals, live_var, loc, after);
+                    }
+                    for live_var in &inst.live.output {
+                        Self::record_interval_location(&mut intervals, live_var, loc, after);
+                    }
+                    for written_var in &inst.live.written {
+                        if inst.live.output.contains(written_var) {
+                            Self::record_interval_location(&mut intervals, written_var, loc, after);
+                        }
+                    }
+                    for read_var in &inst.live.read {
+                        Self::record_interval_location(&mut intervals, read_var, loc, after);
+                        if let Some(interval) = intervals.get_mut(read_var) {
+                            interval.uses.push(loc);
+                        }
                     }
                 }
-                let (mut still_live, now_dead) = active_intervals
-                    .drain()
-                    .partition::<HashMap<_, _>, _>(|(v, _)| inst.live.output.contains(v));
-                for (_, interval) in still_live.iter_mut() {
-                    interval.span.end = loc;
-                }
-                active_intervals = still_live;
-                for (_, mut interval) in now_dead {
-                    interval.span.end = CodeLocation::new(node, inst_idx + 1);
-                    result.push(interval);
-                }
             }
+
+            result.extend(intervals.into_values());
         }
+
         result
+    }
+
+    fn record_interval_location(
+        intervals: &mut HashMap<String, LivenessInterval>,
+        variable: &str,
+        start: CodeLocation,
+        end: CodeLocation,
+    ) {
+        let interval = intervals
+            .entry(variable.to_string())
+            .or_insert_with(|| LivenessInterval {
+                variable: variable.to_string(),
+                span: CodeSpan::new(start, end),
+                uses: Vec::new(),
+            });
+        interval.span.start = interval.span.start.min(start);
+        interval.span.end = interval.span.end.max(end);
     }
 }
