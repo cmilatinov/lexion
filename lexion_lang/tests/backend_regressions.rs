@@ -11,7 +11,7 @@ use lexion_lang::symbol_table::SymbolTableGenerator;
 use lexion_lang::type_checker::TypeChecker;
 use lexion_lib::miette::NamedSource;
 use lexion_lib::petgraph::visit::EdgeRef;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 struct BackendOutput {
@@ -110,9 +110,8 @@ fn liveness_snapshot(output: &BackendOutput) -> String {
 }
 
 fn allocation_snapshot(output: BackendOutput) -> String {
-    let mut diagnostics = LexionDiagnosticList::default();
-    let assigned = LinearRegisterAllocator::new((
-        &output.cfg,
+    allocation_snapshot_with_registers(
+        output,
         vec![
             Register::RAX,
             Register::RCX,
@@ -124,9 +123,15 @@ fn allocation_snapshot(output: BackendOutput) -> String {
             Register::R10,
             Register::R11,
         ],
-    ))
-    .exec(&mut diagnostics, output.intervals)
-    .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    )
+}
+
+fn allocation_snapshot_with_registers(output: BackendOutput, registers: Vec<Register>) -> String {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let assigned = LinearRegisterAllocator::new((&output.cfg, registers))
+        .exec(&mut diagnostics, output.intervals)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    assert_unique_assignments(&assigned);
 
     sorted_assignments(&assigned)
         .into_iter()
@@ -139,6 +144,26 @@ fn allocation_snapshot(output: BackendOutput) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn assert_unique_assignments(assigned: &HashMap<FunctionRange, Vec<AssignedLivenessInterval>>) {
+    let mut seen = HashSet::new();
+
+    for (range, assigned) in assigned {
+        for assigned in assigned {
+            let interval = assigned.interval();
+            let key = (
+                range.start.index(),
+                range.end.index(),
+                interval.variable.clone(),
+                interval.span.start.block.index(),
+                interval.span.start.instruction,
+                interval.span.end.block.index(),
+                interval.span.end.instruction,
+            );
+            assert!(seen.insert(key), "interval assigned more than once");
+        }
+    }
 }
 
 fn sorted_intervals(
@@ -231,4 +256,14 @@ fn backend_branch_loop_call_register_allocation_snapshot() {
     let output = compile_backend("backend/branch_loop_call.lex");
 
     insta::assert_snapshot!(allocation_snapshot(output));
+}
+
+#[test]
+fn backend_branch_loop_call_register_spill_snapshot() {
+    let output = compile_backend("backend/branch_loop_call.lex");
+
+    insta::assert_snapshot!(allocation_snapshot_with_registers(
+        output,
+        vec![Register::RAX]
+    ));
 }

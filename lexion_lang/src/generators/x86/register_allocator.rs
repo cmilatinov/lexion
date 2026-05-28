@@ -116,36 +116,52 @@ impl<'a> LinearRegisterAllocator<'a> {
     }
 
     fn spill(&mut self, interval: LivenessInterval, assigned: &mut Vec<AssignedLivenessInterval>) {
-        let spilled;
-        let spilled_interval = if let Some((idx, to_spill)) = self
+        if let Some((idx, spill_end)) = self
             .active
             .iter()
             .enumerate()
             .max_by_key(|(_, i)| i.interval.span.end)
+            .map(|(idx, interval)| (idx, interval.interval.span.end))
         {
-            if to_spill.interval.span.end > interval.span.end {
-                spilled = self.active.remove(idx);
+            if spill_end > interval.span.end {
+                let spilled = self.active.remove(idx);
                 let reg = spilled.location.register().unwrap();
+                let spill_location = self.next_spill_location();
+                if let Some(assigned_spill) = assigned
+                    .iter_mut()
+                    .find(|assigned| Self::same_interval(assigned.interval(), &spilled.interval))
+                {
+                    assigned_spill.location = spill_location;
+                } else {
+                    assigned.push(AssignedLivenessInterval {
+                        interval: spilled.interval,
+                        location: spill_location,
+                    });
+                }
+
                 let new_assigned = AssignedLivenessInterval {
                     interval,
                     location: Location::Register(reg),
                 };
                 self.insert_active(new_assigned.clone());
                 assigned.push(new_assigned);
-                &spilled.interval
-            } else {
-                &interval
+                return;
             }
-        } else {
-            &interval
-        };
+        }
 
-        let spill_location = Location::Stack(StackOffset(self.stack_offset));
+        assigned.push(AssignedLivenessInterval {
+            interval,
+            location: self.next_spill_location(),
+        });
+    }
+
+    fn next_spill_location(&mut self) -> Location {
+        let location = Location::Stack(StackOffset(self.stack_offset));
         self.stack_offset += 1;
-        let spilled_with_stack = AssignedLivenessInterval {
-            interval: spilled_interval.clone(),
-            location: spill_location,
-        };
-        assigned.push(spilled_with_stack);
+        location
+    }
+
+    fn same_interval(left: &LivenessInterval, right: &LivenessInterval) -> bool {
+        left.variable == right.variable && left.span == right.span
     }
 }
