@@ -9,9 +9,9 @@ fn main() -> i32 {
         total = total + add_one(i);
         i = i + 1;
     }
-    if total > 3 {
-        return total;
+    return if total > 3 {
+        total
     } else {
-        return 0;
+        0
     };
 }
