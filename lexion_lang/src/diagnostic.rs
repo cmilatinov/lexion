@@ -54,7 +54,11 @@ impl From<SyntaxError> for LexionDiagnosticError {
 impl From<(NamedSource<Arc<String>>, ParseError)> for LexionDiagnosticError {
     fn from((src, value): (NamedSource<Arc<String>>, ParseError)) -> Self {
         match value {
-            ParseError::Syntax(err) => err.into(),
+            ParseError::Syntax(err) => LexionDiagnosticError {
+                src,
+                span: err.span,
+                message: err.message,
+            },
             ParseError::Io(err) => LexionDiagnosticError {
                 src,
                 span: SourceSpan::from(0),

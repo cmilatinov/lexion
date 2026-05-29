@@ -1,6 +1,18 @@
 mod common;
 
 #[test]
+fn parser_missing_semicolon() {
+    let errors = common::assert_fails("errors/parser/missing_semicolon.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn duplicate_local_identifier() {
+    let errors = common::assert_fails("errors/semantics/duplicate_local.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn test_type_mismatch() {
     let errors = common::assert_fails("errors/semantics/type_mismatch.lex");
     insta::assert_snapshot!(errors.join("\n"));

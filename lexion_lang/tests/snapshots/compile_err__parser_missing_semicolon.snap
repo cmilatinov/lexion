@@ -1,0 +1,12 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+---
+  x unexpected token 'return'
+   ,-[tests/fixtures/errors/parser/missing_semicolon.lex:3:5]
+ 2 |     let value = 1
+ 3 |     return value;
+   :     ^^^|^^
+   :        `-- here
+ 4 | }
+   `----
