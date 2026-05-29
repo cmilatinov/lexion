@@ -3,12 +3,13 @@ use crate::ast::Lit;
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionRange,
-    Instruction, Operand,
+    Instruction, InstructionInstance, Operand,
 };
 use crate::generators::x86::X86Target;
 use crate::operators;
 use crate::pipeline::PipelineStage;
-use crate::symbol_table::SymbolTable;
+use crate::symbol_table::SymbolTableGraph;
+use lexion_lib::miette::SourceSpan;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 
@@ -51,36 +52,30 @@ impl<'a> X86EmitOptions<'a> {
 pub struct CodeGeneratorX86<'a> {
     cfg: &'a ControlFlowGraph,
     _types: &'a TypeCollection,
-    _symbols: &'a SymbolTable,
+    symbols: &'a SymbolTableGraph,
     _target: X86Target,
 }
 
 impl<'a> CodeGeneratorX86<'a> {
     fn emit(&self, options: X86EmitOptions<'_>) -> X86Assembly {
-        let mut lines = Vec::new();
-        if options.emit_source_comments {
-            emit_source_comments(&mut lines, options.source.unwrap_or_default());
-        }
-        lines.extend([
+        let mut lines = vec![
             String::from(".intel_syntax noprefix"),
             String::from(".text"),
-        ]);
+        ];
         for range in &self.cfg.functions {
-            lines.extend(self.emit_function(*range));
+            lines.extend(self.emit_function(*range, options));
         }
         X86Assembly::new(lines.join("\n"))
     }
 
-    fn emit_function(&self, range: FunctionRange) -> Vec<String> {
+    fn emit_function(&self, range: FunctionRange, options: X86EmitOptions<'_>) -> Vec<String> {
         let name = self.cfg[range.start].label.clone();
         let slots = self.stack_slots(range);
         let stack_size = align_to(slots.len() * 4, 16);
-        let mut lines = vec![
-            format!(".global {name}"),
-            format!("{name}:"),
-            String::from("  push rbp"),
-            String::from("  mov rbp, rsp"),
-        ];
+        let mut source_line_range = None;
+        let mut lines = vec![format!(".global {name}"), format!("{name}:")];
+        self.emit_symbol_source_comments(&mut lines, options, &name, &mut source_line_range);
+        lines.extend([String::from("  push rbp"), String::from("  mov rbp, rsp")]);
         if stack_size > 0 {
             lines.push(format!("  sub rsp, {stack_size}"));
         }
@@ -92,6 +87,12 @@ impl<'a> CodeGeneratorX86<'a> {
                 lines.push(format!("{}:", block.label));
             }
             for inst in &block.instructions {
+                self.emit_instruction_source_comments(
+                    &mut lines,
+                    options,
+                    inst,
+                    &mut source_line_range,
+                );
                 if self.emit_instruction(&mut lines, &slots, &inst.instruction) {
                     emitted_return = true;
                 }
@@ -102,6 +103,100 @@ impl<'a> CodeGeneratorX86<'a> {
             emit_epilogue(&mut lines);
         }
         lines
+    }
+
+    fn emit_instruction_source_comments(
+        &self,
+        lines: &mut Vec<String>,
+        options: X86EmitOptions<'_>,
+        instruction: &InstructionInstance,
+        previous_range: &mut Option<SourceLineRange>,
+    ) {
+        let span = instruction
+            .source_span
+            .or_else(|| self.instruction_source_span(&instruction.instruction));
+        self.emit_source_comments_for_span(lines, options, span, previous_range);
+    }
+
+    fn emit_symbol_source_comments(
+        &self,
+        lines: &mut Vec<String>,
+        options: X86EmitOptions<'_>,
+        name: &str,
+        previous_range: &mut Option<SourceLineRange>,
+    ) {
+        let span = self.symbol_span(name);
+        self.emit_source_comments_for_span(lines, options, span, previous_range);
+    }
+
+    fn emit_source_comments_for_span(
+        &self,
+        lines: &mut Vec<String>,
+        options: X86EmitOptions<'_>,
+        span: Option<SourceSpan>,
+        previous_range: &mut Option<SourceLineRange>,
+    ) {
+        let Some(source) = options.source.filter(|_| options.emit_source_comments) else {
+            return;
+        };
+        let Some(range) = span.and_then(|span| source_line_range(source, span)) else {
+            return;
+        };
+        if Some(range) == *previous_range {
+            return;
+        }
+        lines.extend(source_comments_for_range(source, range));
+        *previous_range = Some(range);
+    }
+
+    fn instruction_source_span(&self, instruction: &Instruction) -> Option<SourceSpan> {
+        match instruction {
+            Instruction::Assignment(inst) => self
+                .operand_source_span(&inst.target)
+                .or_else(|| {
+                    inst.left
+                        .as_ref()
+                        .and_then(|left| self.operand_source_span(left))
+                })
+                .or_else(|| self.operand_source_span(&inst.right)),
+            Instruction::Copy(inst) => self
+                .operand_source_span(&inst.dst)
+                .or_else(|| self.operand_source_span(&inst.src)),
+            Instruction::ConditionalJump(inst) => inst
+                .left
+                .as_ref()
+                .and_then(|left| self.operand_source_span(left))
+                .or_else(|| self.operand_source_span(&inst.right)),
+            Instruction::FunctionCall(inst) => inst
+                .return_target
+                .as_ref()
+                .and_then(|target| self.operand_source_span(target))
+                .or_else(|| self.symbol_span(&inst.function)),
+            Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
+            Instruction::Return(inst) => inst
+                .value
+                .as_ref()
+                .and_then(|value| self.operand_source_span(value)),
+            Instruction::Function(inst) => self.symbol_span(&inst.label),
+            Instruction::EndFunction(_) | Instruction::Extern(_) | Instruction::Jump(_) => None,
+        }
+    }
+
+    fn operand_source_span(&self, operand: &Operand) -> Option<SourceSpan> {
+        match operand {
+            Operand::Variable(name) | Operand::Label(name) => self.symbol_span(name),
+            Operand::Temporary(label) => self.symbol_span(label.to_string().as_str()),
+            Operand::Literal(_) | Operand::Placeholder => None,
+        }
+    }
+
+    fn symbol_span(&self, name: &str) -> Option<SourceSpan> {
+        self.symbols
+            .graph
+            .node_weights()
+            .flat_map(|table| table.entries.iter())
+            .find(|entry| entry.name == name)
+            .map(|entry| entry.span)
     }
 
     fn emit_instruction(
@@ -265,7 +360,11 @@ impl<'a> CodeGeneratorX86<'a> {
 }
 
 impl<'a> PipelineStage for CodeGeneratorX86<'a> {
-    type Input = (&'a ControlFlowGraph, &'a TypeCollection, &'a SymbolTable);
+    type Input = (
+        &'a ControlFlowGraph,
+        &'a TypeCollection,
+        &'a SymbolTableGraph,
+    );
     type Options = X86EmitOptions<'a>;
     type Output = X86Assembly;
 
@@ -273,7 +372,7 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
         Self {
             cfg,
             _types: types,
-            _symbols: symbols,
+            symbols,
             _target: X86Target::default(),
         }
     }
@@ -283,13 +382,58 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
     }
 }
 
-fn emit_source_comments(lines: &mut Vec<String>, source: &str) {
-    for line in source.lines() {
-        if line.is_empty() {
-            lines.push(String::from("#"));
-        } else {
-            lines.push(format!("# {line}"));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceLineRange {
+    start: usize,
+    end: usize,
+}
+
+fn source_line_range(source: &str, span: SourceSpan) -> Option<SourceLineRange> {
+    let start = span.offset();
+    let end = start.saturating_add(span.len().max(1));
+    if start >= source.len() {
+        return None;
+    }
+
+    let mut cursor = 0;
+    let mut start_line = None;
+    let mut end_line = None;
+    for (line_index, raw_line) in source.split_inclusive('\n').enumerate() {
+        let line_end = cursor + raw_line.len();
+        if line_end > start && start_line.is_none() {
+            start_line = Some(line_index);
         }
+        if line_end >= end && end_line.is_none() {
+            end_line = Some(line_index);
+        }
+        cursor = line_end;
+    }
+
+    start_line.map(|start| SourceLineRange {
+        start,
+        end: end_line.unwrap_or(start),
+    })
+}
+
+fn source_comments_for_range(source: &str, range: SourceLineRange) -> Vec<String> {
+    source
+        .split_inclusive('\n')
+        .enumerate()
+        .filter_map(|(line_index, raw_line)| {
+            if line_index < range.start || range.end < line_index {
+                return None;
+            }
+            let line = raw_line.trim_end_matches(&['\r', '\n'][..]);
+            Some(source_comment(line))
+        })
+        .collect()
+}
+
+fn source_comment(line: &str) -> String {
+    if line.is_empty() {
+        String::from("#")
+    } else {
+        format!("# {line}")
     }
 }
 

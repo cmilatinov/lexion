@@ -3,7 +3,7 @@ use lexion_lang::generators::tac::CodeGeneratorTac;
 use lexion_lang::generators::x86::{CodeGeneratorX86, X86EmitOptions};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
-use lexion_lang::symbol_table::{SymbolTableGenerator, SymbolTableGraph};
+use lexion_lang::symbol_table::SymbolTableGenerator;
 use lexion_lang::type_checker::TypeChecker;
 use lexion_lib::miette::NamedSource;
 use std::sync::Arc;
@@ -27,21 +27,13 @@ fn compile_x86(fixture: &str) -> String {
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
-    let root_symbols = root_symbols(&symbols);
-    CodeGeneratorX86::new((&cfg, &types, root_symbols))
+    CodeGeneratorX86::new((&cfg, &types, &symbols))
         .exec(
             &mut diagnostics,
             X86EmitOptions::with_source_comments(source_code.as_ref()),
         )
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
         .to_string()
-}
-
-fn root_symbols(symbols: &SymbolTableGraph) -> &lexion_lang::symbol_table::SymbolTable {
-    symbols
-        .graph
-        .node_weight(symbols.root)
-        .expect("root symbol table missing")
 }
 
 fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
