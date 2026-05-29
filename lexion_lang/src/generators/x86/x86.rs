@@ -1,6 +1,6 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::Lit;
-use crate::diagnostic::DiagnosticConsumer;
+use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionRange,
     Instruction, InstructionInstance, Operand,
@@ -9,9 +9,10 @@ use crate::generators::x86::X86Target;
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::SymbolTableGraph;
-use lexion_lib::miette::SourceSpan;
+use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct X86Assembly {
@@ -38,6 +39,7 @@ impl Display for X86Assembly {
 pub struct X86EmitOptions<'a> {
     pub emit_source_comments: bool,
     pub source: Option<&'a str>,
+    pub diagnostic_source: Option<&'a NamedSource<Arc<String>>>,
 }
 
 impl<'a> X86EmitOptions<'a> {
@@ -45,6 +47,18 @@ impl<'a> X86EmitOptions<'a> {
         Self {
             emit_source_comments: true,
             source: Some(source),
+            diagnostic_source: None,
+        }
+    }
+
+    pub fn with_source_comments_and_diagnostics(
+        source: &'a str,
+        diagnostic_source: &'a NamedSource<Arc<String>>,
+    ) -> Self {
+        Self {
+            emit_source_comments: true,
+            source: Some(source),
+            diagnostic_source: Some(diagnostic_source),
         }
     }
 }
@@ -234,9 +248,61 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Parameter(_) | Instruction::FunctionCall(_) => {
-                lines.push(String::from("  ud2"));
-                false
+                unreachable!("unsupported x86 instructions are diagnosed before emission")
             }
+        }
+    }
+
+    fn validate_supported(
+        &self,
+        diag: &mut dyn DiagnosticConsumer,
+        options: X86EmitOptions<'_>,
+    ) -> bool {
+        let mut valid = true;
+        for range in &self.cfg.functions {
+            for node in self.cfg.function_nodes(range) {
+                for inst in &self.cfg[node].instructions {
+                    if let Some(message) = self.unsupported_message(&inst.instruction) {
+                        valid = false;
+                        let span = inst
+                            .source_span
+                            .or_else(|| self.instruction_source_span(&inst.instruction))
+                            .unwrap_or_else(|| SourceSpan::from(0));
+                        diag.error(LexionDiagnosticError {
+                            src: diagnostic_source(options),
+                            span,
+                            message,
+                        });
+                    }
+                }
+            }
+        }
+        valid
+    }
+
+    fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
+        match instruction {
+            Instruction::Assignment(inst) => (!assignment_supported(inst)).then(|| {
+                format!(
+                    "x86 backend does not support `{}` assignments yet",
+                    inst.operator
+                )
+            }),
+            Instruction::FunctionCall(inst) => Some(format!(
+                "x86 backend does not support function calls yet: {}",
+                inst.function
+            )),
+            Instruction::Extern(inst) => Some(format!(
+                "x86 backend does not support extern declarations yet: {}",
+                inst.label
+            )),
+            Instruction::Copy(_)
+            | Instruction::ConditionalJump(_)
+            | Instruction::Jump(_)
+            | Instruction::Parameter(_)
+            | Instruction::Return(_)
+            | Instruction::Function(_)
+            | Instruction::EndFunction(_) => None,
         }
     }
 
@@ -299,7 +365,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 lines.push(format!("  or eax, {}", operand_value(slots, &inst.right)));
             }
             (Some(_), _) => {
-                lines.push(String::from("  ud2"));
+                unreachable!("unsupported x86 assignment operators are diagnosed before emission")
             }
         }
         store_operand(lines, slots, &inst.target, "eax");
@@ -377,9 +443,41 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
         }
     }
 
-    fn exec(self, _diag: &mut dyn DiagnosticConsumer, opts: Self::Options) -> Option<Self::Output> {
+    fn exec(self, diag: &mut dyn DiagnosticConsumer, opts: Self::Options) -> Option<Self::Output> {
+        if !self.validate_supported(diag, opts) {
+            return None;
+        }
         Some(self.emit(opts))
     }
+}
+
+fn diagnostic_source(options: X86EmitOptions<'_>) -> NamedSource<Arc<String>> {
+    options
+        .diagnostic_source
+        .cloned()
+        .unwrap_or_else(|| NamedSource::new("<x86 backend>", Arc::new(String::new())))
+}
+
+fn assignment_supported(inst: &AssignmentInstruction) -> bool {
+    matches!(
+        (inst.left.as_ref(), inst.operator),
+        (
+            None,
+            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+        ) | (Some(_), operators::PLUS)
+            | (Some(_), operators::MINUS)
+            | (Some(_), operators::MULTIPLY)
+            | (Some(_), operators::DIVIDE)
+            | (Some(_), operators::REMAINDER)
+            | (Some(_), operators::EQUALS)
+            | (Some(_), operators::NOT_EQUALS)
+            | (Some(_), operators::LESS)
+            | (Some(_), operators::LESS_EQUALS)
+            | (Some(_), operators::GREATER)
+            | (Some(_), operators::GREATER_EQUALS)
+            | (Some(_), operators::LOGICAL_AND)
+            | (Some(_), operators::LOGICAL_OR)
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

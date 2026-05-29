@@ -1,0 +1,12 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_call.lex\").join(\"\\n\")"
+---
+  x x86 backend does not support function calls yet: add_one
+   ,-[tests/fixtures/backend/x86_unsupported_call.lex:6:12]
+ 5 | fn main() -> i32 {
+ 6 |     return add_one(1);
+   :            ^^^^^|^^^^
+   :                 `-- here
+ 7 | }
+   `----
