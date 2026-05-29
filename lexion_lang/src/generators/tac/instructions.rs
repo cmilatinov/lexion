@@ -218,6 +218,7 @@ impl BaseInstruction for ReturnInstruction {
 
 pub struct FunctionInstruction {
     pub label: String,
+    pub params: Vec<String>,
 }
 
 impl Display for FunctionInstruction {

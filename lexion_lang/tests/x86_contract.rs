@@ -41,3 +41,36 @@ fn system_v64_assigns_integer_args_and_return_registers() {
         Some(Register::RAX)
     );
 }
+
+#[test]
+fn system_v64_marks_exact_call_clobbered_registers() {
+    let expected = [
+        Register::RAX,
+        Register::RDI,
+        Register::RSI,
+        Register::RDX,
+        Register::RCX,
+        Register::R8,
+        Register::R9,
+        Register::R10,
+        Register::R11,
+        Register::XMM0,
+        Register::XMM1,
+        Register::XMM2,
+        Register::XMM3,
+        Register::XMM4,
+        Register::XMM5,
+        Register::XMM6,
+        Register::XMM7,
+        Register::XMM8,
+        Register::XMM9,
+        Register::XMM10,
+        Register::XMM11,
+        Register::XMM12,
+        Register::XMM13,
+        Register::XMM14,
+        Register::XMM15,
+    ];
+
+    assert_eq!(SystemV64.call_clobbered(), expected.as_slice());
+}
