@@ -55,6 +55,11 @@ pub struct LexionCompilerOutput {
     pub assembly: Option<X86Assembly>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitOutputError {
+    X86AssemblyFailed,
+}
+
 pub struct LexionCompiler {
     options: LexionCompilerOptions,
 }
@@ -107,15 +112,16 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        let Some(assembly) = self.emit_output(
+        let assembly = match self.emit_output(
             &mut diagnostics,
             &cfg,
             &types,
             &symbols,
             source_text.as_ref(),
             &source,
-        ) else {
-            return Err(diagnostics);
+        ) {
+            Ok(assembly) => assembly,
+            Err(EmitOutputError::X86AssemblyFailed) => return Err(diagnostics),
         };
 
         Ok(LexionCompilerOutput {
@@ -282,9 +288,9 @@ impl LexionCompiler {
         symbols: &SymbolTableGraph,
         source_text: &str,
         source: &NamedSource<Arc<String>>,
-    ) -> Option<Option<X86Assembly>> {
+    ) -> Result<Option<X86Assembly>, EmitOutputError> {
         match self.options.emit {
-            EmitTarget::Check => Some(None),
+            EmitTarget::Check => Ok(None),
             EmitTarget::X86Assembly => CodeGeneratorX86::new((cfg, types, symbols))
                 .exec(
                     diagnostics,
@@ -294,7 +300,8 @@ impl LexionCompiler {
                         diagnostic_source: Some(source),
                     },
                 )
-                .map(Some),
+                .map(Some)
+                .ok_or(EmitOutputError::X86AssemblyFailed),
         }
     }
 }
