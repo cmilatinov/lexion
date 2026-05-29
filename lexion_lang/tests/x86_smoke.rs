@@ -112,3 +112,28 @@ fn x86_smoke_return_bool_comparison() {
 fn x86_reports_unsupported_function_calls() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_call.lex").join("\n"));
 }
+
+#[test]
+fn x86_reports_unsupported_float_values() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_string_values() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_string.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_tuple_values() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_tuple.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_struct_values() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_struct.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_address_taking() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_reference.lex").join("\n"));
+}
