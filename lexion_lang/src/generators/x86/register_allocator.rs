@@ -230,6 +230,7 @@ impl<'a> PipelineStage for AbiRegisterAllocator<'a, SystemV64> {
 
     fn new((cfg, types, symbols, target): Self::Input) -> Self {
         let mut registers = Vec::new();
+        registers.extend(target.calling_convention().caller_saved().iter().copied());
         registers.extend(
             target
                 .calling_convention()
@@ -238,7 +239,6 @@ impl<'a> PipelineStage for AbiRegisterAllocator<'a, SystemV64> {
                 .copied()
                 .filter(|reg| *reg != Register::RBP),
         );
-        registers.extend(target.calling_convention().caller_saved().iter().copied());
         Self {
             cfg,
             types,

@@ -11,24 +11,19 @@ main:
 # fn main() -> bool {
   push rbp
   mov rbp, rsp
-  push rbx
-  push r12
 #     let less = 1 < 2;
   mov eax, 1
   cmp eax, 2
   setl al
   movzx eax, al
-  mov ebx, eax
-  mov r12d, ebx
+  mov edi, eax
 #     let same = less == true;
-  mov eax, r12d
+  mov eax, edi
   cmp eax, 1
   sete al
   movzx eax, al
-  mov ebx, eax
-  mov eax, ebx
+  mov edi, eax
 #     return same;
-  pop r12
-  pop rbx
+  mov eax, edi
   pop rbp
   ret
