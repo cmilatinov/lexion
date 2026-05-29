@@ -73,6 +73,7 @@ fn compile_with_options(
     let options = LexionCompilerOptions {
         dump_flags,
         dump_dir: dump_dir.into(),
+        ..LexionCompilerOptions::default()
     };
     LexionCompiler::new(options)
         .exec(source)

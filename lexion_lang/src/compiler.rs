@@ -4,7 +4,10 @@ use crate::ast::{Ast, AstView};
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticInfo, LexionDiagnosticList};
 use crate::generators::tac::instructions::{ControlFlowGraph, FunctionRange, LivenessInterval};
 use crate::generators::tac::CodeGeneratorTac;
-use crate::generators::x86::{AssignedLivenessInterval, LinearRegisterAllocator};
+use crate::generators::x86::{
+    AssignedLivenessInterval, CodeGeneratorX86, LinearRegisterAllocator, X86Assembly,
+    X86EmitOptions,
+};
 use crate::parser::ParserLexion;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableGenerator, SymbolTableGraph};
@@ -25,6 +28,36 @@ use std::sync::Arc;
 pub struct LexionCompilerOptions {
     pub dump_dir: PathBuf,
     pub dump_flags: DumpFlags,
+    pub emit: EmitTarget,
+    pub emit_source_comments: bool,
+}
+
+impl Default for LexionCompilerOptions {
+    fn default() -> Self {
+        Self {
+            dump_dir: PathBuf::from("dump"),
+            dump_flags: DumpFlags::default(),
+            emit: EmitTarget::Check,
+            emit_source_comments: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EmitTarget {
+    #[default]
+    Check,
+    X86Assembly,
+}
+
+pub struct LexionCompilerOutput {
+    pub diagnostics: LexionDiagnosticList,
+    pub assembly: Option<X86Assembly>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitOutputError {
+    X86AssemblyFailed,
 }
 
 pub struct LexionCompiler {
@@ -39,8 +72,9 @@ impl LexionCompiler {
     pub fn exec(
         &mut self,
         source: NamedSource<Arc<String>>,
-    ) -> Result<LexionDiagnosticList, LexionDiagnosticList> {
+    ) -> Result<LexionCompilerOutput, LexionDiagnosticList> {
         let mut diagnostics = LexionDiagnosticList::default();
+        let source_text = source.inner().clone();
         let Some((mut ast, mut types, trace)) = self.parse_source(&mut diagnostics, source.clone())
         else {
             return Err(diagnostics);
@@ -69,7 +103,7 @@ impl LexionCompiler {
         }
 
         let Some((cfg, intervals)) =
-            self.generate_ir(&mut diagnostics, source, &ast, &mut symbols, &types)
+            self.generate_ir(&mut diagnostics, source.clone(), &ast, &mut symbols, &types)
         else {
             return Err(diagnostics);
         };
@@ -78,7 +112,22 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        Ok(diagnostics)
+        let assembly = match self.emit_output(
+            &mut diagnostics,
+            &cfg,
+            &types,
+            &symbols,
+            source_text.as_ref(),
+            &source,
+        ) {
+            Ok(assembly) => assembly,
+            Err(EmitOutputError::X86AssemblyFailed) => return Err(diagnostics),
+        };
+
+        Ok(LexionCompilerOutput {
+            diagnostics,
+            assembly,
+        })
     }
 }
 
@@ -229,5 +278,30 @@ impl LexionCompiler {
             ]),
         ))
         .exec(diagnostics, intervals)
+    }
+
+    fn emit_output(
+        &self,
+        diagnostics: &mut LexionDiagnosticList,
+        cfg: &ControlFlowGraph,
+        types: &TypeCollection,
+        symbols: &SymbolTableGraph,
+        source_text: &str,
+        source: &NamedSource<Arc<String>>,
+    ) -> Result<Option<X86Assembly>, EmitOutputError> {
+        match self.options.emit {
+            EmitTarget::Check => Ok(None),
+            EmitTarget::X86Assembly => CodeGeneratorX86::new((cfg, types, symbols))
+                .exec(
+                    diagnostics,
+                    X86EmitOptions {
+                        emit_source_comments: self.options.emit_source_comments,
+                        source: Some(source_text),
+                        diagnostic_source: Some(source),
+                    },
+                )
+                .map(Some)
+                .ok_or(EmitOutputError::X86AssemblyFailed),
+        }
     }
 }

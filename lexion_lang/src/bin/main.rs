@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use enumflags2::BitFlag;
-use lexion_lang::compiler::{LexionCompiler, LexionCompilerOptions};
+use lexion_lang::compiler::{EmitTarget, LexionCompiler, LexionCompilerOptions};
 use lexion_lang::{CompilationError, Dump, DumpFlags};
 use lexion_lib::miette;
 use lexion_lib::miette::{NamedSource, Report};
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(long_about = None)]
@@ -15,17 +16,40 @@ struct Args {
     dump: DumpFlags,
     #[arg(long, default_value_t = String::from("dump"))]
     dump_dir: String,
+    #[arg(long, value_enum, default_value_t = EmitArg::Check)]
+    emit: EmitArg,
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 impl Args {
-    fn split(self) -> (String, LexionCompilerOptions) {
+    fn split(self) -> (String, LexionCompilerOptions, Option<PathBuf>) {
+        let output = self.output;
         (
             self.filename,
             LexionCompilerOptions {
                 dump_flags: self.dump,
                 dump_dir: self.dump_dir.into(),
+                emit: self.emit.into(),
+                ..LexionCompilerOptions::default()
             },
+            output,
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EmitArg {
+    Check,
+    Asm,
+}
+
+impl From<EmitArg> for EmitTarget {
+    fn from(value: EmitArg) -> Self {
+        match value {
+            EmitArg::Check => EmitTarget::Check,
+            EmitArg::Asm => EmitTarget::X86Assembly,
+        }
     }
 }
 
@@ -43,14 +67,20 @@ fn main() -> Result<(), CompilationError> {
         )
     }))
     .expect("failed to initialize logging hook");
-    let (filename, options) = Args::parse().split();
+    let (filename, options, output_path) = Args::parse().split();
     let source_code =
         Arc::new(std::fs::read_to_string(filename.as_str()).map_err(CompilationError::IO)?);
     let source = NamedSource::new(filename.as_str(), source_code);
     match LexionCompiler::new(options).exec(source) {
-        Ok(list) => {
-            if !list.is_empty() {
-                println!("{:?}", Report::new(list));
+        Ok(output) => {
+            if !output.diagnostics.is_empty() {
+                println!("{:?}", Report::new(output.diagnostics));
+            }
+            if let Some(assembly) = output.assembly {
+                match output_path {
+                    Some(path) => write_output(&path, assembly.as_str())?,
+                    None => println!("{assembly}"),
+                }
             }
             Ok(())
         }
@@ -60,5 +90,36 @@ fn main() -> Result<(), CompilationError> {
             }
             Err(CompilationError::CompilationFailed)
         }
+    }
+}
+
+fn write_output(path: &Path, content: &str) -> Result<(), CompilationError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(CompilationError::IO)?;
+    }
+    std::fs::write(path, content).map_err(CompilationError::IO)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_assembly_emit_mode() {
+        let (_, options, output) = Args::parse_from([
+            "lexion",
+            "--emit",
+            "asm",
+            "--output",
+            "target/test-dumps/out.s",
+            "tests/fixtures/backend/x86_return_arithmetic.lex",
+        ])
+        .split();
+
+        assert_eq!(options.emit, EmitTarget::X86Assembly);
+        assert_eq!(output, Some(PathBuf::from("target/test-dumps/out.s")));
     }
 }
