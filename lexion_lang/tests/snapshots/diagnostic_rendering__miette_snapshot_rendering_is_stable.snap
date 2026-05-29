@@ -1,0 +1,12 @@
+---
+source: lexion_lang/tests/diagnostic_rendering.rs
+expression: "common::render_diagnostic_for_snapshot(&diagnostic)"
+---
+  x expected type 'i32', instead got 'bool'
+   ,-[tests/fixtures/errors/rendering/crlf.lex:2:22]
+ 1 | fn main() {
+ 2 |     let value: i32 = true;
+   :                      ^^|^
+   :                        `-- here
+ 3 | }
+   `----
