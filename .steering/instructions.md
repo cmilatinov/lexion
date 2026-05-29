@@ -35,6 +35,7 @@ These are the default operating instructions for work in `lexion`.
 ## Validation Defaults
 
 - Run `cargo fmt --all -- --check` for Rust changes, or `cargo fmt --all` when preparing a commit.
+- Before committing, run `cargo clippy --workspace --all-targets -- -D warnings` for Rust, parser, compiler, grammar, or test changes and fix all warnings.
 - Run `cargo test` for broad parser/compiler changes.
 - Run focused package tests when the scope is narrow:
   - `cargo test -p lexion_lib`
