@@ -1,0 +1,100 @@
+use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+use lexion_lang::diagnostic::LexionDiagnosticList;
+use lexion_lang::generators::tac::CodeGeneratorTac;
+use lexion_lang::generators::x86::{
+    CodeGeneratorX86Machine, X86MachineCode, X86MachineCodeOptions,
+};
+use lexion_lang::parser::ParserLexion;
+use lexion_lang::pipeline::PipelineStage;
+use lexion_lang::symbol_table::SymbolTableGenerator;
+use lexion_lang::type_checker::TypeChecker;
+use lexion_lib::miette::NamedSource;
+use std::sync::Arc;
+
+fn compile_machine_code(fixture: &str) -> X86MachineCode {
+    let path = format!("tests/fixtures/{fixture}");
+    let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
+    let source = NamedSource::new(&path, source_code);
+    let mut diagnostics = LexionDiagnosticList::default();
+
+    let (mut ast, mut types, _) = ParserLexion::new()
+        .exec(&mut diagnostics, source.clone())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let mut symbols = SymbolTableGenerator::new((source.clone(), &ast, &mut types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    TypeChecker::new((source, &mut symbols, &mut types))
+        .exec(&mut diagnostics, &mut ast)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    CodeGeneratorX86Machine::new((&cfg, &types, &symbols))
+        .exec(&mut diagnostics, X86MachineCodeOptions::default())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
+}
+
+fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
+    diagnostics
+        .list
+        .iter()
+        .map(|diag| diag.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn machine_snapshot(code: &X86MachineCode) -> String {
+    format!(
+        "symbols:\n{}\n\nbytes:\n{}\n\ndisassembly:\n{}",
+        code.symbols()
+            .iter()
+            .map(|(name, offset)| format!("{name}=0x{offset:04X}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        hex_bytes(code.as_bytes()),
+        disassemble(code.as_bytes())
+    )
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn disassemble(bytes: &[u8]) -> String {
+    let mut decoder = Decoder::with_ip(64, bytes, 0, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    let mut lines = Vec::new();
+    while decoder.can_decode() {
+        let instruction = decoder.decode();
+        let mut formatted = String::new();
+        formatter.format(&instruction, &mut formatted);
+        lines.push(format!("{:04X}: {formatted}", instruction.ip()));
+    }
+    lines.join("\n")
+}
+
+#[test]
+fn x86_machine_code_return_arithmetic() {
+    let code = compile_machine_code("backend/x86_return_arithmetic.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_return_bool_comparison() {
+    let code = compile_machine_code("backend/x86_return_bool.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_if_else_returns() {
+    let code = compile_machine_code("backend/x86_if_expression.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
