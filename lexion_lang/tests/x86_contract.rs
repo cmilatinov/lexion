@@ -43,10 +43,8 @@ fn system_v64_assigns_integer_args_and_return_registers() {
 }
 
 #[test]
-fn system_v64_marks_integer_arg_registers_call_clobbered() {
-    let call_clobbered = SystemV64.call_clobbered();
-
-    for register in [
+fn system_v64_marks_exact_call_clobbered_registers() {
+    let expected = [
         Register::RAX,
         Register::RDI,
         Register::RSI,
@@ -56,10 +54,23 @@ fn system_v64_marks_integer_arg_registers_call_clobbered() {
         Register::R9,
         Register::R10,
         Register::R11,
-    ] {
-        assert!(
-            call_clobbered.contains(&register),
-            "{register:?} must be treated as call-clobbered"
-        );
-    }
+        Register::XMM0,
+        Register::XMM1,
+        Register::XMM2,
+        Register::XMM3,
+        Register::XMM4,
+        Register::XMM5,
+        Register::XMM6,
+        Register::XMM7,
+        Register::XMM8,
+        Register::XMM9,
+        Register::XMM10,
+        Register::XMM11,
+        Register::XMM12,
+        Register::XMM13,
+        Register::XMM14,
+        Register::XMM15,
+    ];
+
+    assert_eq!(SystemV64.call_clobbered(), expected.as_slice());
 }
