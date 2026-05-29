@@ -1,0 +1,135 @@
+use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+use lexion_lang::diagnostic::LexionDiagnosticList;
+use lexion_lang::generators::tac::CodeGeneratorTac;
+use lexion_lang::generators::x86::{CodeGeneratorX86Elf, X86ElfExecutable, X86ElfOptions};
+use lexion_lang::parser::ParserLexion;
+use lexion_lang::pipeline::PipelineStage;
+use lexion_lang::symbol_table::SymbolTableGenerator;
+use lexion_lang::type_checker::TypeChecker;
+use lexion_lib::miette::NamedSource;
+use std::sync::Arc;
+
+fn compile_elf(fixture: &str) -> X86ElfExecutable {
+    let path = format!("tests/fixtures/{fixture}");
+    let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
+    let source = NamedSource::new(&path, source_code);
+    let mut diagnostics = LexionDiagnosticList::default();
+
+    let (mut ast, mut types, _) = ParserLexion::new()
+        .exec(&mut diagnostics, source.clone())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let mut symbols = SymbolTableGenerator::new((source.clone(), &ast, &mut types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    TypeChecker::new((source, &mut symbols, &mut types))
+        .exec(&mut diagnostics, &mut ast)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    CodeGeneratorX86Elf::new((&cfg, &types, &symbols))
+        .exec(&mut diagnostics, X86ElfOptions::default())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
+}
+
+fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
+    diagnostics
+        .list
+        .iter()
+        .map(|diag| diag.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+}
+
+fn disassemble(bytes: &[u8], ip: u64) -> String {
+    let mut decoder = Decoder::with_ip(64, bytes, ip, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    let mut lines = Vec::new();
+    while decoder.can_decode() {
+        let instruction = decoder.decode();
+        let mut formatted = String::new();
+        formatter.format(&instruction, &mut formatted);
+        lines.push(format!("{:016X}: {formatted}", instruction.ip()));
+    }
+    lines.join("\n")
+}
+
+#[test]
+fn x86_elf_executable_has_expected_header() {
+    let executable = compile_elf("backend/x86_return_arithmetic.lex");
+    let bytes = executable.as_bytes();
+    let program_header = 64;
+
+    assert_eq!(&bytes[0..4], b"\x7FELF");
+    assert_eq!(bytes[4], 2);
+    assert_eq!(bytes[5], 1);
+    assert_eq!(read_u16(bytes, 16), 2);
+    assert_eq!(read_u16(bytes, 18), 62);
+    assert_eq!(read_u64(bytes, 24), executable.entry_point());
+    assert_eq!(read_u64(bytes, 32), 64);
+    assert_eq!(read_u16(bytes, 52), 64);
+    assert_eq!(read_u16(bytes, 54), 56);
+    assert_eq!(read_u16(bytes, 56), 1);
+
+    assert_eq!(read_u32(bytes, program_header), 1);
+    assert_eq!(read_u32(bytes, program_header + 4), 5);
+    assert_eq!(read_u64(bytes, program_header + 8), 0);
+    assert_eq!(read_u64(bytes, program_header + 16), 0x400000);
+    assert_eq!(read_u64(bytes, program_header + 32), bytes.len() as u64);
+    assert_eq!(read_u64(bytes, program_header + 40), bytes.len() as u64);
+    assert_eq!(read_u64(bytes, program_header + 48), 0x1000);
+
+    assert_eq!(executable.entry_point(), 0x401000);
+    assert_eq!(executable.text_offset(), 0x1000);
+    assert_eq!(
+        executable.symbols().get("main"),
+        Some(&(executable.entry_point() + executable.runtime_size() as u64))
+    );
+}
+
+#[test]
+fn x86_elf_executable_has_runtime_entry() {
+    let executable = compile_elf("backend/x86_return_arithmetic.lex");
+    let runtime_start = executable.text_offset();
+    let runtime_end = runtime_start + executable.runtime_size();
+    let runtime = &executable.as_bytes()[runtime_start..runtime_end];
+
+    insta::assert_snapshot!(disassemble(runtime, executable.entry_point()));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_executable_runs_on_linux_x86_64() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let executable = compile_elf("backend/x86_exit_status.lex");
+    let mut path = std::env::temp_dir();
+    path.push(format!("lexion-x86-elf-{}", std::process::id()));
+    std::fs::write(&path, executable.as_bytes()).expect("failed to write executable");
+    let mut permissions = std::fs::metadata(&path)
+        .expect("failed to stat executable")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).expect("failed to chmod executable");
+
+    let status = Command::new(&path)
+        .status()
+        .expect("failed to run executable");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(status.code(), Some(7));
+}
