@@ -2,13 +2,15 @@ use crate::ast::types::TypeCollection;
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
-    AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionRange,
-    Instruction, InstructionInstance, Operand,
+    AssignmentInstruction, CodeLocation, ConditionalJumpInstruction, ControlFlowGraph,
+    FunctionRange, Instruction, InstructionInstance, Operand,
 };
-use crate::generators::x86::X86Target;
+use crate::generators::x86::calling_convention::{CallingConvention, Location};
+use crate::generators::x86::{AbiLocationRole, AssignedLivenessInterval, StackOffset, X86Target};
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::SymbolTableGraph;
+use iced_x86::Register;
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
@@ -67,10 +69,16 @@ pub struct CodeGeneratorX86<'a> {
     cfg: &'a ControlFlowGraph,
     _types: &'a TypeCollection,
     symbols: &'a SymbolTableGraph,
-    _target: X86Target,
+    target: X86Target,
+    allocations: Option<&'a AllocationMap>,
 }
 
 impl<'a> CodeGeneratorX86<'a> {
+    pub fn with_allocations(mut self, allocations: &'a AllocationMap) -> Self {
+        self.allocations = Some(allocations);
+        self
+    }
+
     fn emit(&self, options: X86EmitOptions<'_>) -> X86Assembly {
         let mut lines = vec![
             String::from(".intel_syntax noprefix"),
@@ -84,15 +92,18 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn emit_function(&self, range: FunctionRange, options: X86EmitOptions<'_>) -> Vec<String> {
         let name = self.cfg[range.start].label.clone();
-        let slots = self.stack_slots(range);
-        let stack_size = align_to(slots.len() * 4, 16);
+        let frame = self.frame_layout(range);
         let mut source_line_range = None;
         let mut lines = vec![format!(".global {name}"), format!("{name}:")];
         self.emit_symbol_source_comments(&mut lines, options, &name, &mut source_line_range);
         lines.extend([String::from("  push rbp"), String::from("  mov rbp, rsp")]);
-        if stack_size > 0 {
-            lines.push(format!("  sub rsp, {stack_size}"));
+        for register in &frame.saved_registers {
+            lines.push(format!("  push {}", register_name(*register)));
         }
+        if frame.stack_size > 0 {
+            lines.push(format!("  sub rsp, {}", frame.stack_size));
+        }
+        self.emit_function_parameter_moves(&mut lines, range, &frame);
 
         let mut emitted_return = false;
         for node in self.cfg.function_nodes(&range) {
@@ -100,21 +111,22 @@ impl<'a> CodeGeneratorX86<'a> {
             if node != range.start {
                 lines.push(format!("{}:", block.label));
             }
-            for inst in &block.instructions {
+            for (instruction_index, inst) in block.instructions.iter().enumerate() {
                 self.emit_instruction_source_comments(
                     &mut lines,
                     options,
                     inst,
                     &mut source_line_range,
                 );
-                if self.emit_instruction(&mut lines, &slots, &inst.instruction) {
+                let location = CodeLocation::new(node, instruction_index);
+                if self.emit_instruction(&mut lines, &frame, location, &inst.instruction) {
                     emitted_return = true;
                 }
             }
         }
 
         if !emitted_return {
-            emit_epilogue(&mut lines);
+            emit_epilogue(&mut lines, &frame);
         }
         lines
     }
@@ -216,21 +228,26 @@ impl<'a> CodeGeneratorX86<'a> {
     fn emit_instruction(
         &self,
         lines: &mut Vec<String>,
-        slots: &BTreeMap<String, usize>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
         instruction: &Instruction,
     ) -> bool {
         match instruction {
             Instruction::Assignment(inst) => {
-                self.emit_assignment(lines, slots, inst);
+                self.emit_assignment(lines, frame, location, inst);
                 false
             }
             Instruction::Copy(inst) => {
-                load_operand(lines, slots, &inst.src, "eax");
-                store_operand(lines, slots, &inst.dst, "eax");
+                let register = frame
+                    .operand_location(location, &inst.dst)
+                    .and_then(|location| location.register())
+                    .unwrap_or(Register::RAX);
+                load_operand(lines, frame, location, &inst.src, register);
+                store_operand(lines, frame, location, &inst.dst, register);
                 false
             }
             Instruction::ConditionalJump(inst) => {
-                self.emit_conditional_jump(lines, slots, inst);
+                self.emit_conditional_jump(lines, frame, location, inst);
                 false
             }
             Instruction::Jump(inst) => {
@@ -239,9 +256,9 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(lines, slots, value, "eax");
+                    load_operand(lines, frame, location, value, Register::RAX);
                 }
-                emit_epilogue(lines);
+                emit_epilogue(lines, frame);
                 true
             }
             Instruction::Function(_) | Instruction::EndFunction(_) | Instruction::Extern(_) => {
@@ -309,72 +326,106 @@ impl<'a> CodeGeneratorX86<'a> {
     fn emit_assignment(
         &self,
         lines: &mut Vec<String>,
-        slots: &BTreeMap<String, usize>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
         inst: &AssignmentInstruction,
     ) {
+        let target_register = frame
+            .operand_location(location, &inst.target)
+            .and_then(|location| location.register())
+            .unwrap_or(Register::RAX);
         match (inst.left.as_ref(), inst.operator) {
             (None, operators::UNARY_MINUS) => {
-                load_operand(lines, slots, &inst.right, "eax");
-                lines.push(String::from("  neg eax"));
+                load_operand(lines, frame, location, &inst.right, target_register);
+                lines.push(format!("  neg {}", register_name_32(target_register)));
             }
             (None, operators::LOGICAL_NOT) => {
-                load_operand(lines, slots, &inst.right, "eax");
+                load_operand(lines, frame, location, &inst.right, Register::RAX);
                 lines.push(String::from("  cmp eax, 0"));
                 lines.push(String::from("  sete al"));
                 lines.push(String::from("  movzx eax, al"));
             }
             (None, _) => {
-                load_operand(lines, slots, &inst.right, "eax");
+                load_operand(lines, frame, location, &inst.right, target_register);
             }
             (Some(left), operators::PLUS) => {
-                load_operand(lines, slots, left, "eax");
-                lines.push(format!("  add eax, {}", operand_value(slots, &inst.right)));
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  add {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
             }
             (Some(left), operators::MINUS) => {
-                load_operand(lines, slots, left, "eax");
-                lines.push(format!("  sub eax, {}", operand_value(slots, &inst.right)));
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  sub {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
             }
             (Some(left), operators::MULTIPLY) => {
-                load_operand(lines, slots, left, "eax");
-                lines.push(format!("  imul eax, {}", operand_value(slots, &inst.right)));
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  imul {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
             }
             (Some(left), operators::DIVIDE | operators::REMAINDER) => {
-                load_operand(lines, slots, left, "eax");
+                load_operand(lines, frame, location, left, Register::RAX);
                 lines.push(String::from("  cdq"));
-                load_operand(lines, slots, &inst.right, "ecx");
+                load_operand(lines, frame, location, &inst.right, Register::RCX);
                 lines.push(String::from("  idiv ecx"));
                 if inst.operator == operators::REMAINDER {
                     lines.push(String::from("  mov eax, edx"));
                 }
             }
             (Some(left), operators::EQUALS | operators::NOT_EQUALS) => {
-                self.emit_compare(lines, slots, left, &inst.right, inst.operator);
+                self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
             }
             (Some(left), operators::LESS | operators::LESS_EQUALS) => {
-                self.emit_compare(lines, slots, left, &inst.right, inst.operator);
+                self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
             }
             (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
-                self.emit_compare(lines, slots, left, &inst.right, inst.operator);
+                self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
             }
             (Some(left), operators::LOGICAL_AND) => {
-                load_operand(lines, slots, left, "eax");
-                lines.push(format!("  and eax, {}", operand_value(slots, &inst.right)));
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  and {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
             }
             (Some(left), operators::LOGICAL_OR) => {
-                load_operand(lines, slots, left, "eax");
-                lines.push(format!("  or eax, {}", operand_value(slots, &inst.right)));
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  or {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
             }
             (Some(_), _) => {
                 unreachable!("unsupported x86 assignment operators are diagnosed before emission")
             }
         }
-        store_operand(lines, slots, &inst.target, "eax");
+        let result_register = match (inst.left.as_ref(), inst.operator) {
+            (None, operators::LOGICAL_NOT)
+            | (Some(_), operators::DIVIDE | operators::REMAINDER)
+            | (Some(_), operators::EQUALS | operators::NOT_EQUALS)
+            | (Some(_), operators::LESS | operators::LESS_EQUALS)
+            | (Some(_), operators::GREATER | operators::GREATER_EQUALS) => Register::RAX,
+            _ => target_register,
+        };
+        store_operand(lines, frame, location, &inst.target, result_register);
     }
 
     fn emit_compare(
         &self,
         lines: &mut Vec<String>,
-        slots: &BTreeMap<String, usize>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
         left: &Operand,
         right: &Operand,
         operator: &str,
@@ -388,8 +439,11 @@ impl<'a> CodeGeneratorX86<'a> {
             operators::GREATER_EQUALS => "setge",
             _ => unreachable!(),
         };
-        load_operand(lines, slots, left, "eax");
-        lines.push(format!("  cmp eax, {}", operand_value(slots, right)));
+        load_operand(lines, frame, location, left, Register::RAX);
+        lines.push(format!(
+            "  cmp eax, {}",
+            operand_value(frame, location, right)
+        ));
         lines.push(format!("  {setcc} al"));
         lines.push(String::from("  movzx eax, al"));
     }
@@ -397,17 +451,98 @@ impl<'a> CodeGeneratorX86<'a> {
     fn emit_conditional_jump(
         &self,
         lines: &mut Vec<String>,
-        slots: &BTreeMap<String, usize>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
         inst: &ConditionalJumpInstruction,
     ) {
         if let Some(left) = &inst.left {
-            load_operand(lines, slots, left, "eax");
-            lines.push(format!("  cmp eax, {}", operand_value(slots, &inst.right)));
+            load_operand(lines, frame, location, left, Register::RAX);
+            lines.push(format!(
+                "  cmp eax, {}",
+                operand_value(frame, location, &inst.right)
+            ));
         } else {
-            load_operand(lines, slots, &inst.right, "eax");
+            load_operand(lines, frame, location, &inst.right, Register::RAX);
             lines.push(String::from("  cmp eax, 0"));
         }
         lines.push(format!("  {} {}", jump_for(inst.operator), inst.target));
+    }
+
+    fn frame_layout(&self, range: FunctionRange) -> FrameLayout<'a> {
+        if let Some(allocations) = self
+            .allocations
+            .and_then(|allocations| allocations.get(&range))
+        {
+            let saved_registers = self.saved_registers(allocations);
+            let spill_count = allocations
+                .iter()
+                .filter_map(|assigned| assigned.location().stack_offset())
+                .map(|offset| offset.0 + 1)
+                .max()
+                .unwrap_or(0);
+            let stack_size = align_to(
+                spill_count * 4,
+                self.target.calling_convention().stack_alignment(),
+            );
+            FrameLayout {
+                allocations: Some(allocations),
+                fallback_slots: BTreeMap::new(),
+                saved_registers,
+                stack_size,
+            }
+        } else {
+            let fallback_slots = self.stack_slots(range);
+            let stack_size = align_to(
+                fallback_slots.len() * 4,
+                self.target.calling_convention().stack_alignment(),
+            );
+            FrameLayout {
+                allocations: None,
+                fallback_slots,
+                saved_registers: Vec::new(),
+                stack_size,
+            }
+        }
+    }
+
+    fn saved_registers(&self, allocations: &[AssignedLivenessInterval]) -> Vec<Register> {
+        let callee_saved = self.target.calling_convention().callee_saved();
+        let mut registers = allocations
+            .iter()
+            .filter_map(|assigned| assigned.location().register())
+            .filter(|register| *register != Register::RBP && callee_saved.contains(register))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        registers.sort_by_key(|register| register.number());
+        registers
+    }
+
+    fn emit_function_parameter_moves(
+        &self,
+        lines: &mut Vec<String>,
+        range: FunctionRange,
+        frame: &FrameLayout<'_>,
+    ) {
+        let Some(allocations) = frame.allocations else {
+            return;
+        };
+        for assigned in allocations {
+            for constraint in assigned.constraints() {
+                if constraint.location() != CodeLocation::new(range.start, 0)
+                    || !matches!(constraint.role(), AbiLocationRole::FunctionParameter { .. })
+                {
+                    continue;
+                }
+                let Some(source) = incoming_location(constraint.abi_location()) else {
+                    continue;
+                };
+                let Some(destination) = frame.frame_location(assigned.location()) else {
+                    continue;
+                };
+                move_location(lines, source, destination, Register::RAX);
+            }
+        }
     }
 
     fn stack_slots(&self, range: FunctionRange) -> BTreeMap<String, usize> {
@@ -439,7 +574,8 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
             cfg,
             _types: types,
             symbols,
-            _target: X86Target::default(),
+            target: X86Target::default(),
+            allocations: None,
         }
     }
 
@@ -580,58 +716,224 @@ fn collect_operand(operand: &Operand, names: &mut BTreeSet<String>) {
     }
 }
 
-fn emit_epilogue(lines: &mut Vec<String>) {
-    lines.push(String::from("  mov rsp, rbp"));
+fn emit_epilogue(lines: &mut Vec<String>, frame: &FrameLayout<'_>) {
+    if frame.stack_size > 0 {
+        lines.push(format!("  add rsp, {}", frame.stack_size));
+    }
+    for register in frame.saved_registers.iter().rev() {
+        lines.push(format!("  pop {}", register_name(*register)));
+    }
     lines.push(String::from("  pop rbp"));
     lines.push(String::from("  ret"));
 }
 
+pub type AllocationMap = std::collections::HashMap<FunctionRange, Vec<AssignedLivenessInterval>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssemblyLocation {
+    Register(Register),
+    FrameStack { offset: usize },
+    IncomingStack { offset: usize },
+}
+
+impl AssemblyLocation {
+    fn register(self) -> Option<Register> {
+        match self {
+            AssemblyLocation::Register(register) => Some(register),
+            AssemblyLocation::FrameStack { .. } | AssemblyLocation::IncomingStack { .. } => None,
+        }
+    }
+}
+
+struct FrameLayout<'a> {
+    allocations: Option<&'a [AssignedLivenessInterval]>,
+    fallback_slots: BTreeMap<String, usize>,
+    saved_registers: Vec<Register>,
+    stack_size: usize,
+}
+
+impl<'a> FrameLayout<'a> {
+    fn operand_location(
+        &self,
+        location: CodeLocation,
+        operand: &Operand,
+    ) -> Option<AssemblyLocation> {
+        let name = operand_name(operand)?;
+        if let Some(allocations) = self.allocations {
+            return allocations
+                .iter()
+                .find(|assigned| {
+                    assigned.interval().variable == name
+                        && assigned.interval().span.start <= location
+                        && location < assigned.interval().span.end
+                })
+                .and_then(|assigned| self.frame_location(assigned.location()));
+        }
+        self.fallback_slots
+            .get(name.as_str())
+            .map(|offset| AssemblyLocation::FrameStack { offset: *offset })
+    }
+
+    fn frame_location(&self, location: &Location) -> Option<AssemblyLocation> {
+        match location {
+            Location::Register(register) => Some(AssemblyLocation::Register(*register)),
+            Location::Stack(offset) => Some(AssemblyLocation::FrameStack {
+                offset: self.frame_stack_offset(*offset),
+            }),
+            Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
+            Location::Indirect { .. } | Location::Pair { .. } => None,
+        }
+    }
+
+    fn frame_stack_offset(&self, offset: StackOffset) -> usize {
+        self.saved_registers.len() * 8 + (offset.0 + 1) * 4
+    }
+}
+
 fn load_operand(
     lines: &mut Vec<String>,
-    slots: &BTreeMap<String, usize>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
     operand: &Operand,
-    register: &str,
+    register: Register,
 ) {
     match operand {
-        Operand::Literal(_) => lines.push(format!("  mov {register}, {}", literal_value(operand))),
-        Operand::Variable(_) | Operand::Temporary(_) => lines.push(format!(
-            "  mov {register}, {}",
-            operand_value(slots, operand)
+        Operand::Literal(_) => lines.push(format!(
+            "  mov {}, {}",
+            register_name_32(register),
+            literal_value(operand)
         )),
-        Operand::Placeholder => lines.push(format!("  xor {register}, {register}")),
-        Operand::Label(_) => lines.push(format!("  lea {register}, [{operand}]")),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            if frame
+                .operand_location(location, operand)
+                .is_some_and(|source| source == AssemblyLocation::Register(register))
+            {
+                return;
+            }
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name_32(register),
+                operand_value(frame, location, operand)
+            ));
+        }
+        Operand::Placeholder => lines.push(format!(
+            "  xor {}, {}",
+            register_name_32(register),
+            register_name_32(register)
+        )),
+        Operand::Label(_) => lines.push(format!("  lea {}, [{operand}]", register_name(register))),
     }
 }
 
 fn store_operand(
     lines: &mut Vec<String>,
-    slots: &BTreeMap<String, usize>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
     operand: &Operand,
-    register: &str,
+    register: Register,
 ) {
-    if matches!(operand, Operand::Variable(_) | Operand::Temporary(_)) {
-        lines.push(format!(
-            "  mov {}, {register}",
-            operand_value(slots, operand)
-        ));
-    }
+    let Some(destination) = frame.operand_location(location, operand) else {
+        return;
+    };
+    move_location(
+        lines,
+        AssemblyLocation::Register(register),
+        destination,
+        Register::RAX,
+    );
 }
 
-fn operand_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> String {
+fn operand_value(frame: &FrameLayout<'_>, location: CodeLocation, operand: &Operand) -> String {
     match operand {
         Operand::Literal(_) => literal_value(operand),
-        Operand::Variable(name) => stack_value(slots, name),
-        Operand::Temporary(label) => stack_value(slots, label.to_string().as_str()),
+        Operand::Variable(_) | Operand::Temporary(_) => frame
+            .operand_location(location, operand)
+            .map(assembly_operand)
+            .unwrap_or_else(|| String::from("0")),
         Operand::Label(label) => label.clone(),
         Operand::Placeholder => String::from("0"),
     }
 }
 
-fn stack_value(slots: &BTreeMap<String, usize>, name: &str) -> String {
-    let offset = slots
-        .get(name)
-        .unwrap_or_else(|| panic!("missing stack slot for {name}"));
-    format!("DWORD PTR [rbp-{offset}]")
+fn move_location(
+    lines: &mut Vec<String>,
+    source: AssemblyLocation,
+    destination: AssemblyLocation,
+    scratch: Register,
+) {
+    if source == destination {
+        return;
+    }
+    match (source, destination) {
+        (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name_32(dst),
+                register_name_32(src)
+            ));
+        }
+        (AssemblyLocation::Register(src), dst) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                assembly_operand(dst),
+                register_name_32(src)
+            ));
+        }
+        (src, AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name_32(dst),
+                assembly_operand(src)
+            ));
+        }
+        (src, dst) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name_32(scratch),
+                assembly_operand(src)
+            ));
+            lines.push(format!(
+                "  mov {}, {}",
+                assembly_operand(dst),
+                register_name_32(scratch)
+            ));
+        }
+    }
+}
+
+fn assembly_operand(location: AssemblyLocation) -> String {
+    match location {
+        AssemblyLocation::Register(register) => register_name_32(register),
+        AssemblyLocation::FrameStack { offset } => format!("DWORD PTR [rbp-{offset}]"),
+        AssemblyLocation::IncomingStack { offset } => format!("DWORD PTR [rbp+{offset}]"),
+    }
+}
+
+fn incoming_location(location: &Location) -> Option<AssemblyLocation> {
+    match location {
+        Location::Register(register) => Some(AssemblyLocation::Register(*register)),
+        Location::Stack(offset) => Some(AssemblyLocation::IncomingStack {
+            offset: 16 + offset.0 * 8,
+        }),
+        Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
+        Location::Indirect { .. } | Location::Pair { .. } => None,
+    }
+}
+
+fn operand_name(operand: &Operand) -> Option<String> {
+    match operand {
+        Operand::Variable(name) => Some(name.clone()),
+        Operand::Temporary(label) => Some(label.to_string()),
+        Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+    }
+}
+
+fn register_name(register: Register) -> String {
+    format!("{:?}", register.full_register()).to_ascii_lowercase()
+}
+
+fn register_name_32(register: Register) -> String {
+    format!("{:?}", register.full_register32()).to_ascii_lowercase()
 }
 
 fn literal_value(operand: &Operand) -> String {

@@ -1,6 +1,8 @@
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
-use lexion_lang::generators::x86::{CodeGeneratorX86, X86EmitOptions};
+use lexion_lang::generators::x86::{
+    AbiRegisterAllocator, CodeGeneratorX86, X86EmitOptions, X86Target,
+};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
@@ -24,10 +26,14 @@ fn compile_x86(fixture: &str) -> String {
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
-    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+    let (cfg, intervals) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let assigned = AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()))
+        .exec(&mut diagnostics, intervals)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
     CodeGeneratorX86::new((&cfg, &types, &symbols))
+        .with_allocations(&assigned)
         .exec(
             &mut diagnostics,
             X86EmitOptions::with_source_comments_and_diagnostics(source_code.as_ref(), &source),
@@ -52,13 +58,18 @@ fn compile_x86_error(fixture: &str) -> Vec<String> {
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
-    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+    let (cfg, intervals) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
-    let output = CodeGeneratorX86::new((&cfg, &types, &symbols)).exec(
-        &mut diagnostics,
-        X86EmitOptions::with_source_comments_and_diagnostics(source_code.as_ref(), &source),
-    );
+    let assigned = AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()))
+        .exec(&mut diagnostics, intervals)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let output = CodeGeneratorX86::new((&cfg, &types, &symbols))
+        .with_allocations(&assigned)
+        .exec(
+            &mut diagnostics,
+            X86EmitOptions::with_source_comments_and_diagnostics(source_code.as_ref(), &source),
+        );
 
     assert!(output.is_none(), "expected x86 backend to reject fixture");
     render_diagnostics(&diagnostics)

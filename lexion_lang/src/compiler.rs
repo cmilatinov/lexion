@@ -5,15 +5,14 @@ use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticInfo, LexionDiagnost
 use crate::generators::tac::instructions::{ControlFlowGraph, FunctionRange, LivenessInterval};
 use crate::generators::tac::CodeGeneratorTac;
 use crate::generators::x86::{
-    AssignedLivenessInterval, CodeGeneratorX86, LinearRegisterAllocator, X86Assembly,
-    X86EmitOptions,
+    AbiRegisterAllocator, AssignedLivenessInterval, CodeGeneratorX86, X86Assembly, X86EmitOptions,
+    X86Target,
 };
 use crate::parser::ParserLexion;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableGenerator, SymbolTableGraph};
 use crate::type_checker::TypeChecker;
 use crate::{Dump, DumpFlags};
-use iced_x86::Register;
 use lexion_lib::miette::{NamedSource, Report};
 use lexion_lib::parsers::GrammarParserLR;
 use lexion_lib::petgraph::dot::Dot;
@@ -108,7 +107,8 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        let Some(_) = self.assign_registers(&mut diagnostics, &cfg, intervals) else {
+        let Some(_) = self.assign_registers(&mut diagnostics, &cfg, &types, &symbols, intervals)
+        else {
             return Err(diagnostics);
         };
 
@@ -246,6 +246,8 @@ impl LexionCompiler {
         &self,
         diagnostics: &mut LexionDiagnosticList,
         cfg: &ControlFlowGraph,
+        types: &TypeCollection,
+        symbols: &SymbolTableGraph,
         intervals: HashMap<FunctionRange, Vec<LivenessInterval>>,
     ) -> Option<HashMap<FunctionRange, Vec<AssignedLivenessInterval>>> {
         if self
@@ -262,22 +264,8 @@ impl LexionCompiler {
             self.dump_file("ir.dot", format!("{:?}", Dot::new(&cfg.graph)))
                 .unwrap();
         }
-        // SystemV64::callee_saved();
-        LinearRegisterAllocator::new((
-            cfg,
-            Vec::from_iter([
-                Register::RAX,
-                Register::RCX,
-                Register::RDX,
-                Register::RSI,
-                Register::RDI,
-                Register::R8,
-                Register::R9,
-                Register::R10,
-                Register::R11,
-            ]),
-        ))
-        .exec(diagnostics, intervals)
+        AbiRegisterAllocator::new((cfg, types, symbols, X86Target::system_v64()))
+            .exec(diagnostics, intervals)
     }
 
     fn emit_output(

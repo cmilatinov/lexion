@@ -1,5 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
+assertion_line: 103
 expression: "compile_x86(\"backend/x86_return_arithmetic.lex\")"
 snapshot_kind: text
 ---
@@ -10,21 +11,18 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-  sub rsp, 16
+  push rbx
+  push r12
 #     let value = 1 + 2 * 3;
-  mov eax, 2
-  imul eax, 3
-  mov DWORD PTR [rbp-4], eax
-  mov eax, 1
-  add eax, DWORD PTR [rbp-4]
-  mov DWORD PTR [rbp-8], eax
-  mov eax, DWORD PTR [rbp-8]
-  mov DWORD PTR [rbp-16], eax
+  mov ebx, 2
+  imul ebx, 3
+  mov r12d, 1
+  add r12d, ebx
+  mov ebx, r12d
 #     return value - 4;
-  mov eax, DWORD PTR [rbp-16]
+  mov eax, ebx
   sub eax, 4
-  mov DWORD PTR [rbp-12], eax
-  mov eax, DWORD PTR [rbp-12]
-  mov rsp, rbp
+  pop r12
+  pop rbx
   pop rbp
   ret
