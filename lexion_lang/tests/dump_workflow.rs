@@ -25,6 +25,7 @@ fn dump_directory_is_predictable_for_repeated_runs() {
     let options = LexionCompilerOptions {
         dump_flags: "ast,ir".parse().unwrap(),
         dump_dir: dump_dir.into(),
+        ..LexionCompilerOptions::default()
     };
 
     LexionCompiler::new(options).exec(source).unwrap();
