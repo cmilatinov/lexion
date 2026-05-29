@@ -42,6 +42,7 @@ impl Args {
 enum EmitArg {
     Check,
     Asm,
+    Elf64,
 }
 
 impl From<EmitArg> for EmitTarget {
@@ -49,6 +50,7 @@ impl From<EmitArg> for EmitTarget {
         match value {
             EmitArg::Check => EmitTarget::Check,
             EmitArg::Asm => EmitTarget::X86Assembly,
+            EmitArg::Elf64 => EmitTarget::X86Elf64,
         }
     }
 }
@@ -77,10 +79,16 @@ fn main() -> Result<(), CompilationError> {
                 println!("{:?}", Report::new(output.diagnostics));
             }
             if let Some(assembly) = output.assembly {
-                match output_path {
-                    Some(path) => write_output(&path, assembly.as_str())?,
+                match output_path.as_ref() {
+                    Some(path) => write_output(path, assembly.as_str())?,
                     None => println!("{assembly}"),
                 }
+            }
+            if let Some(executable) = output.executable {
+                let Some(path) = output_path.as_ref() else {
+                    return Err(CompilationError::OutputRequired);
+                };
+                write_output(path, executable.as_bytes())?;
             }
             Ok(())
         }
@@ -93,7 +101,7 @@ fn main() -> Result<(), CompilationError> {
     }
 }
 
-fn write_output(path: &Path, content: &str) -> Result<(), CompilationError> {
+fn write_output(path: &Path, content: impl AsRef<[u8]>) -> Result<(), CompilationError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -121,5 +129,21 @@ mod tests {
 
         assert_eq!(options.emit, EmitTarget::X86Assembly);
         assert_eq!(output, Some(PathBuf::from("target/test-dumps/out.s")));
+    }
+
+    #[test]
+    fn parses_elf64_emit_mode() {
+        let (_, options, output) = Args::parse_from([
+            "lexion",
+            "--emit",
+            "elf64",
+            "--output",
+            "target/test-dumps/out",
+            "tests/fixtures/backend/x86_exit_status.lex",
+        ])
+        .split();
+
+        assert_eq!(options.emit, EmitTarget::X86Elf64);
+        assert_eq!(output, Some(PathBuf::from("target/test-dumps/out")));
     }
 }

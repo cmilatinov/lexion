@@ -1,4 +1,5 @@
 use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+use lexion_lang::compiler::{EmitTarget, LexionCompiler, LexionCompilerOptions};
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
 use lexion_lang::generators::x86::{CodeGeneratorX86Elf, X86ElfExecutable, X86ElfOptions};
@@ -108,6 +109,29 @@ fn x86_elf_executable_has_runtime_entry() {
     let runtime = &executable.as_bytes()[runtime_start..runtime_end];
 
     insta::assert_snapshot!(disassemble(runtime, executable.entry_point()));
+}
+
+#[test]
+fn compiler_emits_x86_elf_executable_output() {
+    let path = "tests/fixtures/backend/x86_exit_status.lex";
+    let source_code = Arc::new(std::fs::read_to_string(path).expect("fixture not found"));
+    let source = NamedSource::new(path, source_code);
+    let options = LexionCompilerOptions {
+        emit: EmitTarget::X86Elf64,
+        ..LexionCompilerOptions::default()
+    };
+    let output = LexionCompiler::new(options)
+        .exec(source)
+        .expect("compiler should emit x86 elf output");
+    let executable = output.executable.expect("missing executable output");
+
+    assert!(output.diagnostics.is_empty());
+    assert_eq!(&executable.as_bytes()[0..4], b"\x7FELF");
+    assert_eq!(
+        read_u64(executable.as_bytes(), 24),
+        executable.entry_point()
+    );
+    assert!(executable.symbols().contains_key("main"));
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

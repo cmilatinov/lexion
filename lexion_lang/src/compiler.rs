@@ -7,8 +7,8 @@ use crate::diagnostic::{
 use crate::generators::tac::instructions::{ControlFlowGraph, FunctionRange, LivenessInterval};
 use crate::generators::tac::CodeGeneratorTac;
 use crate::generators::x86::{
-    AbiRegisterAllocator, AssignedLivenessInterval, CodeGeneratorX86, X86Assembly, X86EmitOptions,
-    X86Target,
+    AbiRegisterAllocator, AssignedLivenessInterval, CodeGeneratorX86, CodeGeneratorX86Elf,
+    X86Assembly, X86ElfExecutable, X86ElfOptions, X86EmitOptions, X86Target,
 };
 use crate::parser::ParserLexion;
 use crate::pipeline::PipelineStage;
@@ -49,16 +49,19 @@ pub enum EmitTarget {
     #[default]
     Check,
     X86Assembly,
+    X86Elf64,
 }
 
 pub struct LexionCompilerOutput {
     pub diagnostics: LexionDiagnosticList,
     pub assembly: Option<X86Assembly>,
+    pub executable: Option<X86ElfExecutable>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EmitOutputError {
     X86AssemblyFailed,
+    X86Elf64Failed,
 }
 
 pub struct LexionCompiler {
@@ -115,7 +118,7 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        let assembly = match self.emit_output(
+        let (assembly, executable) = match self.emit_output(
             &mut diagnostics,
             &cfg,
             &types,
@@ -123,13 +126,16 @@ impl LexionCompiler {
             source_text.as_ref(),
             &source,
         ) {
-            Ok(assembly) => assembly,
-            Err(EmitOutputError::X86AssemblyFailed) => return Err(diagnostics),
+            Ok(output) => output,
+            Err(EmitOutputError::X86AssemblyFailed | EmitOutputError::X86Elf64Failed) => {
+                return Err(diagnostics);
+            }
         };
 
         Ok(LexionCompilerOutput {
             diagnostics,
             assembly,
+            executable,
         })
     }
 }
@@ -330,9 +336,9 @@ impl LexionCompiler {
         symbols: &SymbolTableGraph,
         source_text: &str,
         source: &NamedSource<Arc<String>>,
-    ) -> Result<Option<X86Assembly>, EmitOutputError> {
+    ) -> Result<(Option<X86Assembly>, Option<X86ElfExecutable>), EmitOutputError> {
         match self.options.emit {
-            EmitTarget::Check => Ok(None),
+            EmitTarget::Check => Ok((None, None)),
             EmitTarget::X86Assembly => CodeGeneratorX86::new((cfg, types, symbols))
                 .exec(
                     diagnostics,
@@ -342,8 +348,12 @@ impl LexionCompiler {
                         diagnostic_source: Some(source),
                     },
                 )
-                .map(Some)
+                .map(|assembly| (Some(assembly), None))
                 .ok_or(EmitOutputError::X86AssemblyFailed),
+            EmitTarget::X86Elf64 => CodeGeneratorX86Elf::new((cfg, types, symbols))
+                .exec(diagnostics, X86ElfOptions::default())
+                .map(|executable| (None, Some(executable)))
+                .ok_or(EmitOutputError::X86Elf64Failed),
         }
     }
 }
