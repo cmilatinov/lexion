@@ -3,6 +3,7 @@ use crate::generators::label::Label;
 use derived_deref::{Deref, DerefMut};
 use enum_dispatch::enum_dispatch;
 use lexion_lib::itertools::Itertools;
+use lexion_lib::miette::SourceSpan;
 use lexion_lib::petgraph::graph::NodeIndex;
 use lexion_lib::petgraph::Graph;
 use lexion_lib::tabled::builder::Builder;
@@ -310,6 +311,7 @@ impl Display for LiveSets {
 
 pub struct InstructionInstance {
     pub instruction: Instruction,
+    pub source_span: Option<SourceSpan>,
     pub live: LiveSets,
 }
 

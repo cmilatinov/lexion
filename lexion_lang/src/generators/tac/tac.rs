@@ -98,9 +98,11 @@ impl<'a> CodeGeneratorTac<'a> {
         operator: &'static str,
         right: Operand,
         left: Option<Operand>,
+        source_span: Option<SourceSpan>,
     ) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span,
             instruction: Instruction::Assignment(AssignmentInstruction {
                 target,
                 operator,
@@ -110,9 +112,15 @@ impl<'a> CodeGeneratorTac<'a> {
         })
     }
 
-    fn copy(&mut self, dst: Operand, src: Operand) -> CodeLocation {
+    fn sourced_copy(
+        &mut self,
+        dst: Operand,
+        src: Operand,
+        source_span: SourceSpan,
+    ) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: Some(source_span),
             instruction: Instruction::Copy(CopyInstruction { dst, src }),
         })
     }
@@ -123,9 +131,11 @@ impl<'a> CodeGeneratorTac<'a> {
         operator: &'static str,
         right: Operand,
         left: Option<Operand>,
+        source_span: Option<SourceSpan>,
     ) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span,
             instruction: Instruction::ConditionalJump(ConditionalJumpInstruction {
                 target,
                 operator,
@@ -138,20 +148,28 @@ impl<'a> CodeGeneratorTac<'a> {
     fn jump(&mut self, target: Operand) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: None,
             instruction: Instruction::Jump(JumpInstruction { target }),
         })
     }
 
-    fn param(&mut self, param: Operand) -> CodeLocation {
+    fn param(&mut self, param: Operand, source_span: Option<SourceSpan>) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span,
             instruction: Instruction::Parameter(ParameterInstruction { param }),
         })
     }
 
-    fn call(&mut self, function: String, return_target: Option<Operand>) -> CodeLocation {
+    fn call(
+        &mut self,
+        function: String,
+        return_target: Option<Operand>,
+        source_span: SourceSpan,
+    ) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: Some(source_span),
             instruction: Instruction::FunctionCall(FunctionCallInstruction {
                 function,
                 return_target,
@@ -159,16 +177,18 @@ impl<'a> CodeGeneratorTac<'a> {
         })
     }
 
-    fn _return(&mut self, value: Option<Operand>) -> CodeLocation {
+    fn _return(&mut self, value: Option<Operand>, source_span: SourceSpan) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: Some(source_span),
             instruction: Instruction::Return(ReturnInstruction { value }),
         })
     }
 
-    fn function(&mut self, label: String) -> CodeLocation {
+    fn function(&mut self, label: String, source_span: SourceSpan) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: Some(source_span),
             instruction: Instruction::Function(FunctionInstruction { label }),
         })
     }
@@ -176,13 +196,15 @@ impl<'a> CodeGeneratorTac<'a> {
     fn end_function(&mut self, label: String) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: None,
             instruction: Instruction::EndFunction(EndFunctionInstruction { label }),
         })
     }
 
-    fn extern_(&mut self, label: String) -> CodeLocation {
+    fn extern_(&mut self, label: String, source_span: SourceSpan) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
+            source_span: Some(source_span),
             instruction: Instruction::Extern(ExternInstruction { label }),
         })
     }
@@ -280,9 +302,9 @@ impl<'a> CodeGeneratorTac<'a> {
                 TraversalType::Preorder,
                 AstNode::Stmt(Sourced {
                     value: Stmt::ReturnStmt(stmt),
-                    ..
+                    span,
                 }),
-            ) => self.return_stmt(stmt),
+            ) => self.return_stmt(stmt, *span),
             (
                 TraversalType::Preorder,
                 AstNode::Stmt(Sourced {
@@ -310,9 +332,9 @@ impl<'a> CodeGeneratorTac<'a> {
         self.labels.temp = LabelGenerator::new("$t", None);
         self.block(decl.name.value.clone(), false, true);
         if decl.body.is_some() {
-            self.function(decl.name.value.clone());
+            self.function(decl.name.value.clone(), decl.name.span);
         } else if decl.is_extern {
-            self.extern_(decl.name.value.clone());
+            self.extern_(decl.name.value.clone(), decl.name.span);
         }
     }
 
@@ -327,7 +349,11 @@ impl<'a> CodeGeneratorTac<'a> {
     fn var_decl_stmt(&mut self, decl: &VarDeclStmt) {
         if let Some(init) = &decl.decl.init {
             let temp = self.expr(init);
-            self.copy(Operand::Variable(decl.decl.name.value.clone()), temp);
+            self.sourced_copy(
+                Operand::Variable(decl.decl.name.value.clone()),
+                temp,
+                decl.decl.span,
+            );
         }
     }
 
@@ -340,6 +366,7 @@ impl<'a> CodeGeneratorTac<'a> {
             operators::EQUALS,
             condition,
             Some(Operand::Literal(Lit::Boolean(false))),
+            Some(stmt.condition.span),
         );
         self.loop_stack.push(PartialLoop {
             jump_instruction,
@@ -370,9 +397,9 @@ impl<'a> CodeGeneratorTac<'a> {
         let _ = self.expr(&stmt.expr);
     }
 
-    fn return_stmt(&mut self, stmt: &ReturnStmt) {
+    fn return_stmt(&mut self, stmt: &ReturnStmt, span: SourceSpan) {
         let value = stmt.expr.as_ref().map(|expr| self.expr(expr));
-        self._return(value);
+        self._return(value, span);
     }
 
     fn expr(&mut self, expr: &SourcedExpr) -> Operand {
@@ -471,17 +498,17 @@ impl<'a> CodeGeneratorTac<'a> {
         if inner.args.len() == 1 {
             let right = self.expr(&inner.args[0]);
             let temp = self.alloc_temp(*ty, *span);
-            self.assign(temp.clone(), inner.operator, right, None);
+            self.assign(temp.clone(), inner.operator, right, None, Some(*span));
             temp
         } else if inner.args.len() == 2 {
             let left = self.expr(&inner.args[0]);
             let right = self.expr(&inner.args[1]);
             if inner.operator == "=" {
-                self.copy(left.clone(), right);
+                self.sourced_copy(left.clone(), right, *span);
                 left
             } else {
                 let temp = self.alloc_temp(*ty, *span);
-                self.assign(temp.clone(), inner.operator, right, Some(left));
+                self.assign(temp.clone(), inner.operator, right, Some(left), Some(*span));
                 temp
             }
         } else {
@@ -506,7 +533,7 @@ impl<'a> CodeGeneratorTac<'a> {
             right
         } else {
             let temp = self.alloc_temp(*ty, *span);
-            self.assign(temp.clone(), operators::TYPE_CAST, right, None);
+            self.assign(temp.clone(), operators::TYPE_CAST, right, None, Some(*span));
             temp
         }
     }
@@ -526,7 +553,13 @@ impl<'a> CodeGeneratorTac<'a> {
         let base = self.expr(base);
         let index = self.expr(index);
         let temp = self.alloc_temp(*ty, *span);
-        self.assign(temp.clone(), operators::INDEX, index, Some(base));
+        self.assign(
+            temp.clone(),
+            operators::INDEX,
+            index,
+            Some(base),
+            Some(*span),
+        );
         temp
     }
 
@@ -565,9 +598,9 @@ impl<'a> CodeGeneratorTac<'a> {
             .rev()
             .collect::<Vec<_>>();
         for arg in args {
-            self.param(arg);
+            self.param(arg, Some(*span));
         }
-        self.call(ident.ident.clone(), return_value.clone());
+        self.call(ident.ident.clone(), return_value.clone(), *span);
         return_value
     }
 
@@ -595,6 +628,7 @@ impl<'a> CodeGeneratorTac<'a> {
             operators::EQUALS,
             condition,
             Some(Operand::Literal(Lit::Boolean(false))),
+            Some(expr.condition.span),
         );
         let prev_block = self.current_block.unwrap();
 
@@ -602,7 +636,7 @@ impl<'a> CodeGeneratorTac<'a> {
         self.block(label, true, false);
         let then = self.expr(&expr.then);
         if let Some(temp) = &temp {
-            self.copy(temp.clone(), then);
+            self.sourced_copy(temp.clone(), then, expr.then.span);
         }
 
         if let Some(else_) = &expr.else_ {
@@ -616,9 +650,10 @@ impl<'a> CodeGeneratorTac<'a> {
             }
             let else_block = self.block(label, false, false);
             self.cfg.add_edge(prev_block, else_block, ());
+            let else_span = else_.span;
             let else_ = self.expr(else_);
             if let Some(temp) = &temp {
-                self.copy(temp.clone(), else_);
+                self.sourced_copy(temp.clone(), else_, else_span);
             }
             let else_falls_through = self.current_block_can_fallthrough();
             let else_exit = self.current_block;
