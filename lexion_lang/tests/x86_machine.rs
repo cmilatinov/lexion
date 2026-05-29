@@ -98,3 +98,10 @@ fn x86_machine_code_if_else_returns() {
 
     insta::assert_snapshot!(machine_snapshot(&code));
 }
+
+#[test]
+fn x86_machine_code_system_v_function_call() {
+    let code = compile_machine_code("backend/x86_function_call.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
