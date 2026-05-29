@@ -1,6 +1,6 @@
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
-use lexion_lang::generators::x86::CodeGeneratorX86;
+use lexion_lang::generators::x86::{CodeGeneratorX86, X86EmitOptions};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::{SymbolTableGenerator, SymbolTableGraph};
@@ -11,7 +11,7 @@ use std::sync::Arc;
 fn compile_x86(fixture: &str) -> String {
     let path = format!("tests/fixtures/{fixture}");
     let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
-    let source = NamedSource::new(&path, source_code);
+    let source = NamedSource::new(&path, source_code.clone());
     let mut diagnostics = LexionDiagnosticList::default();
 
     let (mut ast, mut types, _) = ParserLexion::new()
@@ -29,7 +29,10 @@ fn compile_x86(fixture: &str) -> String {
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
     let root_symbols = root_symbols(&symbols);
     CodeGeneratorX86::new((&cfg, &types, root_symbols))
-        .exec(&mut diagnostics, ())
+        .exec(
+            &mut diagnostics,
+            X86EmitOptions::with_source_comments(source_code.as_ref()),
+        )
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
         .to_string()
 }

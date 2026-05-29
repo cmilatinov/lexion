@@ -3,6 +3,11 @@ source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86(\"backend/x86_return_bool.lex\")"
 snapshot_kind: text
 ---
+# fn main() -> bool {
+#     let less = 1 < 2;
+#     let same = less == true;
+#     return same;
+# }
 .intel_syntax noprefix
 .text
 .global main

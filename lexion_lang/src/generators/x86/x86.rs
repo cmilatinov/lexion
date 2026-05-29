@@ -33,6 +33,21 @@ impl Display for X86Assembly {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct X86EmitOptions<'a> {
+    pub emit_source_comments: bool,
+    pub source: Option<&'a str>,
+}
+
+impl<'a> X86EmitOptions<'a> {
+    pub fn with_source_comments(source: &'a str) -> Self {
+        Self {
+            emit_source_comments: true,
+            source: Some(source),
+        }
+    }
+}
+
 pub struct CodeGeneratorX86<'a> {
     cfg: &'a ControlFlowGraph,
     _types: &'a TypeCollection,
@@ -41,11 +56,15 @@ pub struct CodeGeneratorX86<'a> {
 }
 
 impl<'a> CodeGeneratorX86<'a> {
-    fn emit(&self) -> X86Assembly {
-        let mut lines = vec![
+    fn emit(&self, options: X86EmitOptions<'_>) -> X86Assembly {
+        let mut lines = Vec::new();
+        if options.emit_source_comments {
+            emit_source_comments(&mut lines, options.source.unwrap_or_default());
+        }
+        lines.extend([
             String::from(".intel_syntax noprefix"),
             String::from(".text"),
-        ];
+        ]);
         for range in &self.cfg.functions {
             lines.extend(self.emit_function(*range));
         }
@@ -247,7 +266,7 @@ impl<'a> CodeGeneratorX86<'a> {
 
 impl<'a> PipelineStage for CodeGeneratorX86<'a> {
     type Input = (&'a ControlFlowGraph, &'a TypeCollection, &'a SymbolTable);
-    type Options = ();
+    type Options = X86EmitOptions<'a>;
     type Output = X86Assembly;
 
     fn new((cfg, types, symbols): Self::Input) -> Self {
@@ -259,12 +278,18 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
         }
     }
 
-    fn exec(
-        self,
-        _diag: &mut dyn DiagnosticConsumer,
-        _opts: Self::Options,
-    ) -> Option<Self::Output> {
-        Some(self.emit())
+    fn exec(self, _diag: &mut dyn DiagnosticConsumer, opts: Self::Options) -> Option<Self::Output> {
+        Some(self.emit(opts))
+    }
+}
+
+fn emit_source_comments(lines: &mut Vec<String>, source: &str) {
+    for line in source.lines() {
+        if line.is_empty() {
+            lines.push(String::from("#"));
+        } else {
+            lines.push(format!("# {line}"));
+        }
     }
 }
 
