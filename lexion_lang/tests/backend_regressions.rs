@@ -4,11 +4,15 @@ use lexion_lang::generators::tac::instructions::{
     ControlFlowGraph, FunctionRange, LivenessInterval,
 };
 use lexion_lang::generators::tac::CodeGeneratorTac;
-use lexion_lang::generators::x86::{AssignedLivenessInterval, LinearRegisterAllocator};
+use lexion_lang::generators::x86::{
+    AbiLocationRole, AbiRegisterAllocator, AssignedLivenessInterval, LinearRegisterAllocator,
+    X86Target,
+};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
 use lexion_lang::type_checker::TypeChecker;
+use lexion_lang::{ast::types::TypeCollection, symbol_table::SymbolTableGraph};
 use lexion_lib::miette::NamedSource;
 use lexion_lib::petgraph::visit::EdgeRef;
 use std::collections::{HashMap, HashSet};
@@ -17,6 +21,8 @@ use std::sync::Arc;
 struct BackendOutput {
     cfg: ControlFlowGraph,
     intervals: HashMap<FunctionRange, Vec<LivenessInterval>>,
+    types: TypeCollection,
+    symbols: SymbolTableGraph,
 }
 
 fn compile_cfg(fixture: &str) -> ControlFlowGraph {
@@ -42,7 +48,12 @@ fn compile_backend(fixture: &str) -> BackendOutput {
     let (cfg, intervals) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
-    BackendOutput { cfg, intervals }
+    BackendOutput {
+        cfg,
+        intervals,
+        types,
+        symbols,
+    }
 }
 
 fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
@@ -144,6 +155,65 @@ fn allocation_snapshot_with_registers(output: BackendOutput, registers: Vec<Regi
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn abi_allocation_snapshot(output: BackendOutput) -> String {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let assigned = AbiRegisterAllocator::new((
+        &output.cfg,
+        &output.types,
+        &output.symbols,
+        X86Target::system_v64(),
+    ))
+    .exec(&mut diagnostics, output.intervals)
+    .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    assert_unique_assignments(&assigned);
+
+    sorted_assignments(&assigned)
+        .into_iter()
+        .map(|(range, assigned)| {
+            format!(
+                "{} -> {:?}{}",
+                format_interval(range, assigned.interval()),
+                assigned.location(),
+                format_constraints(assigned)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_constraints(assigned: &AssignedLivenessInterval) -> String {
+    let constraints = assigned
+        .constraints()
+        .iter()
+        .map(|constraint| {
+            let location = constraint.location();
+            format!(
+                "{}@{}:{} {:?}",
+                format_constraint_role(constraint.role()),
+                location.block.index(),
+                location.instruction,
+                constraint.abi_location()
+            )
+        })
+        .collect::<Vec<_>>();
+    if constraints.is_empty() {
+        String::new()
+    } else {
+        format!(" constraints [{}]", constraints.join(", "))
+    }
+}
+
+fn format_constraint_role(role: &AbiLocationRole) -> String {
+    match role {
+        AbiLocationRole::FunctionParameter { index } => format!("param[{index}]"),
+        AbiLocationRole::CallArgument { function, index } => {
+            format!("call {function} arg[{index}]")
+        }
+        AbiLocationRole::CallReturn { function } => format!("call {function} return"),
+        AbiLocationRole::ReturnValue => String::from("return"),
+    }
 }
 
 fn assert_unique_assignments(assigned: &HashMap<FunctionRange, Vec<AssignedLivenessInterval>>) {
@@ -266,4 +336,11 @@ fn backend_branch_loop_call_register_spill_snapshot() {
         output,
         vec![Register::RAX]
     ));
+}
+
+#[test]
+fn backend_branch_loop_call_abi_register_allocation_snapshot() {
+    let output = compile_backend("backend/branch_loop_call.lex");
+
+    insta::assert_snapshot!(abi_allocation_snapshot(output));
 }

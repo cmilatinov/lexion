@@ -112,6 +112,8 @@ impl CallingConvention for SystemV64 {
     fn caller_saved(&self) -> &'static [Register] {
         &[
             Register::RAX,
+            Register::RDI,
+            Register::RSI,
             Register::RDX,
             Register::RCX,
             Register::R8,
@@ -124,6 +126,8 @@ impl CallingConvention for SystemV64 {
     fn call_clobbered(&self) -> &'static [Register] {
         &[
             Register::RAX,
+            Register::RDI,
+            Register::RSI,
             Register::RDX,
             Register::RCX,
             Register::R8,
@@ -138,6 +142,14 @@ impl CallingConvention for SystemV64 {
             Register::XMM5,
             Register::XMM6,
             Register::XMM7,
+            Register::XMM8,
+            Register::XMM9,
+            Register::XMM10,
+            Register::XMM11,
+            Register::XMM12,
+            Register::XMM13,
+            Register::XMM14,
+            Register::XMM15,
         ]
     }
 

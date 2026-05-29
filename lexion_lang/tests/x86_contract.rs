@@ -41,3 +41,25 @@ fn system_v64_assigns_integer_args_and_return_registers() {
         Some(Register::RAX)
     );
 }
+
+#[test]
+fn system_v64_marks_integer_arg_registers_call_clobbered() {
+    let call_clobbered = SystemV64.call_clobbered();
+
+    for register in [
+        Register::RAX,
+        Register::RDI,
+        Register::RSI,
+        Register::RDX,
+        Register::RCX,
+        Register::R8,
+        Register::R9,
+        Register::R10,
+        Register::R11,
+    ] {
+        assert!(
+            call_clobbered.contains(&register),
+            "{register:?} must be treated as call-clobbered"
+        );
+    }
+}

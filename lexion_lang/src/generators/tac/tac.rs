@@ -185,11 +185,16 @@ impl<'a> CodeGeneratorTac<'a> {
         })
     }
 
-    fn function(&mut self, label: String, source_span: SourceSpan) -> CodeLocation {
+    fn function(
+        &mut self,
+        label: String,
+        params: Vec<String>,
+        source_span: SourceSpan,
+    ) -> CodeLocation {
         self.instruction(InstructionInstance {
             live: Default::default(),
             source_span: Some(source_span),
-            instruction: Instruction::Function(FunctionInstruction { label }),
+            instruction: Instruction::Function(FunctionInstruction { label, params }),
         })
     }
 
@@ -332,7 +337,12 @@ impl<'a> CodeGeneratorTac<'a> {
         self.labels.temp = LabelGenerator::new("$t", None);
         self.block(decl.name.value.clone(), false, true);
         if decl.body.is_some() {
-            self.function(decl.name.value.clone(), decl.name.span);
+            let params = decl
+                .params
+                .iter()
+                .map(|param| param.value.name.value.clone())
+                .collect();
+            self.function(decl.name.value.clone(), params, decl.name.span);
         } else if decl.is_extern {
             self.extern_(decl.name.value.clone(), decl.name.span);
         }
