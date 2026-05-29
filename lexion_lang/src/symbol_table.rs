@@ -234,12 +234,7 @@ impl<'a> SymbolTableGenerator<'a> {
         self.current_scope = scope;
     }
 
-    fn create_struct(
-        &mut self,
-        diag: &mut dyn DiagnosticConsumer,
-        span: SourceSpan,
-        decl: &StructDeclStmt,
-    ) {
+    fn create_struct(&mut self, diag: &mut dyn DiagnosticConsumer, decl: &StructDeclStmt) {
         let struct_ = self
             .table
             .graph
@@ -259,7 +254,7 @@ impl<'a> SymbolTableGenerator<'a> {
                 ty: SymbolTableEntryType::StructMember,
                 name: name.clone(),
                 table: None,
-                span: field.span,
+                span: field.value.name.span,
                 var_type,
                 layout: None,
             });
@@ -272,7 +267,7 @@ impl<'a> SymbolTableGenerator<'a> {
             ty: SymbolTableEntryType::Struct,
             name: decl.name.value.clone(),
             table: Some(struct_),
-            span,
+            span: decl.name.span,
             var_type: Some(var_type),
             layout: None,
         };
@@ -412,7 +407,7 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
                         SymbolTableEntry {
                             ty: SymbolTableEntryType::LocalVar,
                             name: decl.name.value.clone(),
-                            span: decl.span,
+                            span: decl.name.span,
                             table: None,
                             var_type,
                             layout: None,
@@ -477,10 +472,10 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
                     TraversalType::Preorder,
                     AstNode::Stmt(Sourced {
                         value: Stmt::StructDeclStmt(stmt),
-                        span,
+                        ..
                     }),
                 ) => {
-                    self.create_struct(diag, *span, stmt);
+                    self.create_struct(diag, stmt);
                 }
                 _ => {}
             };
