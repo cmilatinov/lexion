@@ -54,9 +54,13 @@ fn dump_write_failures_are_reported_as_diagnostics() {
     let options = LexionCompilerOptions {
         dump_flags: "ast".parse().unwrap(),
         dump_dir: dump_dir.into(),
+        ..LexionCompilerOptions::default()
     };
 
-    let diagnostics = LexionCompiler::new(options).exec(source).unwrap_err();
+    let diagnostics = match LexionCompiler::new(options).exec(source) {
+        Ok(_) => panic!("expected dump write failure diagnostics"),
+        Err(diagnostics) => diagnostics,
+    };
     let messages = diagnostics
         .list
         .iter()
