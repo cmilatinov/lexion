@@ -1,5 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
+assertion_line: 108
 expression: "compile_x86(\"backend/x86_return_bool.lex\")"
 snapshot_kind: text
 ---
@@ -10,25 +11,19 @@ main:
 # fn main() -> bool {
   push rbp
   mov rbp, rsp
-  sub rsp, 16
 #     let less = 1 < 2;
   mov eax, 1
   cmp eax, 2
   setl al
   movzx eax, al
-  mov DWORD PTR [rbp-4], eax
-  mov eax, DWORD PTR [rbp-4]
-  mov DWORD PTR [rbp-12], eax
+  mov edi, eax
 #     let same = less == true;
-  mov eax, DWORD PTR [rbp-12]
+  mov eax, edi
   cmp eax, 1
   sete al
   movzx eax, al
-  mov DWORD PTR [rbp-8], eax
-  mov eax, DWORD PTR [rbp-8]
-  mov DWORD PTR [rbp-16], eax
+  mov edi, eax
 #     return same;
-  mov eax, DWORD PTR [rbp-16]
-  mov rsp, rbp
+  mov eax, edi
   pop rbp
   ret

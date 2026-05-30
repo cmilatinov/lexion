@@ -26,6 +26,6 @@ main:
   sub eax, 4
   mov DWORD PTR [rbp-12], eax
   mov eax, DWORD PTR [rbp-12]
-  mov rsp, rbp
+  add rsp, 16
   pop rbp
   ret
