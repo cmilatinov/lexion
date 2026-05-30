@@ -1,7 +1,9 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, TraversalType};
 use crate::ast::{Ast, AstView};
-use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticInfo, LexionDiagnosticList};
+use crate::diagnostic::{
+    DiagnosticConsumer, LexionDiagnosticError, LexionDiagnosticInfo, LexionDiagnosticList,
+};
 use crate::generators::tac::instructions::{ControlFlowGraph, FunctionRange, LivenessInterval};
 use crate::generators::tac::CodeGeneratorTac;
 use crate::generators::x86::{
@@ -107,7 +109,8 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        let Some(_) = self.assign_registers(&mut diagnostics, &cfg, &types, &symbols, intervals)
+        let Some(_) =
+            self.assign_registers(&mut diagnostics, &source, &cfg, &types, &symbols, intervals)
         else {
             return Err(diagnostics);
         };
@@ -148,6 +151,26 @@ impl LexionCompiler {
         Ok(())
     }
 
+    fn dump_file_or_diagnostic(
+        &self,
+        diagnostics: &mut LexionDiagnosticList,
+        source: &NamedSource<Arc<String>>,
+        name: &'static str,
+        content: impl AsRef<[u8]>,
+    ) -> Option<()> {
+        match self.dump_file(name, content) {
+            Ok(()) => Some(()),
+            Err(err) => {
+                diagnostics.error(LexionDiagnosticError {
+                    src: source.clone(),
+                    span: lexion_lib::miette::SourceSpan::from(0),
+                    message: format!("failed to write dump file `{name}`: {err}"),
+                });
+                None
+            }
+        }
+    }
+
     fn parse_source(
         &self,
         diagnostics: &mut LexionDiagnosticList,
@@ -157,16 +180,21 @@ impl LexionCompiler {
 
         if self.options.dump_flags.contains(Dump::ParseTable) {
             let table: Table = ParserLexion::PARSER.get_parse_table().to_table();
-            self.dump_file("parse_table.table", table.to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "parse_table.table",
+                table.to_string(),
+            )?;
         }
 
         if self.options.dump_flags.contains(Dump::Grammar) {
-            self.dump_file(
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
                 "grammar.jsmachine",
                 ParserLexion::GRAMMAR.to_jsmachine_string(),
-            )
-            .unwrap();
+            )?;
         }
 
         parser.exec(diagnostics, source.clone())
@@ -181,13 +209,21 @@ impl LexionCompiler {
         trace: &Table,
     ) -> Option<SymbolTableGraph> {
         if self.options.dump_flags.contains(Dump::ParseTrace) {
-            self.dump_file("parse_trace.table", trace.to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "parse_trace.table",
+                trace.to_string(),
+            )?;
         }
 
         if self.options.dump_flags.contains(Dump::AbstractSyntaxTree) {
-            self.dump_file("ast.tree", AstView::new(ast).to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "ast.tree",
+                AstView::new(ast).to_string(),
+            )?;
         }
 
         SymbolTableGenerator::new((source.clone(), ast, types)).exec(diagnostics, ())
@@ -203,10 +239,19 @@ impl LexionCompiler {
     ) -> Option<()> {
         if self.options.dump_flags.contains(Dump::Symbols) {
             if let Some(table) = symbols.table(symbols.root, Some(types)) {
-                self.dump_file("symbols.table", table.to_string()).unwrap();
+                self.dump_file_or_diagnostic(
+                    diagnostics,
+                    &source,
+                    "symbols.table",
+                    table.to_string(),
+                )?;
             }
-            self.dump_file("symbols.dot", format!("{:?}", Dot::new(&symbols.graph)))
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "symbols.dot",
+                format!("{:?}", Dot::new(&symbols.graph)),
+            )?;
         }
 
         TypeChecker::new((source.clone(), symbols, types)).exec(diagnostics, ast)
@@ -235,8 +280,12 @@ impl LexionCompiler {
                 }
                 AstVisitorAction::Continue
             });
-            self.dump_file("types.list", Report::new(type_list).to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "types.list",
+                Report::new(type_list).to_string(),
+            )?;
         }
 
         CodeGeneratorTac::new((ast, symbols, types)).exec(diagnostics, ())
@@ -245,6 +294,7 @@ impl LexionCompiler {
     fn assign_registers(
         &self,
         diagnostics: &mut LexionDiagnosticList,
+        source: &NamedSource<Arc<String>>,
         cfg: &ControlFlowGraph,
         types: &TypeCollection,
         symbols: &SymbolTableGraph,
@@ -260,9 +310,13 @@ impl LexionCompiler {
                 ir.push_str(&block.table().to_string());
                 ir.push('\n');
             }
-            self.dump_file("ir.table", ir).unwrap();
-            self.dump_file("ir.dot", format!("{:?}", Dot::new(&cfg.graph)))
-                .unwrap();
+            self.dump_file_or_diagnostic(diagnostics, source, "ir.table", ir)?;
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                source,
+                "ir.dot",
+                format!("{:?}", Dot::new(&cfg.graph)),
+            )?;
         }
         AbiRegisterAllocator::new((cfg, types, symbols, X86Target::system_v64()))
             .exec(diagnostics, intervals)

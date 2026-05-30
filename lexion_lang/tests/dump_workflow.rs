@@ -36,3 +36,41 @@ fn dump_directory_is_predictable_for_repeated_runs() {
     assert!(dump_dir.join("ir.dot").is_file());
     assert!(!dump_dir.join("parse_trace.table").exists());
 }
+
+#[test]
+fn dump_write_failures_are_reported_as_diagnostics() {
+    let dump_dir = std::path::Path::new("target/test-dumps/dump_path_is_file");
+    if dump_dir.is_dir() {
+        std::fs::remove_dir_all(dump_dir).unwrap();
+    } else if dump_dir.exists() {
+        std::fs::remove_file(dump_dir).unwrap();
+    }
+    std::fs::create_dir_all(dump_dir.parent().unwrap()).unwrap();
+    std::fs::write(dump_dir, "not a directory").unwrap();
+
+    let source_path = "tests/fixtures/semantics/variables.lex";
+    let source_code = Arc::new(std::fs::read_to_string(source_path).unwrap());
+    let source = NamedSource::new(source_path, source_code);
+    let options = LexionCompilerOptions {
+        dump_flags: "ast".parse().unwrap(),
+        dump_dir: dump_dir.into(),
+        ..LexionCompilerOptions::default()
+    };
+
+    let diagnostics = match LexionCompiler::new(options).exec(source) {
+        Ok(_) => panic!("expected dump write failure diagnostics"),
+        Err(diagnostics) => diagnostics,
+    };
+    let messages = diagnostics
+        .list
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("failed to write dump file `ast.tree`")),
+        "expected dump write diagnostic, got {messages:#?}"
+    );
+}
