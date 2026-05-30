@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+assertion_line: 117
+expression: "compile_x86_error(\"backend/x86_unsupported_tuple.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support tuple aggregate values yet: (i32, bool)
+   ,-[tests/fixtures/backend/x86_unsupported_tuple.lex:1:4]
+ 1 | fn first(value: (i32, bool)) -> i32 {
+   :    ^^|^^
+   :      `-- here
+ 2 |     return value.0;
+   `----

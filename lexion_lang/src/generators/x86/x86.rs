@@ -1,4 +1,4 @@
-use crate::ast::types::TypeCollection;
+use crate::ast::types::{PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
@@ -9,7 +9,8 @@ use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::{AbiLocationRole, AssignedLivenessInterval, StackOffset, X86Target};
 use crate::operators;
 use crate::pipeline::PipelineStage;
-use crate::symbol_table::SymbolTableGraph;
+use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
+use generational_arena::Index;
 use iced_x86::Register;
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet};
@@ -67,7 +68,7 @@ impl<'a> X86EmitOptions<'a> {
 
 pub struct CodeGeneratorX86<'a> {
     cfg: &'a ControlFlowGraph,
-    _types: &'a TypeCollection,
+    types: &'a TypeCollection,
     symbols: &'a SymbolTableGraph,
     target: X86Target,
     allocations: Option<&'a AllocationMap>,
@@ -217,12 +218,15 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn symbol_span(&self, name: &str) -> Option<SourceSpan> {
+        self.symbol_entry(name).map(|entry| entry.span)
+    }
+
+    fn symbol_entry(&self, name: &str) -> Option<&SymbolTableEntry> {
         self.symbols
             .graph
             .node_weights()
             .flat_map(|table| table.entries.iter())
             .find(|entry| entry.name == name)
-            .map(|entry| entry.span)
     }
 
     fn emit_instruction(
@@ -299,12 +303,15 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
         match instruction {
-            Instruction::Assignment(inst) => (!assignment_supported(inst)).then(|| {
-                format!(
-                    "x86 backend does not support `{}` assignments yet",
-                    inst.operator
-                )
-            }),
+            Instruction::Assignment(inst) => self
+                .unsupported_assignment_operator_message(inst)
+                .or_else(|| self.unsupported_operand_message(&inst.target))
+                .or_else(|| {
+                    inst.left
+                        .as_ref()
+                        .and_then(|left| self.unsupported_operand_message(left))
+                })
+                .or_else(|| self.unsupported_operand_message(&inst.right)),
             Instruction::FunctionCall(inst) => Some(format!(
                 "x86 backend does not support function calls yet: {}",
                 inst.function
@@ -313,13 +320,119 @@ impl<'a> CodeGeneratorX86<'a> {
                 "x86 backend does not support extern declarations yet: {}",
                 inst.label
             )),
-            Instruction::Copy(_)
-            | Instruction::ConditionalJump(_)
-            | Instruction::Jump(_)
-            | Instruction::Parameter(_)
-            | Instruction::Return(_)
-            | Instruction::Function(_)
-            | Instruction::EndFunction(_) => None,
+            Instruction::Copy(inst) => self
+                .unsupported_operand_message(&inst.dst)
+                .or_else(|| self.unsupported_operand_message(&inst.src)),
+            Instruction::ConditionalJump(inst) => inst
+                .left
+                .as_ref()
+                .and_then(|left| self.unsupported_operand_message(left))
+                .or_else(|| self.unsupported_operand_message(&inst.right)),
+            Instruction::Parameter(inst) => self.unsupported_operand_message(&inst.param),
+            Instruction::Return(inst) => inst
+                .value
+                .as_ref()
+                .and_then(|value| self.unsupported_operand_message(value)),
+            Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
+            Instruction::Jump(_) | Instruction::EndFunction(_) => None,
+        }
+    }
+
+    fn unsupported_assignment_operator_message(
+        &self,
+        inst: &AssignmentInstruction,
+    ) -> Option<String> {
+        if inst.left.is_none() && inst.operator == operators::ADDRESS_OF {
+            return Some(String::from(
+                "x86 backend does not support address-taking yet",
+            ));
+        }
+        if inst.left.is_none() && inst.operator == operators::DEREFERENCE {
+            return Some(String::from(
+                "x86 backend does not support pointer dereference yet",
+            ));
+        }
+        (!assignment_supported(inst)).then(|| {
+            format!(
+                "x86 backend does not support `{}` assignments yet",
+                inst.operator
+            )
+        })
+    }
+
+    fn unsupported_operand_message(&self, operand: &Operand) -> Option<String> {
+        match operand {
+            Operand::Literal(Lit::Float(_)) => Some(String::from(
+                "x86 backend does not support floating-point values yet: f32",
+            )),
+            Operand::Literal(Lit::String(_)) => Some(String::from(
+                "x86 backend does not support string values yet: &str",
+            )),
+            Operand::Variable(name) => self
+                .symbol_entry(name)
+                .and_then(|entry| entry.var_type)
+                .and_then(|ty| self.unsupported_type_message(ty)),
+            Operand::Temporary(label) => {
+                let name = label.to_string();
+                self.symbol_entry(&name)
+                    .and_then(|entry| entry.var_type)
+                    .and_then(|ty| self.unsupported_type_message(ty))
+            }
+            Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+        }
+    }
+
+    fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
+        let signature = self
+            .symbol_entry(function)
+            .and_then(|entry| entry.var_type)
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })?;
+        signature
+            .params
+            .iter()
+            .find_map(|ty| self.unsupported_type_message(*ty))
+            .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_type_message(&self, ty: Index) -> Option<String> {
+        let ty = self.types.canonicalize(ty);
+        let name = self.types.to_string_index(ty);
+        match self.types.get(ty)? {
+            Type::PrimitiveType(PrimitiveType::F32) => Some(format!(
+                "x86 backend does not support floating-point values yet: {name}"
+            )),
+            Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
+                "x86 backend does not support string values yet: {name}"
+            )),
+            Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
+                "x86 backend does not support tuple aggregate values yet: {name}"
+            )),
+            Type::StructType(_) => Some(format!(
+                "x86 backend does not support struct aggregate values yet: {name}"
+            )),
+            Type::RefType(ref_ty)
+                if matches!(
+                    self.types.get(self.types.canonicalize(ref_ty.to)),
+                    Some(Type::PrimitiveType(PrimitiveType::STR))
+                ) =>
+            {
+                Some(format!(
+                    "x86 backend does not support string values yet: {name}"
+                ))
+            }
+            Type::RefType(_) => Some(format!(
+                "x86 backend does not support reference or pointer values yet: {name}"
+            )),
+            Type::FunctionType(_) => Some(format!(
+                "x86 backend does not support function pointer values yet: {name}"
+            )),
+            Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
+                None
+            }
         }
     }
 
@@ -572,7 +685,7 @@ impl<'a> PipelineStage for CodeGeneratorX86<'a> {
     fn new((cfg, types, symbols): Self::Input) -> Self {
         Self {
             cfg,
-            _types: types,
+            types,
             symbols,
             target: X86Target::default(),
             allocations: None,
