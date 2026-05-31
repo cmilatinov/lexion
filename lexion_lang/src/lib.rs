@@ -125,6 +125,8 @@ impl Display for DumpFlags {
 pub enum CompilationError {
     #[error("{0}")]
     IO(std::io::Error),
+    #[error("--output is required when emitting binary output")]
+    OutputRequired,
     #[error("failed to compile source code")]
     CompilationFailed,
 }

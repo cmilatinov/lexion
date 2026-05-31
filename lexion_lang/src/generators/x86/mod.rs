@@ -1,4 +1,5 @@
 mod calling_convention;
+mod elf;
 mod machine_code;
 mod memory_layout;
 mod register_allocator;
@@ -7,6 +8,7 @@ mod target;
 mod x86;
 
 pub use calling_convention::*;
+pub use elf::*;
 pub use machine_code::*;
 pub use memory_layout::*;
 use num_enum::IntoPrimitive;
