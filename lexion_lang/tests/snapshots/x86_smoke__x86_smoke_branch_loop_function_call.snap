@@ -1,6 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-expression: "compile_x86(\"backend/branch_loop_call.lex\")"
+expression: assembly
 snapshot_kind: text
 ---
 .intel_syntax noprefix
@@ -32,8 +32,7 @@ $lstart_1:
   cmp eax, 3
   setl al
   movzx eax, al
-  mov eax, 0
-  cmp eax, eax
+  cmp eax, 0
   je $lend_1
 #         total = total + add_one(i);
   mov eax, r12d
@@ -56,8 +55,7 @@ $lend_1:
   cmp eax, 3
   setg al
   movzx eax, al
-  mov eax, 0
-  cmp eax, eax
+  cmp eax, 0
   je $celse_1
 $cthen_1:
 #         selected = total;

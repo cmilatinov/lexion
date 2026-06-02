@@ -140,7 +140,12 @@ fn x86_smoke_system_v_function_call() {
 
 #[test]
 fn x86_smoke_branch_loop_function_call() {
-    insta::assert_snapshot!(compile_x86("backend/branch_loop_call.lex"));
+    let assembly = compile_x86("backend/branch_loop_call.lex");
+    assert!(
+        !assembly.contains("cmp eax, eax"),
+        "conditional jump compare clobbered its condition:\n{assembly}"
+    );
+    insta::assert_snapshot!("x86_smoke_branch_loop_function_call", assembly);
 }
 
 #[test]

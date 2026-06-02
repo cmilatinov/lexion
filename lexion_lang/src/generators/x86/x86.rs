@@ -587,17 +587,14 @@ impl<'a> CodeGeneratorX86<'a> {
         location: CodeLocation,
         inst: &ConditionalJumpInstruction,
     ) {
-        if let Some(left) = &inst.left {
-            load_operand(lines, frame, location, left, Register::RAX);
-            lines.push(format!(
-                "  cmp eax, {}",
-                operand_value(frame, location, &inst.right)
-            ));
+        let operator = if let Some(left) = &inst.left {
+            emit_conditional_compare(lines, frame, location, left, inst.operator, &inst.right)
         } else {
             load_operand(lines, frame, location, &inst.right, Register::RAX);
             lines.push(String::from("  cmp eax, 0"));
-        }
-        lines.push(format!("  {} {}", jump_for(inst.operator), inst.target));
+            inst.operator
+        };
+        lines.push(format!("  {} {}", jump_for(operator), inst.target));
     }
 
     fn emit_function_call(
@@ -1058,6 +1055,50 @@ fn operand_value(frame: &FrameLayout<'_>, location: CodeLocation, operand: &Oper
             .unwrap_or_else(|| String::from("0")),
         Operand::Label(label) => label.clone(),
         Operand::Placeholder => String::from("0"),
+    }
+}
+
+fn emit_conditional_compare(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    left: &Operand,
+    operator: &'static str,
+    right: &Operand,
+) -> &'static str {
+    if is_immediate_compare_operand(left) && is_addressable_compare_operand(right) {
+        lines.push(format!(
+            "  cmp {}, {}",
+            operand_value(frame, location, right),
+            operand_value(frame, location, left)
+        ));
+        return swapped_comparison_operator(operator);
+    }
+
+    load_operand(lines, frame, location, left, Register::RAX);
+    lines.push(format!(
+        "  cmp eax, {}",
+        operand_value(frame, location, right)
+    ));
+    operator
+}
+
+fn is_immediate_compare_operand(operand: &Operand) -> bool {
+    matches!(operand, Operand::Literal(_) | Operand::Placeholder)
+}
+
+fn is_addressable_compare_operand(operand: &Operand) -> bool {
+    matches!(operand, Operand::Variable(_) | Operand::Temporary(_))
+}
+
+fn swapped_comparison_operator(operator: &'static str) -> &'static str {
+    match operator {
+        operators::LESS => operators::GREATER,
+        operators::LESS_EQUALS => operators::GREATER_EQUALS,
+        operators::GREATER => operators::LESS,
+        operators::GREATER_EQUALS => operators::LESS_EQUALS,
+        operators::EQUALS | operators::NOT_EQUALS => operator,
+        _ => operator,
     }
 }
 
