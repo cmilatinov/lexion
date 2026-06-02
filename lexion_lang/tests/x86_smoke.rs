@@ -109,6 +109,11 @@ fn x86_smoke_return_bool_comparison() {
 }
 
 #[test]
+fn x86_smoke_bitwise_and_shift_operators() {
+    insta::assert_snapshot!(compile_x86("backend/x86_bitwise_shift.lex"));
+}
+
+#[test]
 fn x86_reports_unsupported_float_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
 }

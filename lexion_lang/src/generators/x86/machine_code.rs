@@ -207,6 +207,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 assembler.sete(al)?;
                 assembler.movzx(eax, al)?;
             }
+            (None, operators::BITWISE_NOT) => {
+                load_operand(assembler, slots, &inst.right, eax)?;
+                assembler.not(eax)?;
+            }
             (None, _) => {
                 load_operand(assembler, slots, &inst.right, eax)?;
             }
@@ -240,13 +244,26 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
                 self.emit_compare(assembler, slots, left, &inst.right, inst.operator)?;
             }
-            (Some(left), operators::LOGICAL_AND) => {
+            (Some(left), operators::LOGICAL_AND | operators::BITWISE_AND) => {
                 load_operand(assembler, slots, left, eax)?;
                 and_operand(assembler, slots, &inst.right)?;
             }
-            (Some(left), operators::LOGICAL_OR) => {
+            (Some(left), operators::LOGICAL_OR | operators::BITWISE_OR) => {
                 load_operand(assembler, slots, left, eax)?;
                 or_operand(assembler, slots, &inst.right)?;
+            }
+            (Some(left), operators::BITWISE_XOR) => {
+                load_operand(assembler, slots, left, eax)?;
+                xor_operand(assembler, slots, &inst.right)?;
+            }
+            (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
+                load_operand(assembler, slots, left, eax)?;
+                load_operand(assembler, slots, &inst.right, ecx)?;
+                if inst.operator == operators::SHIFT_LEFT {
+                    assembler.shl(eax, cl)?;
+                } else {
+                    assembler.sar(eax, cl)?;
+                }
             }
             (Some(_), _) => {
                 unreachable!("unsupported x86 assignment operators are diagnosed before emission")
@@ -750,6 +767,21 @@ fn or_operand(
     }
 }
 
+fn xor_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Literal(_) => assembler.xor(eax, literal_value(operand)),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.xor(eax, stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xor(eax, 0),
+        Operand::Label(_) => unreachable!("labels are not valid i32 values"),
+    }
+}
+
 fn emit_jump(
     assembler: &mut CodeAssembler,
     labels: &HashMap<String, CodeLabel>,
@@ -834,7 +866,10 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
         (inst.left.as_ref(), inst.operator),
         (
             None,
-            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+            operators::UNARY_PLUS
+                | operators::UNARY_MINUS
+                | operators::LOGICAL_NOT
+                | operators::BITWISE_NOT
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -848,6 +883,11 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::GREATER_EQUALS)
             | (Some(_), operators::LOGICAL_AND)
             | (Some(_), operators::LOGICAL_OR)
+            | (Some(_), operators::BITWISE_AND)
+            | (Some(_), operators::BITWISE_OR)
+            | (Some(_), operators::BITWISE_XOR)
+            | (Some(_), operators::SHIFT_LEFT)
+            | (Some(_), operators::SHIFT_RIGHT)
     )
 }
 

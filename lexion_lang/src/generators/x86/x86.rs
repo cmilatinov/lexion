@@ -478,6 +478,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 lines.push(String::from("  sete al"));
                 lines.push(String::from("  movzx eax, al"));
             }
+            (None, operators::BITWISE_NOT) => {
+                load_operand(lines, frame, location, &inst.right, target_register);
+                lines.push(format!("  not {}", register_name_32(target_register)));
+            }
             (None, _) => {
                 load_operand(lines, frame, location, &inst.right, target_register);
             }
@@ -523,7 +527,7 @@ impl<'a> CodeGeneratorX86<'a> {
             (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
                 self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
             }
-            (Some(left), operators::LOGICAL_AND) => {
+            (Some(left), operators::LOGICAL_AND | operators::BITWISE_AND) => {
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
                     "  and {}, {}",
@@ -531,12 +535,34 @@ impl<'a> CodeGeneratorX86<'a> {
                     operand_value(frame, location, &inst.right)
                 ));
             }
-            (Some(left), operators::LOGICAL_OR) => {
+            (Some(left), operators::LOGICAL_OR | operators::BITWISE_OR) => {
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
                     "  or {}, {}",
                     register_name_32(target_register),
                     operand_value(frame, location, &inst.right)
+                ));
+            }
+            (Some(left), operators::BITWISE_XOR) => {
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  xor {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
+            }
+            (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
+                let mnemonic = if inst.operator == operators::SHIFT_LEFT {
+                    "shl"
+                } else {
+                    "sar"
+                };
+                let shift_register = shift_result_register(target_register);
+                load_operand(lines, frame, location, left, shift_register);
+                load_operand(lines, frame, location, &inst.right, Register::RCX);
+                lines.push(format!(
+                    "  {mnemonic} {}, cl",
+                    register_name_32(shift_register)
                 ));
             }
             (Some(_), _) => {
@@ -549,6 +575,9 @@ impl<'a> CodeGeneratorX86<'a> {
             | (Some(_), operators::EQUALS | operators::NOT_EQUALS)
             | (Some(_), operators::LESS | operators::LESS_EQUALS)
             | (Some(_), operators::GREATER | operators::GREATER_EQUALS) => Register::RAX,
+            (Some(_), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
+                shift_result_register(target_register)
+            }
             _ => target_register,
         };
         store_operand(lines, frame, location, &inst.target, result_register);
@@ -785,7 +814,10 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
         (inst.left.as_ref(), inst.operator),
         (
             None,
-            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+            operators::UNARY_PLUS
+                | operators::UNARY_MINUS
+                | operators::LOGICAL_NOT
+                | operators::BITWISE_NOT
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -799,6 +831,11 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::GREATER_EQUALS)
             | (Some(_), operators::LOGICAL_AND)
             | (Some(_), operators::LOGICAL_OR)
+            | (Some(_), operators::BITWISE_AND)
+            | (Some(_), operators::BITWISE_OR)
+            | (Some(_), operators::BITWISE_XOR)
+            | (Some(_), operators::SHIFT_LEFT)
+            | (Some(_), operators::SHIFT_RIGHT)
     )
 }
 
@@ -1208,6 +1245,14 @@ fn register_name(register: Register) -> String {
 
 fn register_name_32(register: Register) -> String {
     format!("{:?}", register.full_register32()).to_ascii_lowercase()
+}
+
+fn shift_result_register(target_register: Register) -> Register {
+    if target_register == Register::RCX {
+        Register::RAX
+    } else {
+        target_register
+    }
 }
 
 fn literal_value(operand: &Operand) -> String {
