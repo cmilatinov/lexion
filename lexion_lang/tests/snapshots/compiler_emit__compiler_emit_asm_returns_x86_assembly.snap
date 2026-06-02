@@ -1,6 +1,5 @@
 ---
 source: lexion_lang/tests/compiler_emit.rs
-assertion_line: 18
 expression: assembly.as_str()
 snapshot_kind: text
 ---
@@ -13,8 +12,7 @@ main:
   mov rbp, rsp
   sub rsp, 16
 #     let value = 1 + 2 * 3;
-  mov eax, 2
-  imul eax, 3
+  mov eax, 6
   mov DWORD PTR [rbp-4], eax
   mov eax, 1
   add eax, DWORD PTR [rbp-4]

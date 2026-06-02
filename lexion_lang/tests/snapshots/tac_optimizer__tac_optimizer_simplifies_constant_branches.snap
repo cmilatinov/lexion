@@ -1,0 +1,27 @@
+---
+source: lexion_lang/tests/tac_optimizer.rs
+expression: optimized_snapshot(&optimized)
+snapshot_kind: text
+---
+tac:
+main:
+  fn main
+  value = 1
+
+$cthen_1:
+  value = 2
+  goto $cend_1
+
+$celse_1:
+  value = 3
+
+$cend_1:
+  return value
+  endfn main
+
+cfg:
+function 0..3
+
+0(main) -> 1($cthen_1)
+1($cthen_1) -> 3($cend_1)
+2($celse_1) -> 3($cend_1)
