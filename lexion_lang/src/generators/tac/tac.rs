@@ -503,6 +503,9 @@ impl<'a> CodeGeneratorTac<'a> {
         else {
             unreachable!()
         };
+        if inner.operator == operators::TERNARY {
+            return self.ternary_expr(expr);
+        }
         assert!(!inner.args.is_empty() && inner.args.len() <= 2);
 
         if inner.args.len() == 1 {
@@ -524,6 +527,80 @@ impl<'a> CodeGeneratorTac<'a> {
         } else {
             unreachable!()
         }
+    }
+
+    fn ternary_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let Sourced {
+            value:
+                TypedExpr {
+                    expr: Expr::OperatorExpr(inner),
+                    ty,
+                },
+            span,
+            ..
+        } = expr
+        else {
+            unreachable!()
+        };
+        assert_eq!(inner.args.len(), 3);
+        let temp = if !self.types.eq(*ty, self.types.unit()) {
+            Some(self.alloc_temp(*ty, *span))
+        } else {
+            None
+        };
+
+        let condition = self.expr(&inner.args[0]);
+        let cond_jump = self.conditional_jump(
+            Operand::Placeholder,
+            operators::EQUALS,
+            condition,
+            Some(Operand::Literal(Lit::Boolean(false))),
+            Some(inner.args[0].span),
+        );
+        let prev_block = self.current_block.unwrap();
+
+        let label = self.labels.cond_then.next().to_string();
+        self.block(label, true, false);
+        let then = self.expr(&inner.args[1]);
+        if let Some(temp) = &temp {
+            self.sourced_copy(temp.clone(), then, inner.args[1].span);
+        }
+        let then_falls_through = self.current_block_can_fallthrough();
+        let then_exit = self.current_block;
+        let jump = then_falls_through.then(|| self.jump(Operand::Placeholder));
+
+        let label = self.labels.cond_else.next().to_string();
+        if let Instruction::ConditionalJump(jump) = cond_jump.instruction_mut(&mut self.cfg) {
+            jump.target = Operand::Label(label.clone());
+        }
+        let else_block = self.block(label, false, false);
+        self.cfg.add_edge(prev_block, else_block, ());
+        let else_ = self.expr(&inner.args[2]);
+        if let Some(temp) = &temp {
+            self.sourced_copy(temp.clone(), else_, inner.args[2].span);
+        }
+        let else_falls_through = self.current_block_can_fallthrough();
+        let else_exit = self.current_block;
+
+        let label = self.labels.cond_end.next().to_string();
+        if let Some(jump_location) = jump {
+            if let Instruction::Jump(jump) = &mut jump_location.instruction_mut(&mut self.cfg) {
+                jump.target = Operand::Label(label.clone());
+            }
+        }
+        let next_block = self.block(label, false, false);
+        if then_falls_through {
+            if let Some(then_exit) = then_exit {
+                self.cfg.add_edge(then_exit, next_block, ());
+            }
+        }
+        if else_falls_through {
+            if let Some(else_exit) = else_exit {
+                self.cfg.add_edge(else_exit, next_block, ());
+            }
+        }
+
+        temp.unwrap_or(Operand::Placeholder)
     }
 
     fn cast_expr(&mut self, expr: &SourcedExpr) -> Operand {

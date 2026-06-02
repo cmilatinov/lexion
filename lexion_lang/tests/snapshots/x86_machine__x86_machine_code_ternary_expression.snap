@@ -1,0 +1,37 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+main=0x0000
+
+bytes:
+55 48 89 E5 48 83 EC 10 B8 03 00 00 00 3D 01 00 00 00 0F 9F C0 0F B6 C0 89 45 FC 8B 45 FC 89 45 F4 B8 00 00 00 00 3B 45 F4 74 0A B8 07 00 00 00 89 45 F8 EB 08 B8 02 00 00 00 89 45 F8 8B 45 F8 89 45 F0 8B 45 F0 48 89 EC 5D C3
+
+disassembly:
+main:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov eax,3
+000D: cmp eax,1
+0012: setg al
+0015: movzx eax,al
+0018: mov [rbp-4],eax
+001B: mov eax,[rbp-4]
+001E: mov [rbp-0Ch],eax
+0021: mov eax,0
+0026: cmp eax,[rbp-0Ch]
+0029: je short 0000000000000035h
+002B: mov eax,7
+0030: mov [rbp-8],eax
+0033: jmp short 000000000000003Dh
+0035: mov eax,2
+003A: mov [rbp-8],eax
+003D: mov eax,[rbp-8]
+0040: mov [rbp-10h],eax
+0043: mov eax,[rbp-10h]
+0046: mov rsp,rbp
+0049: pop rbp
+004A: ret
