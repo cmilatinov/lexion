@@ -9,7 +9,7 @@ use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
 use lexion_lang::type_checker::TypeChecker;
 use lexion_lib::miette::NamedSource;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 fn compile_machine_code(fixture: &str) -> X86MachineCode {
     let path = format!("tests/fixtures/{fixture}");
@@ -53,7 +53,7 @@ fn machine_snapshot(code: &X86MachineCode) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         hex_bytes(code.as_bytes()),
-        disassemble(code.as_bytes())
+        disassemble(code.as_bytes(), code.symbols())
     )
 }
 
@@ -65,7 +65,11 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .join(" ")
 }
 
-fn disassemble(bytes: &[u8]) -> String {
+fn disassemble(bytes: &[u8], symbols: &BTreeMap<String, usize>) -> String {
+    let symbols_by_offset = symbols
+        .iter()
+        .map(|(name, offset)| (*offset, name.as_str()))
+        .collect::<BTreeMap<_, _>>();
     let mut decoder = Decoder::with_ip(64, bytes, 0, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     let mut lines = Vec::new();
@@ -73,6 +77,16 @@ fn disassemble(bytes: &[u8]) -> String {
         let instruction = decoder.decode();
         let mut formatted = String::new();
         formatter.format(&instruction, &mut formatted);
+        if let Some(symbol) = symbols_by_offset.get(&(instruction.ip() as usize)) {
+            lines.push(format!("{symbol}:"));
+        }
+        if formatted.starts_with("call ") {
+            if let Some(symbol) =
+                symbols_by_offset.get(&(instruction.near_branch_target() as usize))
+            {
+                formatted = format!("{formatted} <{symbol}>");
+            }
+        }
         lines.push(format!("{:04X}: {formatted}", instruction.ip()));
     }
     lines.join("\n")

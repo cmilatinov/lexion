@@ -1,6 +1,6 @@
 ---
 source: lexion_lang/tests/x86_machine.rs
-assertion_line: 99
+assertion_line: 113
 expression: machine_snapshot(&code)
 snapshot_kind: text
 ---
@@ -11,6 +11,7 @@ bytes:
 55 48 89 E5 48 83 EC 10 B8 01 00 00 00 89 45 F0 8B 45 F0 3D 01 00 00 00 0F 94 C0 0F B6 C0 89 45 F8 B8 00 00 00 00 3B 45 F8 74 0A B8 04 00 00 00 89 45 FC EB 08 B8 02 00 00 00 89 45 FC 8B 45 FC 89 45 F4 8B 45 F4 48 89 EC 5D C3
 
 disassembly:
+main:
 0000: push rbp
 0001: mov rbp,rsp
 0004: sub rsp,10h
