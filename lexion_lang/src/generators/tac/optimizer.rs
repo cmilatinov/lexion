@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 pub struct TacOptimizerOptions {
     pub constant_folding: bool,
     pub branch_simplification: bool,
+    pub dead_temp_elimination: bool,
 }
 
 impl TacOptimizerOptions {
@@ -22,6 +23,7 @@ impl TacOptimizerOptions {
         Self {
             constant_folding: false,
             branch_simplification: false,
+            dead_temp_elimination: false,
         }
     }
 }
@@ -31,6 +33,7 @@ impl Default for TacOptimizerOptions {
         Self {
             constant_folding: true,
             branch_simplification: true,
+            dead_temp_elimination: true,
         }
     }
 }
@@ -58,6 +61,9 @@ impl PipelineStage for CodeOptimizerTac {
         }
         if opts.branch_simplification {
             self.simplify_branches();
+        }
+        if opts.dead_temp_elimination {
+            self.eliminate_dead_temporaries_and_redundant_copies();
         }
         Some(self.cfg)
     }
@@ -187,6 +193,70 @@ impl CodeOptimizerTac {
             }
         }
     }
+
+    fn eliminate_dead_temporaries_and_redundant_copies(&mut self) {
+        loop {
+            let propagated = self.propagate_single_use_temporary_copies();
+            let removed = self.remove_dead_temporary_writes();
+            if !propagated && !removed {
+                break;
+            }
+        }
+    }
+
+    fn propagate_single_use_temporary_copies(&mut self) -> bool {
+        let mut changed = false;
+        for range in self.cfg.functions.clone() {
+            let nodes = self.cfg.function_nodes(&range).collect::<Vec<_>>();
+            let read_counts = read_counts_for_nodes(&self.cfg, &nodes);
+            for node in nodes {
+                let mut index = 0;
+                while index < self.cfg[node].instructions.len() {
+                    let Some((temporary, replacement)) = single_use_temporary_copy(
+                        &self.cfg[node].instructions[index].instruction,
+                        &read_counts,
+                    ) else {
+                        index += 1;
+                        continue;
+                    };
+                    let Some(use_index) = find_replaceable_use(
+                        &self.cfg[node].instructions,
+                        index + 1,
+                        &temporary,
+                        &replacement,
+                    ) else {
+                        index += 1;
+                        continue;
+                    };
+                    replace_instruction_operand(
+                        &mut self.cfg[node].instructions[use_index].instruction,
+                        temporary.as_str(),
+                        &replacement,
+                    );
+                    self.cfg[node].instructions.remove(index);
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
+    fn remove_dead_temporary_writes(&mut self) -> bool {
+        let mut changed = false;
+        for range in self.cfg.functions.clone() {
+            let nodes = self.cfg.function_nodes(&range).collect::<Vec<_>>();
+            let read_counts = read_counts_for_nodes(&self.cfg, &nodes);
+            for node in nodes {
+                let block = &mut self.cfg[node];
+                let before = block.instructions.len();
+                block
+                    .instructions
+                    .retain(|inst| !is_dead_temporary_write(&inst.instruction, &read_counts));
+                changed |= before != block.instructions.len();
+            }
+        }
+        changed
+    }
 }
 
 fn fold_assignment(inst: &AssignmentInstruction) -> Option<Lit> {
@@ -309,6 +379,132 @@ fn remove_written_constants(constants: &mut HashMap<String, Lit>, instruction: &
         ) {
             constants.remove(name.as_str());
         }
+    }
+}
+
+fn read_counts_for_nodes(cfg: &ControlFlowGraph, nodes: &[NodeIndex]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for node in nodes {
+        let block = &cfg[*node];
+        for inst in &block.instructions {
+            for name in inst.instruction.variables_read() {
+                *counts.entry(name).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
+fn single_use_temporary_copy(
+    instruction: &Instruction,
+    read_counts: &HashMap<String, usize>,
+) -> Option<(String, Operand)> {
+    let Instruction::Copy(copy) = instruction else {
+        return None;
+    };
+    let Operand::Temporary(label) = &copy.dst else {
+        return None;
+    };
+    if !matches!(
+        copy.src,
+        Operand::Literal(_) | Operand::Variable(_) | Operand::Temporary(_)
+    ) {
+        return None;
+    }
+    let name = label.to_string();
+    (read_counts.get(name.as_str()).copied() == Some(1)).then(|| (name, copy.src.clone()))
+}
+
+fn find_replaceable_use(
+    instructions: &[crate::generators::tac::instructions::InstructionInstance],
+    start: usize,
+    temporary: &str,
+    replacement: &Operand,
+) -> Option<usize> {
+    let replacement_name = operand_name(replacement);
+    for (index, inst) in instructions.iter().enumerate().skip(start) {
+        let reads = inst.instruction.variables_read();
+        if reads.contains(temporary) {
+            return Some(index);
+        }
+        if let Some(name) = &replacement_name {
+            if inst.instruction.variables_written().contains(name) {
+                return None;
+            }
+        }
+        if matches!(
+            inst.instruction,
+            Instruction::Parameter(_) | Instruction::FunctionCall(_) | Instruction::Extern(_)
+        ) {
+            return None;
+        }
+    }
+    None
+}
+
+fn replace_instruction_operand(instruction: &mut Instruction, name: &str, replacement: &Operand) {
+    match instruction {
+        Instruction::Assignment(assignment) => {
+            if let Some(left) = &mut assignment.left {
+                replace_operand(left, name, replacement);
+            }
+            replace_operand(&mut assignment.right, name, replacement);
+        }
+        Instruction::Copy(copy) => replace_operand(&mut copy.src, name, replacement),
+        Instruction::ConditionalJump(jump) => {
+            if let Some(left) = &mut jump.left {
+                replace_operand(left, name, replacement);
+            }
+            replace_operand(&mut jump.right, name, replacement);
+        }
+        Instruction::Parameter(param) => replace_operand(&mut param.param, name, replacement),
+        Instruction::Return(return_) => {
+            if let Some(value) = &mut return_.value {
+                replace_operand(value, name, replacement);
+            }
+        }
+        Instruction::Jump(_)
+        | Instruction::FunctionCall(_)
+        | Instruction::Function(_)
+        | Instruction::EndFunction(_)
+        | Instruction::Extern(_) => {}
+    }
+}
+
+fn replace_operand(operand: &mut Operand, name: &str, replacement: &Operand) {
+    if operand_name(operand).as_deref() == Some(name) {
+        *operand = replacement.clone();
+    }
+}
+
+fn is_dead_temporary_write(
+    instruction: &Instruction,
+    read_counts: &HashMap<String, usize>,
+) -> bool {
+    let Some(name) = pure_temporary_write(instruction) else {
+        return false;
+    };
+    read_counts.get(name.as_str()).copied().unwrap_or_default() == 0
+}
+
+fn pure_temporary_write(instruction: &Instruction) -> Option<String> {
+    match instruction {
+        Instruction::Assignment(assignment) => match &assignment.target {
+            Operand::Temporary(label) => Some(label.to_string()),
+            _ => None,
+        },
+        Instruction::Copy(copy) => match &copy.dst {
+            Operand::Temporary(label) => Some(label.to_string()),
+            _ => None,
+        },
+        Instruction::ConditionalJump(_)
+        | Instruction::Jump(_)
+        | Instruction::Parameter(_)
+        | Instruction::FunctionCall(_)
+        | Instruction::Return(_)
+        | Instruction::Function(_)
+        | Instruction::EndFunction(_)
+        | Instruction::Extern(_) => None,
     }
 }
 
