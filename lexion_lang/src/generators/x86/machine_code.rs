@@ -218,6 +218,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 load_operand(assembler, slots, &inst.right, eax)?;
                 assembler.not(eax)?;
             }
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => {
+                load_operand(assembler, slots, &inst.right, eax)?;
+                assembler.cmp(eax, 0)?;
+                assembler.setne(al)?;
+                assembler.movzx(eax, al)?;
+            }
             (None, _) => {
                 load_operand(assembler, slots, &inst.right, eax)?;
             }
@@ -277,6 +283,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
         }
         store_operand(assembler, slots, &inst.target, eax)
+    }
+
+    fn cast_target_is_bool(&self, inst: &AssignmentInstruction) -> bool {
+        self.operand_type(&inst.target)
+            .is_some_and(|ty| is_bool_type(self.types, ty))
     }
 
     fn emit_compare(
@@ -506,6 +517,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         &self,
         inst: &AssignmentInstruction,
     ) -> Option<String> {
+        if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
+            return self.unsupported_cast_message(inst);
+        }
         if inst.left.is_none() && inst.operator == operators::ADDRESS_OF {
             return Some(String::from(
                 "x86 machine-code backend does not support address-taking yet",
@@ -638,6 +652,44 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .enumerate()
             .map(|(idx, name)| (name, (idx + 1) * 4))
             .collect()
+    }
+
+    fn unsupported_cast_message(&self, inst: &AssignmentInstruction) -> Option<String> {
+        let Some(source_ty) = self.operand_type(&inst.right) else {
+            return Some(String::from(
+                "x86 machine-code backend does not support casts from unknown values yet",
+            ));
+        };
+        let Some(target_ty) = self.operand_type(&inst.target) else {
+            return Some(String::from(
+                "x86 machine-code backend does not support casts to unknown values yet",
+            ));
+        };
+        if is_integer_bool_scalar(self.types, source_ty)
+            && is_integer_bool_scalar(self.types, target_ty)
+        {
+            None
+        } else {
+            Some(format!(
+                "x86 machine-code backend does not support casts from `{}` to `{}` yet",
+                self.types.to_string_index(source_ty),
+                self.types.to_string_index(target_ty)
+            ))
+        }
+    }
+
+    fn operand_type(&self, operand: &Operand) -> Option<Index> {
+        match operand {
+            Operand::Literal(Lit::Integer(_)) => Some(self.types.i32()),
+            Operand::Literal(Lit::Boolean(_)) => Some(self.types.bool()),
+            Operand::Literal(Lit::Float(_)) => Some(self.types.f32()),
+            Operand::Variable(name) => self.symbol_entry(name).and_then(|entry| entry.var_type),
+            Operand::Temporary(label) => {
+                let name = label.to_string();
+                self.symbol_entry(&name).and_then(|entry| entry.var_type)
+            }
+            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+        }
     }
 }
 
@@ -911,6 +963,7 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
                 | operators::UNARY_MINUS
                 | operators::LOGICAL_NOT
                 | operators::BITWISE_NOT
+                | operators::TYPE_CAST
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -929,6 +982,22 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::BITWISE_XOR)
             | (Some(_), operators::SHIFT_LEFT)
             | (Some(_), operators::SHIFT_RIGHT)
+    )
+}
+
+fn is_bool_type(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(PrimitiveType::BOOL))
+    )
+}
+
+fn is_integer_bool_scalar(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(
+            PrimitiveType::BOOL | PrimitiveType::I32 | PrimitiveType::U32
+        ))
     )
 }
 

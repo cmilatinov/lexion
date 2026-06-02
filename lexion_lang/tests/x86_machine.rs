@@ -153,6 +153,13 @@ fn x86_machine_code_unsigned_shift_operators() {
 }
 
 #[test]
+fn x86_machine_code_scalar_casts() {
+    let code = compile_machine_code("backend/x86_scalar_casts.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 

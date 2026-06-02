@@ -129,8 +129,18 @@ fn x86_smoke_shift_preserves_allocated_registers() {
 }
 
 #[test]
+fn x86_smoke_scalar_casts() {
+    insta::assert_snapshot!(compile_x86("backend/x86_scalar_casts.lex"));
+}
+
+#[test]
 fn x86_reports_unsupported_float_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_float_casts() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_cast.lex").join("\n"));
 }
 
 #[test]
