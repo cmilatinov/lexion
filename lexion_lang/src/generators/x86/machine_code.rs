@@ -2,8 +2,8 @@ use crate::ast::types::TypeCollection;
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
-    AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionRange,
-    Instruction, Operand,
+    AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction,
+    FunctionRange, Instruction, Operand,
 };
 use crate::operators;
 use crate::pipeline::PipelineStage;
@@ -13,6 +13,8 @@ use iced_x86::{BlockEncoderOptions, IcedError};
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+
+const INTEGER_ARG_COUNT: usize = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct X86MachineCode {
@@ -99,15 +101,23 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         if stack_size > 0 {
             assembler.sub(rsp, stack_size as i32)?;
         }
+        self.store_function_params(assembler, &slots, range)?;
 
         let mut emitted_return = false;
+        let mut pending_params = Vec::new();
         for node in self.cfg.function_nodes(&range) {
             let block = &self.cfg[node];
             if node != range.start {
                 self.set_block_label(assembler, labels, block.label.as_str())?;
             }
             for inst in &block.instructions {
-                if self.emit_instruction(assembler, labels, &slots, &inst.instruction)? {
+                if self.emit_instruction(
+                    assembler,
+                    labels,
+                    &slots,
+                    &mut pending_params,
+                    &inst.instruction,
+                )? {
                     emitted_return = true;
                 }
             }
@@ -134,6 +144,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         assembler: &mut CodeAssembler,
         labels: &HashMap<String, CodeLabel>,
         slots: &BTreeMap<String, usize>,
+        pending_params: &mut Vec<Operand>,
         instruction: &Instruction,
     ) -> Result<bool, IcedError> {
         match instruction {
@@ -161,11 +172,17 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 emit_epilogue(assembler)?;
                 Ok(true)
             }
-            Instruction::Function(_) | Instruction::EndFunction(_) | Instruction::Extern(_) => {
+            Instruction::Parameter(inst) => {
+                pending_params.push(inst.param.clone());
                 Ok(false)
             }
-            Instruction::Parameter(_) | Instruction::FunctionCall(_) => {
-                unreachable!("unsupported x86 instructions are diagnosed before emission")
+            Instruction::FunctionCall(inst) => {
+                self.emit_function_call(assembler, labels, slots, pending_params, inst)?;
+                pending_params.clear();
+                Ok(false)
+            }
+            Instruction::Function(_) | Instruction::EndFunction(_) | Instruction::Extern(_) => {
+                Ok(false)
             }
         }
     }
@@ -274,6 +291,52 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         emit_conditional_branch(assembler, labels, inst.operator, &inst.target)
     }
 
+    fn emit_function_call(
+        &self,
+        assembler: &mut CodeAssembler,
+        labels: &HashMap<String, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        pending_params: &[Operand],
+        inst: &FunctionCallInstruction,
+    ) -> Result<(), IcedError> {
+        // TAC records call parameters in reverse source order.
+        for (idx, param) in pending_params.iter().rev().enumerate() {
+            load_operand(assembler, slots, param, integer_arg_register(idx))?;
+        }
+        assembler.call(label_name(labels, inst.function.as_str()))?;
+        if let Some(return_target) = &inst.return_target {
+            store_operand(assembler, slots, return_target, eax)?;
+        }
+        Ok(())
+    }
+
+    fn store_function_params(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        range: FunctionRange,
+    ) -> Result<(), IcedError> {
+        let Some(params) = self.function_params(range) else {
+            return Ok(());
+        };
+        for (idx, param) in params.iter().enumerate() {
+            if let Some(offset) = slots.get(param.as_str()) {
+                assembler.mov(dword_ptr(rbp - *offset as i32), integer_arg_register(idx))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn function_params(&self, range: FunctionRange) -> Option<&[String]> {
+        self.cfg[range.start]
+            .instructions
+            .iter()
+            .find_map(|inst| match &inst.instruction {
+                Instruction::Function(inst) => Some(inst.params.as_slice()),
+                _ => None,
+            })
+    }
+
     fn validate_supported(
         &self,
         diag: &mut dyn DiagnosticConsumer,
@@ -281,8 +344,40 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> bool {
         let mut valid = true;
         for range in &self.cfg.functions {
+            let mut pending_params = 0usize;
             for node in self.cfg.function_nodes(range) {
                 for inst in &self.cfg[node].instructions {
+                    match &inst.instruction {
+                        Instruction::Function(func) if func.params.len() > INTEGER_ARG_COUNT => {
+                            valid = false;
+                            diag.error(machine_code_error(
+                                options,
+                                inst.source_span,
+                                format!(
+                                    "x86 machine-code backend supports at most {INTEGER_ARG_COUNT} integer function parameters yet: {}",
+                                    func.label
+                                ),
+                            ));
+                        }
+                        Instruction::Parameter(_) => {
+                            pending_params += 1;
+                        }
+                        Instruction::FunctionCall(call) => {
+                            if pending_params > INTEGER_ARG_COUNT {
+                                valid = false;
+                                diag.error(machine_code_error(
+                                    options,
+                                    inst.source_span,
+                                    format!(
+                                        "x86 machine-code backend supports at most {INTEGER_ARG_COUNT} integer call arguments yet: {}",
+                                        call.function
+                                    ),
+                                ));
+                            }
+                            pending_params = 0;
+                        }
+                        _ => {}
+                    }
                     if let Some(message) = unsupported_message(&inst.instruction) {
                         valid = false;
                         diag.error(machine_code_error(options, inst.source_span, message));
@@ -498,9 +593,25 @@ fn label_operand(labels: &HashMap<String, CodeLabel>, operand: &Operand) -> Code
     let Operand::Label(label) = operand else {
         unreachable!("branch target must be a label")
     };
+    label_name(labels, label.as_str())
+}
+
+fn label_name(labels: &HashMap<String, CodeLabel>, label: &str) -> CodeLabel {
     *labels
-        .get(label.as_str())
+        .get(label)
         .unwrap_or_else(|| panic!("missing block label `{label}`"))
+}
+
+fn integer_arg_register(index: usize) -> AsmRegister32 {
+    match index {
+        0 => edi,
+        1 => esi,
+        2 => edx,
+        3 => ecx,
+        4 => r8d,
+        5 => r9d,
+        _ => unreachable!("integer argument index was validated before emission"),
+    }
 }
 
 fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {
@@ -534,15 +645,12 @@ fn unsupported_message(instruction: &Instruction) -> Option<String> {
                 inst.operator
             )
         }),
-        Instruction::FunctionCall(inst) => Some(format!(
-            "x86 machine-code backend does not support function calls yet: {}",
-            inst.function
-        )),
         Instruction::Extern(inst) => Some(format!(
             "x86 machine-code backend does not support extern declarations yet: {}",
             inst.label
         )),
-        Instruction::Copy(_)
+        Instruction::FunctionCall(_)
+        | Instruction::Copy(_)
         | Instruction::ConditionalJump(_)
         | Instruction::Jump(_)
         | Instruction::Parameter(_)
@@ -599,8 +707,12 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
                 collect_operand(value, names);
             }
         }
+        Instruction::FunctionCall(inst) => {
+            if let Some(target) = &inst.return_target {
+                collect_operand(target, names);
+            }
+        }
         Instruction::Jump(_)
-        | Instruction::FunctionCall(_)
         | Instruction::Function(_)
         | Instruction::EndFunction(_)
         | Instruction::Extern(_) => {}
