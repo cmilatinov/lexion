@@ -135,14 +135,17 @@ fn compiler_emits_x86_elf_executable_output() {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-#[test]
-fn x86_elf_executable_runs_on_linux_x86_64() {
+fn run_executable_fixture(fixture: &str) -> Option<i32> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
-    let executable = compile_elf("backend/x86_exit_status.lex");
+    let executable = compile_elf(fixture);
     let mut path = std::env::temp_dir();
-    path.push(format!("lexion-x86-elf-{}", std::process::id()));
+    path.push(format!(
+        "lexion-x86-elf-{}-{}",
+        std::process::id(),
+        fixture.replace(['/', '\\', '.'], "-")
+    ));
     std::fs::write(&path, executable.as_bytes()).expect("failed to write executable");
     let mut permissions = std::fs::metadata(&path)
         .expect("failed to stat executable")
@@ -155,5 +158,23 @@ fn x86_elf_executable_runs_on_linux_x86_64() {
         .expect("failed to run executable");
     let _ = std::fs::remove_file(&path);
 
-    assert_eq!(status.code(), Some(7));
+    status.code()
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_exit_status.lex"),
+        Some(7)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_function_call_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_function_call.lex"),
+        Some(9)
+    );
 }
