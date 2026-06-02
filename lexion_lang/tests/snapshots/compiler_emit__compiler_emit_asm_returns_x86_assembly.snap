@@ -11,8 +11,7 @@ main:
   push rbp
   mov rbp, rsp
 #     let value = 1 + 2 * 3;
-  mov eax, 2
-  imul eax, 3
+  mov eax, 6
   mov edi, 1
   add edi, eax
   mov eax, edi

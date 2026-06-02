@@ -1,0 +1,179 @@
+use lexion_lang::diagnostic::LexionDiagnosticList;
+use lexion_lang::generators::tac::instructions::{
+    ControlFlowGraph, Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand,
+    ReturnInstruction,
+};
+use lexion_lang::generators::tac::{
+    analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
+};
+use lexion_lang::parser::ParserLexion;
+use lexion_lang::pipeline::PipelineStage;
+use lexion_lang::symbol_table::SymbolTableGenerator;
+use lexion_lang::type_checker::TypeChecker;
+use lexion_lib::miette::NamedSource;
+use lexion_lib::petgraph::visit::EdgeRef;
+use std::sync::Arc;
+
+fn compile_raw_cfg(fixture: &str) -> ControlFlowGraph {
+    let path = format!("tests/fixtures/{fixture}");
+    let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
+    let source = NamedSource::new(&path, source_code);
+    let mut diagnostics = LexionDiagnosticList::default();
+
+    let (mut ast, mut types, _) = ParserLexion::new()
+        .exec(&mut diagnostics, source.clone())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let mut symbols = SymbolTableGenerator::new((source.clone(), &ast, &mut types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    TypeChecker::new((source, &mut symbols, &mut types))
+        .exec(&mut diagnostics, &mut ast)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    CodeGeneratorTac::new((&ast, &mut symbols, &types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
+        .0
+}
+
+fn optimize_cfg(fixture: &str, options: TacOptimizerOptions) -> ControlFlowGraph {
+    let mut diagnostics = LexionDiagnosticList::default();
+    CodeOptimizerTac::new(compile_raw_cfg(fixture))
+        .exec(&mut diagnostics, options)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
+}
+
+fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
+    diagnostics
+        .list
+        .iter()
+        .map(|diag| diag.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn tac_snapshot(cfg: &ControlFlowGraph) -> String {
+    cfg.node_indices()
+        .map(|node| {
+            let block = &cfg[node];
+            let instructions = block
+                .instructions
+                .iter()
+                .map(|inst| format!("  {}", inst.instruction))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if instructions.is_empty() {
+                format!("{}:", block.label)
+            } else {
+                format!("{}:\n{}", block.label, instructions)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn cfg_snapshot(cfg: &ControlFlowGraph) -> String {
+    let mut functions = cfg
+        .functions
+        .iter()
+        .map(|range| format!("function {}..{}", range.start.index(), range.end.index()))
+        .collect::<Vec<_>>();
+    functions.sort();
+
+    let mut edges = cfg
+        .edge_references()
+        .map(|edge| {
+            let source = edge.source();
+            let target = edge.target();
+            format!(
+                "{}({}) -> {}({})",
+                source.index(),
+                cfg[source].label,
+                target.index(),
+                cfg[target].label
+            )
+        })
+        .collect::<Vec<_>>();
+    edges.sort();
+
+    format!("{}\n\n{}", functions.join("\n"), edges.join("\n"))
+}
+
+fn optimized_snapshot(cfg: &ControlFlowGraph) -> String {
+    format!("tac:\n{}\n\ncfg:\n{}", tac_snapshot(cfg), cfg_snapshot(cfg))
+}
+
+fn instruction(instruction: Instruction) -> InstructionInstance {
+    InstructionInstance {
+        instruction,
+        source_span: None,
+        live: LiveSets::default(),
+    }
+}
+
+fn jump_chain_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let start = cfg.block(String::from("main"), true);
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Jump(JumpInstruction {
+            target: Operand::Label(String::from("middle")),
+        })));
+    let middle = cfg.block(String::from("middle"), false);
+    cfg[middle]
+        .instructions
+        .push(instruction(Instruction::Jump(JumpInstruction {
+            target: Operand::Label(String::from("end")),
+        })));
+    let end = cfg.block(String::from("end"), false);
+    cfg[end]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Literal(lexion_lang::ast::Lit::Integer(0))),
+        })));
+    cfg.link(start, middle);
+    cfg.link(middle, end);
+    cfg.end_function();
+    cfg
+}
+
+#[test]
+fn tac_optimizer_noop_preserves_tac_and_cfg() {
+    let raw = compile_raw_cfg("backend/branch_loop_call.lex");
+    let noop = optimize_cfg("backend/branch_loop_call.lex", TacOptimizerOptions::none());
+
+    assert_eq!(tac_snapshot(&raw), tac_snapshot(&noop));
+    assert_eq!(cfg_snapshot(&raw), cfg_snapshot(&noop));
+    insta::assert_snapshot!(optimized_snapshot(&noop));
+}
+
+#[test]
+fn tac_optimizer_folds_constant_expressions() {
+    let mut optimized = optimize_cfg(
+        "backend/tac_constant_folding.lex",
+        TacOptimizerOptions::default(),
+    );
+    let _ = analyze_liveness(&mut optimized);
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_simplifies_constant_branches() {
+    let optimized = optimize_cfg(
+        "backend/tac_constant_branch.lex",
+        TacOptimizerOptions::default(),
+    );
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_simplifies_jump_chains() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(jump_chain_cfg())
+        .exec(&mut diagnostics, TacOptimizerOptions::default())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
