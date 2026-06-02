@@ -1,0 +1,74 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/branch_loop_call.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  push r12
+#     let total: i32 = 0;
+  mov ebx, 0
+#     let i: i32 = 0;
+  mov r12d, 0
+$lstart_1:
+#     while i < 3 {
+  mov eax, r12d
+  cmp eax, 3
+  setl al
+  movzx eax, al
+  mov eax, 0
+  cmp eax, eax
+  je $lend_1
+#         total = total + add_one(i);
+  mov eax, r12d
+  push rax
+  pop rdi
+  call add_one
+  mov edi, ebx
+  add edi, eax
+  mov ebx, edi
+#         i = i + 1;
+  mov eax, r12d
+  add eax, 1
+  mov r12d, eax
+  jmp $lstart_1
+$lend_1:
+#     let selected: i32 = 0;
+  mov eax, 0
+#     if total > 3 {
+  mov eax, ebx
+  cmp eax, 3
+  setg al
+  movzx eax, al
+  mov eax, 0
+  cmp eax, eax
+  je $celse_1
+$cthen_1:
+#         selected = total;
+  mov eax, ebx
+  jmp $cend_1
+$celse_1:
+#         selected = 0;
+  mov eax, 0
+$cend_1:
+#     return selected;
+  pop r12
+  pop rbx
+  pop rbp
+  ret

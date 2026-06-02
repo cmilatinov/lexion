@@ -109,11 +109,6 @@ fn x86_smoke_return_bool_comparison() {
 }
 
 #[test]
-fn x86_reports_unsupported_function_calls() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_call.lex").join("\n"));
-}
-
-#[test]
 fn x86_reports_unsupported_float_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
 }
@@ -136,4 +131,19 @@ fn x86_reports_unsupported_struct_values() {
 #[test]
 fn x86_reports_unsupported_address_taking() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_reference.lex").join("\n"));
+}
+
+#[test]
+fn x86_smoke_system_v_function_call() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_call.lex"));
+}
+
+#[test]
+fn x86_smoke_branch_loop_function_call() {
+    insta::assert_snapshot!(compile_x86("backend/branch_loop_call.lex"));
+}
+
+#[test]
+fn x86_smoke_call_preserves_live_value() {
+    insta::assert_snapshot!(compile_x86("backend/x86_call_preserves_live_value.lex"));
 }

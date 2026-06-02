@@ -3,7 +3,7 @@ use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, CodeLocation, ConditionalJumpInstruction, ControlFlowGraph,
-    FunctionRange, Instruction, InstructionInstance, Operand,
+    FunctionCallInstruction, FunctionRange, Instruction, InstructionInstance, Operand,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::{AbiLocationRole, AssignedLivenessInterval, StackOffset, X86Target};
@@ -16,6 +16,8 @@ use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
+
+const STACK_ARG_SLOT_BYTES: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct X86Assembly {
@@ -107,6 +109,7 @@ impl<'a> CodeGeneratorX86<'a> {
         self.emit_function_parameter_moves(&mut lines, range, &frame);
 
         let mut emitted_return = false;
+        let mut pending_params = Vec::new();
         for node in self.cfg.function_nodes(&range) {
             let block = &self.cfg[node];
             if node != range.start {
@@ -120,7 +123,13 @@ impl<'a> CodeGeneratorX86<'a> {
                     &mut source_line_range,
                 );
                 let location = CodeLocation::new(node, instruction_index);
-                if self.emit_instruction(&mut lines, &frame, location, &inst.instruction) {
+                if self.emit_instruction(
+                    &mut lines,
+                    &frame,
+                    location,
+                    &mut pending_params,
+                    &inst.instruction,
+                ) {
                     emitted_return = true;
                 }
             }
@@ -234,6 +243,7 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         location: CodeLocation,
+        pending_params: &mut Vec<Operand>,
         instruction: &Instruction,
     ) -> bool {
         match instruction {
@@ -268,8 +278,14 @@ impl<'a> CodeGeneratorX86<'a> {
             Instruction::Function(_) | Instruction::EndFunction(_) | Instruction::Extern(_) => {
                 false
             }
-            Instruction::Parameter(_) | Instruction::FunctionCall(_) => {
-                unreachable!("unsupported x86 instructions are diagnosed before emission")
+            Instruction::Parameter(inst) => {
+                pending_params.push(inst.param.clone());
+                false
+            }
+            Instruction::FunctionCall(inst) => {
+                self.emit_function_call(lines, frame, location, pending_params, inst);
+                pending_params.clear();
+                false
             }
         }
     }
@@ -312,10 +328,10 @@ impl<'a> CodeGeneratorX86<'a> {
                         .and_then(|left| self.unsupported_operand_message(left))
                 })
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
-            Instruction::FunctionCall(inst) => Some(format!(
-                "x86 backend does not support function calls yet: {}",
-                inst.function
-            )),
+            Instruction::FunctionCall(inst) => inst
+                .return_target
+                .as_ref()
+                .and_then(|target| self.unsupported_operand_message(target)),
             Instruction::Extern(inst) => Some(format!(
                 "x86 backend does not support extern declarations yet: {}",
                 inst.label
@@ -383,14 +399,7 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
-        let signature = self
-            .symbol_entry(function)
-            .and_then(|entry| entry.var_type)
-            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
-            .and_then(|ty| match ty {
-                Type::FunctionType(signature) => Some(signature),
-                _ => None,
-            })?;
+        let signature = self.function_signature(function)?;
         signature
             .params
             .iter()
@@ -434,6 +443,16 @@ impl<'a> CodeGeneratorX86<'a> {
                 None
             }
         }
+    }
+
+    fn function_signature(&self, function: &str) -> Option<&crate::ast::types::FunctionType> {
+        self.symbol_entry(function)
+            .and_then(|entry| entry.var_type)
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })
     }
 
     fn emit_assignment(
@@ -579,6 +598,65 @@ impl<'a> CodeGeneratorX86<'a> {
             lines.push(String::from("  cmp eax, 0"));
         }
         lines.push(format!("  {} {}", jump_for(inst.operator), inst.target));
+    }
+
+    fn emit_function_call(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        pending_params: &[Operand],
+        inst: &FunctionCallInstruction,
+    ) {
+        let params = pending_params.iter().rev().collect::<Vec<_>>();
+        let arg_locations = self
+            .function_signature(&inst.function)
+            .map(|signature| {
+                self.target
+                    .calling_convention()
+                    .assign_args(self.types, 0, signature)
+            })
+            .unwrap_or_default();
+        let register_args = params
+            .iter()
+            .zip(arg_locations.iter())
+            .filter_map(|(operand, abi_location)| {
+                outgoing_register(abi_location).map(|register| (*operand, register))
+            })
+            .collect::<Vec<_>>();
+        for (operand, _) in &register_args {
+            load_operand(lines, frame, location, operand, Register::RAX);
+            lines.push(String::from("  push rax"));
+        }
+        for (_, register) in register_args.iter().rev() {
+            lines.push(format!("  pop {}", register_name(*register)));
+        }
+
+        let stack_args = params
+            .iter()
+            .zip(arg_locations.iter())
+            .filter(|(_, abi_location)| matches!(abi_location, Location::Stack(_)))
+            .map(|(operand, _)| *operand)
+            .collect::<Vec<_>>();
+        let stack_padding = frame.call_stack_padding(
+            stack_args.len(),
+            self.target.calling_convention().stack_alignment(),
+        );
+        if stack_padding > 0 {
+            lines.push(format!("  sub rsp, {stack_padding}"));
+        }
+        for operand in stack_args.iter().rev() {
+            load_operand(lines, frame, location, operand, Register::RAX);
+            lines.push(String::from("  push rax"));
+        }
+        lines.push(format!("  call {}", inst.function));
+        let stack_cleanup = stack_args.len() * STACK_ARG_SLOT_BYTES + stack_padding;
+        if stack_cleanup > 0 {
+            lines.push(format!("  add rsp, {stack_cleanup}"));
+        }
+        if let Some(return_target) = &inst.return_target {
+            store_operand(lines, frame, location, return_target, Register::RAX);
+        }
     }
 
     fn frame_layout(&self, range: FunctionRange) -> FrameLayout<'a> {
@@ -809,8 +887,12 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
                 collect_operand(value, names);
             }
         }
+        Instruction::FunctionCall(inst) => {
+            if let Some(target) = &inst.return_target {
+                collect_operand(target, names);
+            }
+        }
         Instruction::Jump(_)
-        | Instruction::FunctionCall(_)
         | Instruction::Function(_)
         | Instruction::EndFunction(_)
         | Instruction::Extern(_) => {}
@@ -900,6 +982,17 @@ impl<'a> FrameLayout<'a> {
 
     fn frame_stack_offset(&self, offset: StackOffset) -> usize {
         self.saved_registers.len() * 8 + (offset.0 + 1) * 4
+    }
+
+    fn call_stack_padding(&self, stack_arg_count: usize, stack_alignment: usize) -> usize {
+        let base_offset = (self.saved_registers.len() * STACK_ARG_SLOT_BYTES) % stack_alignment;
+        let outgoing_offset = stack_arg_count * STACK_ARG_SLOT_BYTES;
+        let remainder = (base_offset + outgoing_offset) % stack_alignment;
+        if remainder == 0 {
+            0
+        } else {
+            stack_alignment - remainder
+        }
     }
 }
 
@@ -1030,6 +1123,13 @@ fn incoming_location(location: &Location) -> Option<AssemblyLocation> {
         }),
         Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
         Location::Indirect { .. } | Location::Pair { .. } => None,
+    }
+}
+
+fn outgoing_register(location: &Location) -> Option<Register> {
+    match location {
+        Location::Register(register) | Location::RegisterAndStack(register, _) => Some(*register),
+        Location::Stack(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
     }
 }
 
