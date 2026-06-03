@@ -371,15 +371,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         options: X86MachineCodeOptions,
     ) -> bool {
         let mut valid = true;
+        let mut reported_messages = BTreeSet::new();
         for range in &self.cfg.functions {
             for node in self.cfg.function_nodes(range) {
                 for inst in &self.cfg[node].instructions {
                     if let Some(message) = self.unsupported_message(&inst.instruction) {
                         valid = false;
-                        let span = inst
-                            .source_span
-                            .or_else(|| self.instruction_source_span(&inst.instruction));
-                        diag.error(machine_code_error(options, span, message));
+                        if reported_messages.insert(message.clone()) {
+                            let span = inst
+                                .source_span
+                                .or_else(|| self.instruction_source_span(&inst.instruction));
+                            diag.error(machine_code_error(options, span, message));
+                        }
                     }
                 }
             }
