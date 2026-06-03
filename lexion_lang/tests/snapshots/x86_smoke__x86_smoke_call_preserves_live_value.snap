@@ -1,0 +1,39 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_call_preserves_live_value.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+#     let value = 4;
+  mov ebx, 4
+#     let next = add_one(value);
+  mov eax, ebx
+  push rax
+  pop rdi
+  sub rsp, 8
+  call add_one
+  add rsp, 8
+  mov edi, eax
+#     return next + value;
+  mov eax, edi
+  add eax, ebx
+  pop rbx
+  pop rbp
+  ret

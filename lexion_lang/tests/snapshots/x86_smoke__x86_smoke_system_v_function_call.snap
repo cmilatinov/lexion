@@ -1,0 +1,39 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_function_call.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global combine
+combine:
+# fn combine(a: i32, b: i32, c: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     let first = a + b;
+  mov eax, edi
+  add eax, esi
+  mov edi, eax
+#     return first + c;
+  mov eax, edi
+  add eax, edx
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return combine(2, 3, 4);
+  mov eax, 4
+  push rax
+  mov eax, 3
+  push rax
+  mov eax, 2
+  push rax
+  pop rdi
+  pop rsi
+  pop rdx
+  call combine
+  pop rbp
+  ret

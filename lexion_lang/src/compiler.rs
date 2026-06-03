@@ -64,6 +64,15 @@ enum EmitOutputError {
     X86Elf64Failed,
 }
 
+struct EmitOutputInput<'a> {
+    cfg: &'a ControlFlowGraph,
+    types: &'a TypeCollection,
+    symbols: &'a SymbolTableGraph,
+    allocations: &'a HashMap<FunctionRange, Vec<AssignedLivenessInterval>>,
+    source_text: &'a str,
+    source: &'a NamedSource<Arc<String>>,
+}
+
 pub struct LexionCompiler {
     options: LexionCompilerOptions,
 }
@@ -112,7 +121,7 @@ impl LexionCompiler {
             return Err(diagnostics);
         };
 
-        let Some(_) =
+        let Some(assigned) =
             self.assign_registers(&mut diagnostics, &source, &cfg, &types, &symbols, intervals)
         else {
             return Err(diagnostics);
@@ -120,11 +129,14 @@ impl LexionCompiler {
 
         let (assembly, executable) = match self.emit_output(
             &mut diagnostics,
-            &cfg,
-            &types,
-            &symbols,
-            source_text.as_ref(),
-            &source,
+            EmitOutputInput {
+                cfg: &cfg,
+                types: &types,
+                symbols: &symbols,
+                allocations: &assigned,
+                source_text: source_text.as_ref(),
+                source: &source,
+            },
         ) {
             Ok(output) => output,
             Err(EmitOutputError::X86AssemblyFailed | EmitOutputError::X86Elf64Failed) => {
@@ -331,29 +343,30 @@ impl LexionCompiler {
     fn emit_output(
         &self,
         diagnostics: &mut LexionDiagnosticList,
-        cfg: &ControlFlowGraph,
-        types: &TypeCollection,
-        symbols: &SymbolTableGraph,
-        source_text: &str,
-        source: &NamedSource<Arc<String>>,
+        input: EmitOutputInput<'_>,
     ) -> Result<(Option<X86Assembly>, Option<X86ElfExecutable>), EmitOutputError> {
         match self.options.emit {
             EmitTarget::Check => Ok((None, None)),
-            EmitTarget::X86Assembly => CodeGeneratorX86::new((cfg, types, symbols))
-                .exec(
-                    diagnostics,
-                    X86EmitOptions {
-                        emit_source_comments: self.options.emit_source_comments,
-                        source: Some(source_text),
-                        diagnostic_source: Some(source),
-                    },
-                )
-                .map(|assembly| (Some(assembly), None))
-                .ok_or(EmitOutputError::X86AssemblyFailed),
-            EmitTarget::X86Elf64 => CodeGeneratorX86Elf::new((cfg, types, symbols))
-                .exec(diagnostics, X86ElfOptions::default())
-                .map(|executable| (None, Some(executable)))
-                .ok_or(EmitOutputError::X86Elf64Failed),
+            EmitTarget::X86Assembly => {
+                CodeGeneratorX86::new((input.cfg, input.types, input.symbols))
+                    .with_allocations(input.allocations)
+                    .exec(
+                        diagnostics,
+                        X86EmitOptions {
+                            emit_source_comments: self.options.emit_source_comments,
+                            source: Some(input.source_text),
+                            diagnostic_source: Some(input.source),
+                        },
+                    )
+                    .map(|assembly| (Some(assembly), None))
+                    .ok_or(EmitOutputError::X86AssemblyFailed)
+            }
+            EmitTarget::X86Elf64 => {
+                CodeGeneratorX86Elf::new((input.cfg, input.types, input.symbols))
+                    .exec(diagnostics, X86ElfOptions::default())
+                    .map(|executable| (None, Some(executable)))
+                    .ok_or(EmitOutputError::X86Elf64Failed)
+            }
         }
     }
 }
