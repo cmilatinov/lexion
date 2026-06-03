@@ -134,6 +134,20 @@ fn compiler_emits_x86_elf_executable_output() {
     assert!(executable.symbols().contains_key("main"));
 }
 
+#[test]
+fn x86_elf_executable_supports_stack_arguments() {
+    let executable = compile_elf("backend/x86_stack_arguments.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("combine"));
+    assert!(executable.symbols().contains_key("main"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn x86_elf_executable_runs_on_linux_x86_64() {
