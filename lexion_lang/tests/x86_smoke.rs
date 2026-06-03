@@ -139,6 +139,11 @@ fn x86_smoke_system_v_function_call() {
 }
 
 #[test]
+fn x86_smoke_stack_function_call() {
+    insta::assert_snapshot!(compile_x86("backend/x86_stack_function_call.lex"));
+}
+
+#[test]
 fn x86_smoke_branch_loop_function_call() {
     let assembly = compile_x86("backend/branch_loop_call.lex");
     assert!(

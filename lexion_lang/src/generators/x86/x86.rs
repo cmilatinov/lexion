@@ -109,7 +109,7 @@ impl<'a> CodeGeneratorX86<'a> {
         self.emit_function_parameter_moves(&mut lines, range, &frame);
 
         let mut emitted_return = false;
-        let mut pending_params = Vec::new();
+        let mut pending_param_count = 0;
         for node in self.cfg.function_nodes(&range) {
             let block = &self.cfg[node];
             if node != range.start {
@@ -127,7 +127,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     &mut lines,
                     &frame,
                     location,
-                    &mut pending_params,
+                    &mut pending_param_count,
                     &inst.instruction,
                 ) {
                     emitted_return = true;
@@ -243,7 +243,7 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         location: CodeLocation,
-        pending_params: &mut Vec<Operand>,
+        pending_param_count: &mut usize,
         instruction: &Instruction,
     ) -> bool {
         match instruction {
@@ -279,12 +279,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Parameter(inst) => {
-                pending_params.push(inst.param.clone());
+                self.emit_parameter(lines, frame, location, &inst.param);
+                *pending_param_count += 1;
                 false
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(lines, frame, location, pending_params, inst);
-                pending_params.clear();
+                self.emit_function_call(lines, frame, location, *pending_param_count, inst);
+                *pending_param_count = 0;
                 false
             }
         }
@@ -602,10 +603,9 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         location: CodeLocation,
-        pending_params: &[Operand],
+        pending_param_count: usize,
         inst: &FunctionCallInstruction,
     ) {
-        let params = pending_params.iter().rev().collect::<Vec<_>>();
         let arg_locations = self
             .function_signature(&inst.function)
             .map(|signature| {
@@ -614,46 +614,44 @@ impl<'a> CodeGeneratorX86<'a> {
                     .assign_args(self.types, 0, signature)
             })
             .unwrap_or_default();
-        let register_args = params
+        let register_args = arg_locations
             .iter()
-            .zip(arg_locations.iter())
-            .filter_map(|(operand, abi_location)| {
-                outgoing_register(abi_location).map(|register| (*operand, register))
-            })
+            .take(pending_param_count)
+            .filter_map(outgoing_register)
             .collect::<Vec<_>>();
-        for (operand, _) in &register_args {
-            load_operand(lines, frame, location, operand, Register::RAX);
-            lines.push(String::from("  push rax"));
-        }
-        for (_, register) in register_args.iter().rev() {
-            lines.push(format!("  pop {}", register_name(*register)));
+        for register in register_args {
+            lines.push(format!("  pop {}", register_name(register)));
         }
 
-        let stack_args = params
+        let stack_arg_count = arg_locations
             .iter()
-            .zip(arg_locations.iter())
-            .filter(|(_, abi_location)| matches!(abi_location, Location::Stack(_)))
-            .map(|(operand, _)| *operand)
-            .collect::<Vec<_>>();
+            .take(pending_param_count)
+            .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
+            .count();
         let stack_padding = frame.call_stack_padding(
-            stack_args.len(),
+            stack_arg_count,
             self.target.calling_convention().stack_alignment(),
         );
-        if stack_padding > 0 {
-            lines.push(format!("  sub rsp, {stack_padding}"));
-        }
-        for operand in stack_args.iter().rev() {
-            load_operand(lines, frame, location, operand, Register::RAX);
-            lines.push(String::from("  push rax"));
-        }
+        emit_call_stack_padding(lines, stack_arg_count, stack_padding);
         lines.push(format!("  call {}", inst.function));
-        let stack_cleanup = stack_args.len() * STACK_ARG_SLOT_BYTES + stack_padding;
+        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
         }
         if let Some(return_target) = &inst.return_target {
             store_operand(lines, frame, location, return_target, Register::RAX);
         }
+    }
+
+    fn emit_parameter(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        operand: &Operand,
+    ) {
+        load_operand(lines, frame, location, operand, Register::RAX);
+        lines.push(String::from("  push rax"));
     }
 
     fn frame_layout(&self, range: FunctionRange) -> FrameLayout<'a> {
@@ -1055,6 +1053,28 @@ fn operand_value(frame: &FrameLayout<'_>, location: CodeLocation, operand: &Oper
             .unwrap_or_else(|| String::from("0")),
         Operand::Label(label) => label.clone(),
         Operand::Placeholder => String::from("0"),
+    }
+}
+
+fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stack_padding: usize) {
+    if stack_padding == 0 {
+        return;
+    }
+
+    lines.push(format!("  sub rsp, {stack_padding}"));
+    for index in 0..stack_arg_count {
+        let source = stack_padding + index * STACK_ARG_SLOT_BYTES;
+        let destination = index * STACK_ARG_SLOT_BYTES;
+        lines.push(format!("  mov rax, QWORD PTR {}", rsp_slot(source)));
+        lines.push(format!("  mov QWORD PTR {}, rax", rsp_slot(destination)));
+    }
+}
+
+fn rsp_slot(offset: usize) -> String {
+    if offset == 0 {
+        String::from("[rsp]")
+    } else {
+        format!("[rsp+{offset}]")
     }
 }
 

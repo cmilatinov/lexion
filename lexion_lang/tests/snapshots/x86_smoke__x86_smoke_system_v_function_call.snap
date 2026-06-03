@@ -25,15 +25,15 @@ main:
   push rbp
   mov rbp, rsp
 #     return combine(2, 3, 4);
-  mov eax, 2
+  mov eax, 4
   push rax
   mov eax, 3
   push rax
-  mov eax, 4
+  mov eax, 2
   push rax
-  pop rdx
-  pop rsi
   pop rdi
+  pop rsi
+  pop rdx
   call combine
   pop rbp
   ret
