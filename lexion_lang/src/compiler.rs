@@ -27,6 +27,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+const X86_INTEGER_WORD_BITS: u32 = 32;
+
 #[derive(Clone)]
 pub struct LexionCompilerOptions {
     pub dump_dir: PathBuf,
@@ -309,8 +311,8 @@ impl LexionCompiler {
         }
 
         let (cfg, _) = CodeGeneratorTac::new((ast, symbols, types)).exec(diagnostics, ())?;
-        let mut cfg =
-            CodeOptimizerTac::new(cfg).exec(diagnostics, TacOptimizerOptions::default())?;
+        let optimizer_options = TacOptimizerOptions::for_target_word_bits(X86_INTEGER_WORD_BITS);
+        let mut cfg = CodeOptimizerTac::new(cfg).exec(diagnostics, optimizer_options)?;
         let intervals = analyze_liveness(&mut cfg);
         Some((cfg, intervals))
     }

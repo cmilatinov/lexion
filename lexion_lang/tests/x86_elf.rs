@@ -135,6 +135,24 @@ fn compiler_emits_x86_elf_executable_output() {
 }
 
 #[test]
+fn compiler_emits_x86_elf_for_unfolded_target_word_overflow() {
+    let source_code = Arc::new(String::from(
+        "fn main() -> i32 {\n    return 2147483647 + 1;\n}\n",
+    ));
+    let source = NamedSource::new("target_word_overflow.lex", source_code);
+    let options = LexionCompilerOptions {
+        emit: EmitTarget::X86Elf64,
+        ..LexionCompilerOptions::default()
+    };
+    let output = LexionCompiler::new(options)
+        .exec(source)
+        .expect("compiler should emit x86 elf output");
+
+    assert!(output.diagnostics.is_empty());
+    assert!(output.executable.is_some());
+}
+
+#[test]
 fn x86_elf_executable_supports_stack_arguments() {
     let executable = compile_elf("backend/x86_stack_arguments.lex");
     let code_start = executable.text_offset() + executable.runtime_size();

@@ -1,11 +1,13 @@
+use lexion_lang::ast::Lit;
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::instructions::{
-    ControlFlowGraph, Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand,
-    ReturnInstruction,
+    AssignmentInstruction, ControlFlowGraph, Instruction, InstructionInstance, JumpInstruction,
+    LiveSets, Operand, ReturnInstruction,
 };
 use lexion_lang::generators::tac::{
     analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
 };
+use lexion_lang::operators;
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
@@ -137,6 +139,23 @@ fn jump_chain_cfg() -> ControlFlowGraph {
     cfg
 }
 
+fn target_word_overflow_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let start = cfg.block(String::from("main"), true);
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Assignment(
+            AssignmentInstruction {
+                target: Operand::Variable(String::from("value")),
+                left: Some(Operand::Literal(Lit::Integer(i32::MAX as isize))),
+                operator: operators::PLUS,
+                right: Operand::Literal(Lit::Integer(1)),
+            },
+        )));
+    cfg.end_function();
+    cfg
+}
+
 #[test]
 fn tac_optimizer_noop_preserves_tac_and_cfg() {
     let raw = compile_raw_cfg("backend/branch_loop_call.lex");
@@ -176,4 +195,20 @@ fn tac_optimizer_simplifies_jump_chains() {
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
     insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_skips_integer_folds_outside_target_word() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(target_word_overflow_cfg())
+        .exec(
+            &mut diagnostics,
+            TacOptimizerOptions::for_target_word_bits(32),
+        )
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let block = optimized.node_indices().next().unwrap();
+    let instruction = &optimized[block].instructions[0].instruction;
+
+    assert_eq!(instruction.to_string(), "value = 2147483647 + 1");
+    assert!(matches!(instruction, Instruction::Assignment(_)));
 }

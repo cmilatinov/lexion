@@ -11,10 +11,13 @@ use lexion_lib::petgraph::visit::EdgeRef;
 use lexion_lib::petgraph::Direction;
 use std::collections::{HashMap, HashSet};
 
+const DEFAULT_TARGET_WORD_BITS: u32 = 32;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TacOptimizerOptions {
     pub constant_folding: bool,
     pub branch_simplification: bool,
+    pub target_word_bits: u32,
 }
 
 impl TacOptimizerOptions {
@@ -22,6 +25,14 @@ impl TacOptimizerOptions {
         Self {
             constant_folding: false,
             branch_simplification: false,
+            target_word_bits: DEFAULT_TARGET_WORD_BITS,
+        }
+    }
+
+    pub fn for_target_word_bits(bits: u32) -> Self {
+        Self {
+            target_word_bits: bits,
+            ..Self::default()
         }
     }
 }
@@ -31,6 +42,7 @@ impl Default for TacOptimizerOptions {
         Self {
             constant_folding: true,
             branch_simplification: true,
+            target_word_bits: DEFAULT_TARGET_WORD_BITS,
         }
     }
 }
@@ -54,23 +66,23 @@ impl PipelineStage for CodeOptimizerTac {
         opts: Self::Options,
     ) -> Option<Self::Output> {
         if opts.constant_folding {
-            self.fold_constants();
+            self.fold_constants(opts.target_word_bits);
         }
         if opts.branch_simplification {
-            self.simplify_branches();
+            self.simplify_branches(opts.target_word_bits);
         }
         Some(self.cfg)
     }
 }
 
 impl CodeOptimizerTac {
-    fn fold_constants(&mut self) {
+    fn fold_constants(&mut self, target_word_bits: u32) {
         for block in self.cfg.node_weights_mut() {
             for inst in &mut block.instructions {
                 let Instruction::Assignment(assignment) = &inst.instruction else {
                     continue;
                 };
-                let Some(folded) = fold_assignment(assignment) else {
+                let Some(folded) = fold_assignment(assignment, target_word_bits) else {
                     continue;
                 };
                 inst.instruction = Instruction::Copy(CopyInstruction {
@@ -81,10 +93,10 @@ impl CodeOptimizerTac {
         }
     }
 
-    fn simplify_branches(&mut self) {
+    fn simplify_branches(&mut self, target_word_bits: u32) {
         let labels = label_nodes(&self.cfg);
         self.rewrite_jump_chains(&labels);
-        self.simplify_constant_conditional_jumps(&labels);
+        self.simplify_constant_conditional_jumps(&labels, target_word_bits);
         self.remove_redundant_fallthrough_jumps();
     }
 
@@ -132,7 +144,11 @@ impl CodeOptimizerTac {
         }
     }
 
-    fn simplify_constant_conditional_jumps(&mut self, labels: &HashMap<String, NodeIndex>) {
+    fn simplify_constant_conditional_jumps(
+        &mut self,
+        labels: &HashMap<String, NodeIndex>,
+        target_word_bits: u32,
+    ) {
         let nodes = self.cfg.node_indices().collect::<Vec<_>>();
         for node in nodes {
             let mut constants = HashMap::new();
@@ -140,7 +156,8 @@ impl CodeOptimizerTac {
             for (index, inst) in self.cfg[node].instructions.iter().enumerate() {
                 match &inst.instruction {
                     Instruction::ConditionalJump(jump) => {
-                        if let Some(taken) = evaluate_condition(jump, &constants) {
+                        if let Some(taken) = evaluate_condition(jump, &constants, target_word_bits)
+                        {
                             replacements.push((index, jump.target.clone(), taken));
                         }
                     }
@@ -189,42 +206,56 @@ impl CodeOptimizerTac {
     }
 }
 
-fn fold_assignment(inst: &AssignmentInstruction) -> Option<Lit> {
+fn fold_assignment(inst: &AssignmentInstruction, target_word_bits: u32) -> Option<Lit> {
     match (inst.left.as_ref(), inst.operator, &inst.right) {
         (None, operators::UNARY_PLUS, Operand::Literal(Lit::Integer(value))) => {
-            Some(Lit::Integer(*value))
+            target_word_value(*value, target_word_bits).map(Lit::Integer)
         }
-        (None, operators::UNARY_MINUS, Operand::Literal(Lit::Integer(value))) => {
-            value.checked_neg().map(Lit::Integer)
-        }
+        (None, operators::UNARY_MINUS, Operand::Literal(Lit::Integer(value))) => value
+            .checked_neg()
+            .and_then(|value| target_word_value(value, target_word_bits))
+            .map(Lit::Integer),
         (None, operators::LOGICAL_NOT, Operand::Literal(Lit::Boolean(value))) => {
             Some(Lit::Boolean(!value))
         }
         (Some(Operand::Literal(left)), operator, Operand::Literal(right)) => {
-            fold_binary_literals(left, operator, right)
+            fold_binary_literals(left, operator, right, target_word_bits)
         }
         _ => None,
     }
 }
 
-fn fold_binary_literals(left: &Lit, operator: &str, right: &Lit) -> Option<Lit> {
+fn fold_binary_literals(
+    left: &Lit,
+    operator: &str,
+    right: &Lit,
+    target_word_bits: u32,
+) -> Option<Lit> {
     match (left, operator, right) {
         (Lit::Integer(left), operators::PLUS, Lit::Integer(right)) => {
-            left.checked_add(*right).map(Lit::Integer)
+            fold_integer_binary(*left, *right, target_word_bits, isize::checked_add)
+                .map(Lit::Integer)
         }
         (Lit::Integer(left), operators::MINUS, Lit::Integer(right)) => {
-            left.checked_sub(*right).map(Lit::Integer)
+            fold_integer_binary(*left, *right, target_word_bits, isize::checked_sub)
+                .map(Lit::Integer)
         }
         (Lit::Integer(left), operators::MULTIPLY, Lit::Integer(right)) => {
-            left.checked_mul(*right).map(Lit::Integer)
+            fold_integer_binary(*left, *right, target_word_bits, isize::checked_mul)
+                .map(Lit::Integer)
         }
         (Lit::Integer(left), operators::DIVIDE, Lit::Integer(right)) if *right != 0 => {
-            left.checked_div(*right).map(Lit::Integer)
+            fold_integer_binary(*left, *right, target_word_bits, isize::checked_div)
+                .map(Lit::Integer)
         }
         (Lit::Integer(left), operators::REMAINDER, Lit::Integer(right)) if *right != 0 => {
-            left.checked_rem(*right).map(Lit::Integer)
+            fold_integer_binary(*left, *right, target_word_bits, isize::checked_rem)
+                .map(Lit::Integer)
         }
-        (Lit::Integer(left), operator, Lit::Integer(right)) => {
+        (Lit::Integer(left), operator, Lit::Integer(right))
+            if target_word_value(*left, target_word_bits).is_some()
+                && target_word_value(*right, target_word_bits).is_some() =>
+        {
             compare_integers(*left, operator, *right).map(Lit::Boolean)
         }
         (Lit::Boolean(left), operators::LOGICAL_AND, Lit::Boolean(right)) => {
@@ -243,6 +274,34 @@ fn fold_binary_literals(left: &Lit, operator: &str, right: &Lit) -> Option<Lit> 
     }
 }
 
+fn fold_integer_binary(
+    left: isize,
+    right: isize,
+    target_word_bits: u32,
+    op: fn(isize, isize) -> Option<isize>,
+) -> Option<isize> {
+    target_word_value(left, target_word_bits)?;
+    target_word_value(right, target_word_bits)?;
+    op(left, right).and_then(|value| target_word_value(value, target_word_bits))
+}
+
+fn target_word_value(value: isize, target_word_bits: u32) -> Option<isize> {
+    if target_word_bits == 0 {
+        return None;
+    }
+
+    let bits = target_word_bits.min(isize::BITS);
+    let value = value as i128;
+    let (min, max) = if bits == isize::BITS {
+        (isize::MIN as i128, isize::MAX as i128)
+    } else {
+        let limit = 1_i128 << (bits - 1);
+        (-limit, limit - 1)
+    };
+
+    (min..=max).contains(&value).then_some(value as isize)
+}
+
 fn compare_integers(left: isize, operator: &str, right: isize) -> Option<bool> {
     match operator {
         operators::EQUALS => Some(left == right),
@@ -258,11 +317,13 @@ fn compare_integers(left: isize, operator: &str, right: isize) -> Option<bool> {
 fn evaluate_condition(
     jump: &ConditionalJumpInstruction,
     constants: &HashMap<String, Lit>,
+    target_word_bits: u32,
 ) -> Option<bool> {
     let right = literal_for_operand(&jump.right, constants)?;
     if let Some(left) = &jump.left {
         let left = literal_for_operand(left, constants)?;
-        fold_binary_literals(left, jump.operator, right).and_then(|lit| match lit {
+        fold_binary_literals(left, jump.operator, right, target_word_bits).and_then(|lit| match lit
+        {
             Lit::Boolean(value) => Some(value),
             _ => None,
         })
