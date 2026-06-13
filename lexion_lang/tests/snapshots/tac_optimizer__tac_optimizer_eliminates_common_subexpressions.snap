@@ -6,15 +6,10 @@ snapshot_kind: text
 tac:
 main:
   fn main
-  sum = 3
-  difference = 5
-  product = 12
-  quotient = 4
-  remainder = 1
-  comparison = true
-  logical = false
-  inverted = true
-  return 3
+  $t1 = input + 1
+  first = $t1
+  second = $t1
+  return $t1
   endfn main
 
 cfg:

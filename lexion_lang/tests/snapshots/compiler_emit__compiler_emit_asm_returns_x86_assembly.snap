@@ -10,14 +10,12 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
+  sub rsp, 16
 #     let value = 1 + 2 * 3;
-  mov eax, 6
-  mov edi, 1
-  add edi, eax
-  mov eax, edi
+  mov eax, 7
+  mov DWORD PTR [rbp-4], eax
 #     return value - 4;
-  mov edi, eax
-  sub edi, 4
-  mov eax, edi
+  mov eax, 3
+  add rsp, 16
   pop rbp
   ret

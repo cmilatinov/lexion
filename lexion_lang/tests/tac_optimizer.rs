@@ -1,8 +1,8 @@
 use lexion_lang::ast::Lit;
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::instructions::{
-    AssignmentInstruction, ControlFlowGraph, Instruction, InstructionInstance, JumpInstruction,
-    LiveSets, Operand, ReturnInstruction,
+    AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction,
+    Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand, ReturnInstruction,
 };
 use lexion_lang::generators::tac::{
     analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
@@ -156,6 +156,96 @@ fn target_word_overflow_cfg() -> ControlFlowGraph {
     cfg
 }
 
+fn propagation_algebra_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let start = cfg.block(String::from("main"), true);
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Copy(CopyInstruction {
+            dst: Operand::Variable(String::from("a")),
+            src: Operand::Literal(Lit::Integer(2)),
+        })));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Copy(CopyInstruction {
+            dst: Operand::Variable(String::from("b")),
+            src: Operand::Variable(String::from("a")),
+        })));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Assignment(
+            AssignmentInstruction {
+                target: Operand::Variable(String::from("c")),
+                left: Some(Operand::Variable(String::from("b"))),
+                operator: operators::PLUS,
+                right: Operand::Literal(Lit::Integer(0)),
+            },
+        )));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Assignment(
+            AssignmentInstruction {
+                target: Operand::Variable(String::from("d")),
+                left: Some(Operand::Variable(String::from("c"))),
+                operator: operators::MULTIPLY,
+                right: Operand::Literal(Lit::Integer(1)),
+            },
+        )));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Assignment(
+            AssignmentInstruction {
+                target: Operand::Variable(String::from("e")),
+                left: Some(Operand::Variable(String::from("d"))),
+                operator: operators::MULTIPLY,
+                right: Operand::Literal(Lit::Integer(0)),
+            },
+        )));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Variable(String::from("e"))),
+        })));
+    cfg.end_function();
+    cfg
+}
+
+fn branch_inversion_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let start = cfg.block(String::from("main"), true);
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::ConditionalJump(
+            ConditionalJumpInstruction {
+                left: Some(Operand::Literal(Lit::Boolean(false))),
+                operator: operators::EQUALS,
+                right: Operand::Variable(String::from("flag")),
+                target: Operand::Label(String::from("then")),
+            },
+        )));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Jump(JumpInstruction {
+            target: Operand::Label(String::from("else")),
+        })));
+    let then = cfg.block(String::from("then"), false);
+    cfg[then]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Literal(Lit::Integer(1))),
+        })));
+    let else_ = cfg.block(String::from("else"), false);
+    cfg[else_]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Literal(Lit::Integer(2))),
+        })));
+    cfg.link(start, then);
+    cfg.link(start, else_);
+    cfg.end_function();
+    cfg
+}
+
 #[test]
 fn tac_optimizer_noop_preserves_tac_and_cfg() {
     let raw = compile_raw_cfg("backend/branch_loop_call.lex");
@@ -192,6 +282,53 @@ fn tac_optimizer_simplifies_jump_chains() {
     let mut diagnostics = LexionDiagnosticList::default();
     let optimized = CodeOptimizerTac::new(jump_chain_cfg())
         .exec(&mut diagnostics, TacOptimizerOptions::default())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_propagates_values_and_simplifies_algebra() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(propagation_algebra_cfg())
+        .exec(&mut diagnostics, TacOptimizerOptions::default())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_eliminates_common_subexpressions() {
+    let optimized = optimize_cfg(
+        "backend/tac_common_subexpression.lex",
+        TacOptimizerOptions::default(),
+    );
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_eliminates_dead_temporaries() {
+    let optimized = optimize_cfg("backend/tac_dead_temp.lex", TacOptimizerOptions::default());
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_inverts_branches_to_remove_redundant_jumps() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(branch_inversion_cfg())
+        .exec(
+            &mut diagnostics,
+            TacOptimizerOptions {
+                constant_folding: false,
+                value_propagation: false,
+                common_subexpression_elimination: false,
+                cfg_cleanup: false,
+                dead_code_elimination: false,
+                ..TacOptimizerOptions::default()
+            },
+        )
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
     insta::assert_snapshot!(optimized_snapshot(&optimized));

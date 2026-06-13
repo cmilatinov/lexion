@@ -5,11 +5,12 @@ snapshot_kind: text
 ---
 tac:
 main:
-  fn main
-  value = 1
-  value = 2
-  return 2
-  endfn main
+  a = 2
+  b = 2
+  c = 2
+  d = 2
+  e = 0
+  return 0
 
 cfg:
 function 0..0
