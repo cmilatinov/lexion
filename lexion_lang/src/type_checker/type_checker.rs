@@ -508,50 +508,9 @@ impl<'a> TypeChecker<'a> {
 
     fn init_operators(&mut self) {
         let i32 = self.types.i32();
-        let i32_ref = self.types.reference(i32);
         let u32 = self.types.u32();
-        let u32_ref = self.types.reference(u32);
         let f32 = self.types.f32();
-        let f32_ref = self.types.reference(f32);
         let bool = self.types.bool();
-
-        self.operators.add_definition_multiple(
-            &["--", "++"],
-            &[
-                // Prefix operators
-                FunctionType {
-                    params: vec![u32_ref],
-                    return_type: u32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![i32_ref],
-                    return_type: i32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![f32_ref],
-                    return_type: f32,
-                    is_vararg: false,
-                },
-                // Postfix w/ dummy int parameter
-                FunctionType {
-                    params: vec![u32_ref, u32],
-                    return_type: u32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![i32_ref, i32],
-                    return_type: i32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![f32_ref, u32],
-                    return_type: f32,
-                    is_vararg: false,
-                },
-            ],
-        );
 
         // Unary plus / minus operators
         self.operators.add_definition_multiple(
@@ -945,5 +904,40 @@ impl<'a> PipelineStage for TypeChecker<'a> {
             AstVisitorAction::Continue
         });
         Some(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn type_checker_with_operators<'a>(
+        table: &'a mut SymbolTableGraph,
+        types: &'a mut TypeCollection,
+    ) -> TypeChecker<'a> {
+        TypeChecker::new((
+            NamedSource::new("<test>", Arc::new(String::new())),
+            table,
+            types,
+        ))
+    }
+
+    #[test]
+    fn increment_and_decrement_are_not_language_operators() {
+        let mut table = SymbolTableGraph::default();
+        let mut types = TypeCollection::default();
+        let tc = type_checker_with_operators(&mut table, &mut types);
+        let i32_ref = tc.types.reference(tc.types.i32());
+
+        assert!(tc
+            .operators
+            .candidate_definitions("++", &[i32_ref], tc.types)
+            .unwrap()
+            .is_empty());
+        assert!(tc
+            .operators
+            .candidate_definitions("--", &[i32_ref], tc.types)
+            .unwrap()
+            .is_empty());
     }
 }
