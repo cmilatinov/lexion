@@ -393,8 +393,7 @@ CastExpr -> UnaryExpr
     $$ = $1;
 }} ;
 
-UnaryExpr -> 'sizeof' UnaryExpr |
-             '!' UnaryExpr |
+UnaryExpr -> '!' UnaryExpr |
              '~' UnaryExpr |
              '&' UnaryExpr |
              '*' UnaryExpr |
@@ -405,7 +404,6 @@ UnaryExpr -> 'sizeof' UnaryExpr |
         SpanBuilder::merge($1.span, $2.span),
         Expr::OperatorExpr(OperatorExpr {
             operator: match $1.value.as_str() {
-                "sizeof" => "sizeof",
                 "!" => "!",
                 "~" => "~",
                 "&" => "&",
