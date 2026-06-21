@@ -456,6 +456,31 @@ impl<'a> CodeGeneratorX86<'a> {
             })
     }
 
+    fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
+        let name = operand_name(operand)?;
+        let ty = self.symbol_entry(&name)?.var_type?;
+        match self.types.get(self.types.canonicalize(ty))? {
+            Type::PrimitiveType(primitive) => Some(*primitive),
+            _ => None,
+        }
+    }
+
+    fn shift_mnemonic(&self, inst: &AssignmentInstruction) -> &'static str {
+        if inst.operator == operators::SHIFT_LEFT {
+            return "shl";
+        }
+        let shifted_type = inst
+            .left
+            .as_ref()
+            .and_then(|left| self.operand_primitive_type(left))
+            .or_else(|| self.operand_primitive_type(&inst.target));
+        if shifted_type == Some(PrimitiveType::U32) {
+            "shr"
+        } else {
+            "sar"
+        }
+    }
+
     fn emit_assignment(
         &self,
         lines: &mut Vec<String>,
@@ -477,6 +502,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 lines.push(String::from("  cmp eax, 0"));
                 lines.push(String::from("  sete al"));
                 lines.push(String::from("  movzx eax, al"));
+            }
+            (None, operators::BITWISE_NOT) => {
+                load_operand(lines, frame, location, &inst.right, target_register);
+                lines.push(format!("  not {}", register_name_32(target_register)));
             }
             (None, _) => {
                 load_operand(lines, frame, location, &inst.right, target_register);
@@ -523,7 +552,7 @@ impl<'a> CodeGeneratorX86<'a> {
             (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
                 self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
             }
-            (Some(left), operators::LOGICAL_AND) => {
+            (Some(left), operators::LOGICAL_AND | operators::BITWISE_AND) => {
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
                     "  and {}, {}",
@@ -531,13 +560,37 @@ impl<'a> CodeGeneratorX86<'a> {
                     operand_value(frame, location, &inst.right)
                 ));
             }
-            (Some(left), operators::LOGICAL_OR) => {
+            (Some(left), operators::LOGICAL_OR | operators::BITWISE_OR) => {
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
                     "  or {}, {}",
                     register_name_32(target_register),
                     operand_value(frame, location, &inst.right)
                 ));
+            }
+            (Some(left), operators::BITWISE_XOR) => {
+                load_operand(lines, frame, location, left, target_register);
+                lines.push(format!(
+                    "  xor {}, {}",
+                    register_name_32(target_register),
+                    operand_value(frame, location, &inst.right)
+                ));
+            }
+            (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
+                let mnemonic = self.shift_mnemonic(inst);
+                if target_register == Register::RCX {
+                    emit_shift_to_rcx_target(lines, frame, location, left, &inst.right, mnemonic);
+                    return;
+                }
+                emit_shift(
+                    lines,
+                    frame,
+                    location,
+                    left,
+                    &inst.right,
+                    target_register,
+                    mnemonic,
+                );
             }
             (Some(_), _) => {
                 unreachable!("unsupported x86 assignment operators are diagnosed before emission")
@@ -785,7 +838,10 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
         (inst.left.as_ref(), inst.operator),
         (
             None,
-            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+            operators::UNARY_PLUS
+                | operators::UNARY_MINUS
+                | operators::LOGICAL_NOT
+                | operators::BITWISE_NOT
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -799,6 +855,11 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::GREATER_EQUALS)
             | (Some(_), operators::LOGICAL_AND)
             | (Some(_), operators::LOGICAL_OR)
+            | (Some(_), operators::BITWISE_AND)
+            | (Some(_), operators::BITWISE_OR)
+            | (Some(_), operators::BITWISE_XOR)
+            | (Some(_), operators::SHIFT_LEFT)
+            | (Some(_), operators::SHIFT_RIGHT)
     )
 }
 
@@ -979,6 +1040,17 @@ impl<'a> FrameLayout<'a> {
         self.saved_registers.len() * 8 + (offset.0 + 1) * 4
     }
 
+    fn register_occupied(&self, location: CodeLocation, register: Register) -> bool {
+        self.allocations.is_some_and(|allocations| {
+            allocations.iter().any(|assigned| {
+                assigned.interval().span.start <= location
+                    && location < assigned.interval().span.end
+                    && self.frame_location(assigned.location())
+                        == Some(AssemblyLocation::Register(register))
+            })
+        })
+    }
+
     fn call_stack_padding(&self, stack_arg_count: usize, stack_alignment: usize) -> usize {
         let base_offset = (self.saved_registers.len() * STACK_ARG_SLOT_BYTES) % stack_alignment;
         let outgoing_offset = stack_arg_count * STACK_ARG_SLOT_BYTES;
@@ -989,6 +1061,61 @@ impl<'a> FrameLayout<'a> {
             stack_alignment - remainder
         }
     }
+}
+
+fn emit_shift(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    left: &Operand,
+    right: &Operand,
+    result_register: Register,
+    mnemonic: &str,
+) {
+    load_operand(lines, frame, location, left, result_register);
+    let preserve_rcx = frame.register_occupied(location, Register::RCX);
+    if preserve_rcx {
+        lines.push(String::from("  push rcx"));
+    }
+    load_operand(lines, frame, location, right, Register::RCX);
+    lines.push(format!(
+        "  {mnemonic} {}, cl",
+        register_name_32(result_register)
+    ));
+    if preserve_rcx {
+        lines.push(String::from("  pop rcx"));
+    }
+}
+
+fn emit_shift_to_rcx_target(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    left: &Operand,
+    right: &Operand,
+    mnemonic: &str,
+) {
+    lines.push(String::from("  push rax"));
+    if operand_register(frame, location, right) == Some(Register::RAX) {
+        lines.push(String::from("  mov ecx, DWORD PTR [rsp]"));
+        load_operand(lines, frame, location, left, Register::RAX);
+    } else {
+        load_operand(lines, frame, location, left, Register::RAX);
+        load_operand(lines, frame, location, right, Register::RCX);
+    }
+    lines.push(format!("  {mnemonic} eax, cl"));
+    lines.push(String::from("  mov ecx, eax"));
+    lines.push(String::from("  pop rax"));
+}
+
+fn operand_register(
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+) -> Option<Register> {
+    frame
+        .operand_location(location, operand)
+        .and_then(|location| location.register())
 }
 
 fn load_operand(

@@ -19,6 +19,13 @@ const REGISTER_ARG_COUNT: usize = 6;
 const STACK_ARG_SLOT_BYTES: usize = 8;
 const FIRST_STACK_ARG_OFFSET_FROM_RBP: usize = 16;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShiftKind {
+    Left,
+    SignedRight,
+    UnsignedRight,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct X86MachineCode {
     bytes: Vec<u8>,
@@ -207,6 +214,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 assembler.sete(al)?;
                 assembler.movzx(eax, al)?;
             }
+            (None, operators::BITWISE_NOT) => {
+                load_operand(assembler, slots, &inst.right, eax)?;
+                assembler.not(eax)?;
+            }
             (None, _) => {
                 load_operand(assembler, slots, &inst.right, eax)?;
             }
@@ -240,13 +251,26 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
                 self.emit_compare(assembler, slots, left, &inst.right, inst.operator)?;
             }
-            (Some(left), operators::LOGICAL_AND) => {
+            (Some(left), operators::LOGICAL_AND | operators::BITWISE_AND) => {
                 load_operand(assembler, slots, left, eax)?;
                 and_operand(assembler, slots, &inst.right)?;
             }
-            (Some(left), operators::LOGICAL_OR) => {
+            (Some(left), operators::LOGICAL_OR | operators::BITWISE_OR) => {
                 load_operand(assembler, slots, left, eax)?;
                 or_operand(assembler, slots, &inst.right)?;
+            }
+            (Some(left), operators::BITWISE_XOR) => {
+                load_operand(assembler, slots, left, eax)?;
+                xor_operand(assembler, slots, &inst.right)?;
+            }
+            (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
+                load_operand(assembler, slots, left, eax)?;
+                load_operand(assembler, slots, &inst.right, ecx)?;
+                match self.shift_kind(inst) {
+                    ShiftKind::Left => assembler.shl(eax, cl)?,
+                    ShiftKind::SignedRight => assembler.sar(eax, cl)?,
+                    ShiftKind::UnsignedRight => assembler.shr(eax, cl)?,
+                }
             }
             (Some(_), _) => {
                 unreachable!("unsupported x86 assignment operators are diagnosed before emission")
@@ -576,6 +600,32 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
+    fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
+        let name = operand_name(operand)?;
+        let ty = self.symbol_entry(&name)?.var_type?;
+        match self.types.get(self.types.canonicalize(ty))? {
+            Type::PrimitiveType(primitive) => Some(*primitive),
+            _ => None,
+        }
+    }
+
+    fn shift_kind(&self, inst: &AssignmentInstruction) -> ShiftKind {
+        if inst.operator == operators::SHIFT_LEFT {
+            ShiftKind::Left
+        } else {
+            let shifted_type = inst
+                .left
+                .as_ref()
+                .and_then(|left| self.operand_primitive_type(left))
+                .or_else(|| self.operand_primitive_type(&inst.target));
+            if shifted_type == Some(PrimitiveType::U32) {
+                ShiftKind::UnsignedRight
+            } else {
+                ShiftKind::SignedRight
+            }
+        }
+    }
+
     fn stack_slots(&self, range: FunctionRange) -> BTreeMap<String, usize> {
         let mut names = BTreeSet::new();
         for node in self.cfg.function_nodes(&range) {
@@ -750,6 +800,21 @@ fn or_operand(
     }
 }
 
+fn xor_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Literal(_) => assembler.xor(eax, literal_value(operand)),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.xor(eax, stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xor(eax, 0),
+        Operand::Label(_) => unreachable!("labels are not valid i32 values"),
+    }
+}
+
 fn emit_jump(
     assembler: &mut CodeAssembler,
     labels: &HashMap<String, CodeLabel>,
@@ -814,6 +879,14 @@ fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryO
     dword_ptr(rbp - *offset as i32)
 }
 
+fn operand_name(operand: &Operand) -> Option<String> {
+    match operand {
+        Operand::Variable(name) => Some(name.clone()),
+        Operand::Temporary(label) => Some(label.to_string()),
+        Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+    }
+}
+
 fn literal_value(operand: &Operand) -> i32 {
     match operand {
         Operand::Literal(Lit::Integer(value)) => (*value)
@@ -834,7 +907,10 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
         (inst.left.as_ref(), inst.operator),
         (
             None,
-            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+            operators::UNARY_PLUS
+                | operators::UNARY_MINUS
+                | operators::LOGICAL_NOT
+                | operators::BITWISE_NOT
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -848,6 +924,11 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::GREATER_EQUALS)
             | (Some(_), operators::LOGICAL_AND)
             | (Some(_), operators::LOGICAL_OR)
+            | (Some(_), operators::BITWISE_AND)
+            | (Some(_), operators::BITWISE_OR)
+            | (Some(_), operators::BITWISE_XOR)
+            | (Some(_), operators::SHIFT_LEFT)
+            | (Some(_), operators::SHIFT_RIGHT)
     )
 }
 

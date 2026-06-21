@@ -1,0 +1,34 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_bitwise_shift.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     let mask = (14 & 11) | (1 << 3);
+  mov eax, 14
+  and eax, 11
+  mov edi, 1
+  mov ecx, 3
+  shl edi, cl
+  mov esi, eax
+  or esi, edi
+  mov eax, esi
+#     let shifted = mask >> 1;
+  mov edi, eax
+  mov ecx, 1
+  sar edi, cl
+  mov eax, edi
+#     return shifted ^ ~2;
+  mov edi, 2
+  not edi
+  mov esi, eax
+  xor esi, edi
+  mov eax, esi
+  pop rbp
+  ret
