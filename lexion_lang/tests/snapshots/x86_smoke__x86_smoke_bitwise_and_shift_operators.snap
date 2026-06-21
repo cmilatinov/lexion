@@ -10,6 +10,7 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
+  sub rsp, 16
 #     let mask = (14 & 11) | (1 << 3);
   mov eax, 14
   and eax, 11
@@ -24,11 +25,12 @@ main:
   mov ecx, 1
   sar edi, cl
   mov eax, edi
+  mov DWORD PTR [rbp-4], eax
 #     return shifted ^ ~2;
   mov edi, 2
   not edi
-  mov esi, eax
-  xor esi, edi
-  mov eax, esi
+  mov eax, DWORD PTR [rbp-4]
+  xor eax, edi
+  add rsp, 16
   pop rbp
   ret

@@ -20,20 +20,19 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-  push rbx
+  sub rsp, 16
 #     let value = 4;
-  mov ebx, 4
+  mov eax, 4
+  mov DWORD PTR [rbp-4], eax
 #     let next = add_one(value);
-  mov eax, ebx
+  mov eax, DWORD PTR [rbp-4]
   push rax
   pop rdi
-  sub rsp, 8
   call add_one
-  add rsp, 8
   mov edi, eax
 #     return next + value;
   mov eax, edi
-  add eax, ebx
-  pop rbx
+  add eax, DWORD PTR [rbp-4]
+  add rsp, 16
   pop rbp
   ret
