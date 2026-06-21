@@ -146,6 +146,13 @@ fn x86_machine_code_bitwise_and_shift_operators() {
 }
 
 #[test]
+fn x86_machine_code_unsigned_shift_operators() {
+    let code = compile_machine_code("backend/x86_unsigned_shift.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 

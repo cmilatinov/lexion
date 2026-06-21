@@ -114,6 +114,21 @@ fn x86_smoke_bitwise_and_shift_operators() {
 }
 
 #[test]
+fn x86_smoke_unsigned_shift_operators() {
+    insta::assert_snapshot!(compile_x86("backend/x86_unsigned_shift.lex"));
+}
+
+#[test]
+fn x86_smoke_shift_preserves_allocated_registers() {
+    let assembly = compile_x86("backend/x86_shift_register_preservation.lex");
+    assert!(
+        !assembly.contains("mov ecx, eax\n  shl eax, cl"),
+        "shift count was loaded from a clobbered result register:\n{assembly}"
+    );
+    insta::assert_snapshot!("x86_smoke_shift_preserves_allocated_registers", assembly);
+}
+
+#[test]
 fn x86_reports_unsupported_float_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
 }

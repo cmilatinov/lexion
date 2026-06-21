@@ -19,6 +19,13 @@ const REGISTER_ARG_COUNT: usize = 6;
 const STACK_ARG_SLOT_BYTES: usize = 8;
 const FIRST_STACK_ARG_OFFSET_FROM_RBP: usize = 16;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShiftKind {
+    Left,
+    SignedRight,
+    UnsignedRight,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct X86MachineCode {
     bytes: Vec<u8>,
@@ -259,10 +266,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
                 load_operand(assembler, slots, left, eax)?;
                 load_operand(assembler, slots, &inst.right, ecx)?;
-                if inst.operator == operators::SHIFT_LEFT {
-                    assembler.shl(eax, cl)?;
-                } else {
-                    assembler.sar(eax, cl)?;
+                match self.shift_kind(inst) {
+                    ShiftKind::Left => assembler.shl(eax, cl)?,
+                    ShiftKind::SignedRight => assembler.sar(eax, cl)?,
+                    ShiftKind::UnsignedRight => assembler.shr(eax, cl)?,
                 }
             }
             (Some(_), _) => {
@@ -593,6 +600,32 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
+    fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
+        let name = operand_name(operand)?;
+        let ty = self.symbol_entry(&name)?.var_type?;
+        match self.types.get(self.types.canonicalize(ty))? {
+            Type::PrimitiveType(primitive) => Some(*primitive),
+            _ => None,
+        }
+    }
+
+    fn shift_kind(&self, inst: &AssignmentInstruction) -> ShiftKind {
+        if inst.operator == operators::SHIFT_LEFT {
+            ShiftKind::Left
+        } else {
+            let shifted_type = inst
+                .left
+                .as_ref()
+                .and_then(|left| self.operand_primitive_type(left))
+                .or_else(|| self.operand_primitive_type(&inst.target));
+            if shifted_type == Some(PrimitiveType::U32) {
+                ShiftKind::UnsignedRight
+            } else {
+                ShiftKind::SignedRight
+            }
+        }
+    }
+
     fn stack_slots(&self, range: FunctionRange) -> BTreeMap<String, usize> {
         let mut names = BTreeSet::new();
         for node in self.cfg.function_nodes(&range) {
@@ -844,6 +877,14 @@ fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryO
         .get(name.as_str())
         .unwrap_or_else(|| panic!("missing stack slot for {name}"));
     dword_ptr(rbp - *offset as i32)
+}
+
+fn operand_name(operand: &Operand) -> Option<String> {
+    match operand {
+        Operand::Variable(name) => Some(name.clone()),
+        Operand::Temporary(label) => Some(label.to_string()),
+        Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+    }
 }
 
 fn literal_value(operand: &Operand) -> i32 {
