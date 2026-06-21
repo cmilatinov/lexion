@@ -5,7 +5,9 @@ use crate::diagnostic::{
     DiagnosticConsumer, LexionDiagnosticError, LexionDiagnosticInfo, LexionDiagnosticList,
 };
 use crate::generators::tac::instructions::{ControlFlowGraph, FunctionRange, LivenessInterval};
-use crate::generators::tac::CodeGeneratorTac;
+use crate::generators::tac::{
+    analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
+};
 use crate::generators::x86::{
     AbiRegisterAllocator, AssignedLivenessInterval, CodeGeneratorX86, CodeGeneratorX86Elf,
     X86Assembly, X86ElfExecutable, X86ElfOptions, X86EmitOptions, X86Target,
@@ -24,6 +26,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+const X86_INTEGER_WORD_BITS: u32 = 32;
 
 #[derive(Clone)]
 pub struct LexionCompilerOptions {
@@ -306,7 +310,11 @@ impl LexionCompiler {
             )?;
         }
 
-        CodeGeneratorTac::new((ast, symbols, types)).exec(diagnostics, ())
+        let (cfg, _) = CodeGeneratorTac::new((ast, symbols, types)).exec(diagnostics, ())?;
+        let optimizer_options = TacOptimizerOptions::for_target_word_bits(X86_INTEGER_WORD_BITS);
+        let mut cfg = CodeOptimizerTac::new(cfg).exec(diagnostics, optimizer_options)?;
+        let intervals = analyze_liveness(&mut cfg);
+        Some((cfg, intervals))
     }
 
     fn assign_registers(
