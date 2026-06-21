@@ -1,0 +1,22 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_float_cast.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support casts from `i32` to `f32` yet
+   ,-[tests/fixtures/backend/x86_unsupported_float_cast.lex:2:17]
+ 1 | fn main() -> i32 {
+ 2 |     let value = 1 as f32;
+   :                 ^^^^|^^^
+   :                     `-- here
+ 3 |     return 0;
+   `----
+
+  x x86 backend does not support floating-point values yet: f32
+   ,-[tests/fixtures/backend/x86_unsupported_float_cast.lex:2:9]
+ 1 | fn main() -> i32 {
+ 2 |     let value = 1 as f32;
+   :         ^^|^^
+   :           `-- here
+ 3 |     return 0;
+   `----

@@ -238,6 +238,20 @@ impl<'a> CodeGeneratorX86<'a> {
             .find(|entry| entry.name == name)
     }
 
+    fn operand_type(&self, operand: &Operand) -> Option<Index> {
+        match operand {
+            Operand::Literal(Lit::Integer(_)) => Some(self.types.i32()),
+            Operand::Literal(Lit::Boolean(_)) => Some(self.types.bool()),
+            Operand::Literal(Lit::Float(_)) => Some(self.types.f32()),
+            Operand::Variable(name) => self.symbol_entry(name).and_then(|entry| entry.var_type),
+            Operand::Temporary(label) => {
+                let name = label.to_string();
+                self.symbol_entry(&name).and_then(|entry| entry.var_type)
+            }
+            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+        }
+    }
+
     fn emit_instruction(
         &self,
         lines: &mut Vec<String>,
@@ -359,6 +373,9 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         inst: &AssignmentInstruction,
     ) -> Option<String> {
+        if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
+            return self.unsupported_cast_message(inst);
+        }
         if inst.left.is_none() && inst.operator == operators::ADDRESS_OF {
             return Some(String::from(
                 "x86 backend does not support address-taking yet",
@@ -375,6 +392,30 @@ impl<'a> CodeGeneratorX86<'a> {
                 inst.operator
             )
         })
+    }
+
+    fn unsupported_cast_message(&self, inst: &AssignmentInstruction) -> Option<String> {
+        let Some(source_ty) = self.operand_type(&inst.right) else {
+            return Some(String::from(
+                "x86 backend does not support casts from unknown values yet",
+            ));
+        };
+        let Some(target_ty) = self.operand_type(&inst.target) else {
+            return Some(String::from(
+                "x86 backend does not support casts to unknown values yet",
+            ));
+        };
+        if is_integer_bool_scalar(self.types, source_ty)
+            && is_integer_bool_scalar(self.types, target_ty)
+        {
+            None
+        } else {
+            Some(format!(
+                "x86 backend does not support casts from `{}` to `{}` yet",
+                self.types.to_string_index(source_ty),
+                self.types.to_string_index(target_ty)
+            ))
+        }
     }
 
     fn unsupported_operand_message(&self, operand: &Operand) -> Option<String> {
@@ -507,6 +548,12 @@ impl<'a> CodeGeneratorX86<'a> {
                 load_operand(lines, frame, location, &inst.right, target_register);
                 lines.push(format!("  not {}", register_name_32(target_register)));
             }
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => {
+                load_operand(lines, frame, location, &inst.right, Register::RAX);
+                lines.push(String::from("  cmp eax, 0"));
+                lines.push(String::from("  setne al"));
+                lines.push(String::from("  movzx eax, al"));
+            }
             (None, _) => {
                 load_operand(lines, frame, location, &inst.right, target_register);
             }
@@ -602,9 +649,15 @@ impl<'a> CodeGeneratorX86<'a> {
             | (Some(_), operators::EQUALS | operators::NOT_EQUALS)
             | (Some(_), operators::LESS | operators::LESS_EQUALS)
             | (Some(_), operators::GREATER | operators::GREATER_EQUALS) => Register::RAX,
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => Register::RAX,
             _ => target_register,
         };
         store_operand(lines, frame, location, &inst.target, result_register);
+    }
+
+    fn cast_target_is_bool(&self, inst: &AssignmentInstruction) -> bool {
+        self.operand_type(&inst.target)
+            .is_some_and(|ty| is_bool_type(self.types, ty))
     }
 
     fn emit_compare(
@@ -842,6 +895,7 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
                 | operators::UNARY_MINUS
                 | operators::LOGICAL_NOT
                 | operators::BITWISE_NOT
+                | operators::TYPE_CAST
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -860,6 +914,22 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::BITWISE_XOR)
             | (Some(_), operators::SHIFT_LEFT)
             | (Some(_), operators::SHIFT_RIGHT)
+    )
+}
+
+fn is_bool_type(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(PrimitiveType::BOOL))
+    )
+}
+
+fn is_integer_bool_scalar(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(
+            PrimitiveType::BOOL | PrimitiveType::I32 | PrimitiveType::U32
+        ))
     )
 }
 
