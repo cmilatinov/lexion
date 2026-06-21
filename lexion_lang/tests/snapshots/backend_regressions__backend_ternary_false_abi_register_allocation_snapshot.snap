@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: abi_allocation_snapshot(output)
+snapshot_kind: text
+---
+function 0..3 $t1 [0:3..0:5] uses [0:4] -> Register(RSI)
+function 0..3 $t2 [1:1..3:1] uses [3:0] -> Stack(StackOffset(0))
+function 0..3 $t3 [1:0..1:2] uses [1:1] -> Register(RSI)
+function 0..3 $t4 [2:0..2:2] uses [2:1] -> Register(RSI)
+function 0..3 first [0:1..1:1] uses [0:3, 1:0] -> Register(RAX)
+function 0..3 flag [0:4..0:6] uses [0:5] -> Register(RDX)
+function 0..3 second [0:2..2:1] uses [0:3, 2:0] -> Register(RDI)
+function 0..3 value [3:0..3:2] uses [3:1] -> Register(RAX) constraints [return@3:1 Register(RAX)]

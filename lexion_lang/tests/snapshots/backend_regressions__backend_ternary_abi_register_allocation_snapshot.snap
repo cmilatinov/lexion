@@ -4,6 +4,6 @@ expression: abi_allocation_snapshot(output)
 snapshot_kind: text
 ---
 function 0..3 $t1 [0:1..0:3] uses [0:2] -> Register(RAX)
-function 0..3 $t2 [1:0..3:1] uses [3:0] -> Register(RAX)
+function 0..3 $t2 [1:0..3:1] uses [3:0] -> Stack(StackOffset(0))
 function 0..3 flag [0:2..0:4] uses [0:3] -> Register(RDI)
-function 0..3 value [3:0..3:2] uses [3:1] -> Register(RDI) constraints [return@3:1 Register(RAX)]
+function 0..3 value [3:0..3:2] uses [3:1] -> Register(RAX) constraints [return@3:1 Register(RAX)]

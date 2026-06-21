@@ -114,8 +114,8 @@ fn x86_smoke_ternary_expression() {
 }
 
 #[test]
-fn x86_reports_unsupported_function_calls() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_call.lex").join("\n"));
+fn x86_smoke_ternary_false_expression() {
+    insta::assert_snapshot!(compile_x86("backend/ternary_false_expression.lex"));
 }
 
 #[test]
