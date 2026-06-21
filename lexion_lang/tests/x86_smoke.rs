@@ -109,6 +109,16 @@ fn x86_smoke_return_bool_comparison() {
 }
 
 #[test]
+fn x86_smoke_ternary_expression() {
+    insta::assert_snapshot!(compile_x86("backend/ternary_expression.lex"));
+}
+
+#[test]
+fn x86_smoke_ternary_false_expression() {
+    insta::assert_snapshot!(compile_x86("backend/ternary_false_expression.lex"));
+}
+
+#[test]
 fn x86_smoke_bitwise_and_shift_operators() {
     insta::assert_snapshot!(compile_x86("backend/x86_bitwise_shift.lex"));
 }

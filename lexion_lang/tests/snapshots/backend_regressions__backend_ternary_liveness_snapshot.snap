@@ -1,0 +1,9 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: liveness_snapshot(&output)
+snapshot_kind: text
+---
+function 0..3 $t1 [0:1..0:3] uses [0:2]
+function 0..3 $t2 [1:0..3:1] uses [3:0]
+function 0..3 flag [0:2..0:4] uses [0:3]
+function 0..3 value [3:0..3:2] uses [3:1]

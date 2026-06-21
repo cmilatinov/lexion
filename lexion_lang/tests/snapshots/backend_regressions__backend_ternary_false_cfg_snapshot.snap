@@ -1,0 +1,11 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: cfg_snapshot(&cfg)
+snapshot_kind: text
+---
+function 0..3
+
+0(main) -> 1($cthen_1)
+0(main) -> 2($celse_1)
+1($cthen_1) -> 3($cend_1)
+2($celse_1) -> 3($cend_1)

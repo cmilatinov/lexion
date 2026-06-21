@@ -1,0 +1,22 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  $t1 = 3 > 1
+  flag = $t1
+  if false == flag then goto $celse_1
+
+$cthen_1:
+  $t2 = 7
+  goto $cend_1
+
+$celse_1:
+  $t2 = 2
+
+$cend_1:
+  value = $t2
+  return value
+  endfn main

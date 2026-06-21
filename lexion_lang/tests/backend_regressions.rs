@@ -344,3 +344,59 @@ fn backend_branch_loop_call_abi_register_allocation_snapshot() {
 
     insta::assert_snapshot!(abi_allocation_snapshot(output));
 }
+
+#[test]
+fn backend_ternary_tac_snapshot() {
+    let cfg = compile_cfg("backend/ternary_expression.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}
+
+#[test]
+fn backend_ternary_cfg_snapshot() {
+    let cfg = compile_cfg("backend/ternary_expression.lex");
+
+    insta::assert_snapshot!(cfg_snapshot(&cfg));
+}
+
+#[test]
+fn backend_ternary_liveness_snapshot() {
+    let output = compile_backend("backend/ternary_expression.lex");
+
+    insta::assert_snapshot!(liveness_snapshot(&output));
+}
+
+#[test]
+fn backend_ternary_abi_register_allocation_snapshot() {
+    let output = compile_backend("backend/ternary_expression.lex");
+
+    insta::assert_snapshot!(abi_allocation_snapshot(output));
+}
+
+#[test]
+fn backend_ternary_false_tac_snapshot() {
+    let cfg = compile_cfg("backend/ternary_false_expression.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}
+
+#[test]
+fn backend_ternary_false_cfg_snapshot() {
+    let cfg = compile_cfg("backend/ternary_false_expression.lex");
+
+    insta::assert_snapshot!(cfg_snapshot(&cfg));
+}
+
+#[test]
+fn backend_ternary_false_liveness_snapshot() {
+    let output = compile_backend("backend/ternary_false_expression.lex");
+
+    insta::assert_snapshot!(liveness_snapshot(&output));
+}
+
+#[test]
+fn backend_ternary_false_abi_register_allocation_snapshot() {
+    let output = compile_backend("backend/ternary_false_expression.lex");
+
+    insta::assert_snapshot!(abi_allocation_snapshot(output));
+}

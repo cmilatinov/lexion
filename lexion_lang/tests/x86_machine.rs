@@ -139,6 +139,20 @@ fn x86_machine_code_return_bool_comparison() {
 }
 
 #[test]
+fn x86_machine_code_ternary_expression() {
+    let code = compile_machine_code("backend/ternary_expression.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_ternary_false_expression() {
+    let code = compile_machine_code("backend/ternary_false_expression.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_bitwise_and_shift_operators() {
     let code = compile_machine_code("backend/x86_bitwise_shift.lex");
 

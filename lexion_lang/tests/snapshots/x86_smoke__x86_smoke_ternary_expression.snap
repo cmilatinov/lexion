@@ -1,0 +1,35 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/ternary_expression.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     let flag = 3 > 1;
+  mov eax, 3
+  cmp eax, 1
+  setg al
+  movzx eax, al
+  mov edi, eax
+#     let value = flag ? 7 : 2;
+  cmp edi, 0
+  je $celse_1
+$cthen_1:
+  mov eax, 7
+  mov DWORD PTR [rbp-4], eax
+  jmp $cend_1
+$celse_1:
+  mov eax, 2
+  mov DWORD PTR [rbp-4], eax
+$cend_1:
+  mov eax, DWORD PTR [rbp-4]
+#     return value;
+  add rsp, 16
+  pop rbp
+  ret

@@ -590,15 +590,33 @@ impl<'a> CodeGeneratorX86<'a> {
                     lines.push(String::from("  mov eax, edx"));
                 }
             }
-            (Some(left), operators::EQUALS | operators::NOT_EQUALS) => {
-                self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
-            }
-            (Some(left), operators::LESS | operators::LESS_EQUALS) => {
-                self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
-            }
-            (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
-                self.emit_compare(lines, frame, location, left, &inst.right, inst.operator);
-            }
+            (Some(left), operators::EQUALS | operators::NOT_EQUALS) => Self::emit_compare(
+                lines,
+                frame,
+                location,
+                left,
+                &inst.right,
+                inst.operator,
+                target_register,
+            ),
+            (Some(left), operators::LESS | operators::LESS_EQUALS) => Self::emit_compare(
+                lines,
+                frame,
+                location,
+                left,
+                &inst.right,
+                inst.operator,
+                target_register,
+            ),
+            (Some(left), operators::GREATER | operators::GREATER_EQUALS) => Self::emit_compare(
+                lines,
+                frame,
+                location,
+                left,
+                &inst.right,
+                inst.operator,
+                target_register,
+            ),
             (Some(left), operators::LOGICAL_AND | operators::BITWISE_AND) => {
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
@@ -648,7 +666,7 @@ impl<'a> CodeGeneratorX86<'a> {
             | (Some(_), operators::DIVIDE | operators::REMAINDER)
             | (Some(_), operators::EQUALS | operators::NOT_EQUALS)
             | (Some(_), operators::LESS | operators::LESS_EQUALS)
-            | (Some(_), operators::GREATER | operators::GREATER_EQUALS) => Register::RAX,
+            | (Some(_), operators::GREATER | operators::GREATER_EQUALS) => target_register,
             (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => Register::RAX,
             _ => target_register,
         };
@@ -661,13 +679,13 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn emit_compare(
-        &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         location: CodeLocation,
         left: &Operand,
         right: &Operand,
         operator: &str,
+        result_register: Register,
     ) {
         let setcc = match operator {
             operators::EQUALS => "sete",
@@ -678,13 +696,18 @@ impl<'a> CodeGeneratorX86<'a> {
             operators::GREATER_EQUALS => "setge",
             _ => unreachable!(),
         };
-        load_operand(lines, frame, location, left, Register::RAX);
+        load_operand(lines, frame, location, left, result_register);
         lines.push(format!(
-            "  cmp eax, {}",
+            "  cmp {}, {}",
+            register_name_32(result_register),
             operand_value(frame, location, right)
         ));
-        lines.push(format!("  {setcc} al"));
-        lines.push(String::from("  movzx eax, al"));
+        lines.push(format!("  {setcc} {}", register_name_8(result_register)));
+        lines.push(format!(
+            "  movzx {}, {}",
+            register_name_32(result_register),
+            register_name_8(result_register)
+        ));
     }
 
     fn emit_conditional_jump(
@@ -1405,6 +1428,28 @@ fn register_name(register: Register) -> String {
 
 fn register_name_32(register: Register) -> String {
     format!("{:?}", register.full_register32()).to_ascii_lowercase()
+}
+
+fn register_name_8(register: Register) -> &'static str {
+    match register.full_register() {
+        Register::RAX => "al",
+        Register::RBX => "bl",
+        Register::RCX => "cl",
+        Register::RDX => "dl",
+        Register::RSI => "sil",
+        Register::RDI => "dil",
+        Register::RBP => "bpl",
+        Register::RSP => "spl",
+        Register::R8 => "r8b",
+        Register::R9 => "r9b",
+        Register::R10 => "r10b",
+        Register::R11 => "r11b",
+        Register::R12 => "r12b",
+        Register::R13 => "r13b",
+        Register::R14 => "r14b",
+        Register::R15 => "r15b",
+        _ => unreachable!("x86 text emitter only allocates general-purpose registers"),
+    }
 }
 
 fn literal_value(operand: &Operand) -> String {
