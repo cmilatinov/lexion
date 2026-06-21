@@ -140,6 +140,38 @@ fn jump_chain_cfg() -> ControlFlowGraph {
     cfg
 }
 
+fn redundant_return_copy_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let temp = sample_temporary_operand();
+    let main = cfg.block(String::from("main"), true);
+    cfg[main]
+        .instructions
+        .push(instruction(Instruction::Copy(CopyInstruction {
+            dst: temp.clone(),
+            src: Operand::Variable(String::from("value")),
+        })));
+    cfg[main]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(temp),
+        })));
+    cfg.end_function();
+    cfg
+}
+
+fn sample_temporary_operand() -> Operand {
+    let cfg = compile_raw_cfg("backend/tac_constant_folding.lex");
+    cfg.node_weights()
+        .flat_map(|block| block.instructions.iter())
+        .find_map(|inst| match &inst.instruction {
+            Instruction::Assignment(assignment) if assignment.target.is_temporary() => {
+                Some(assignment.target.clone())
+            }
+            _ => None,
+        })
+        .expect("fixture should contain a temporary")
+}
+
 fn target_word_overflow_cfg() -> ControlFlowGraph {
     let mut cfg = ControlFlowGraph::new();
     let start = cfg.block(String::from("main"), true);
@@ -356,6 +388,26 @@ fn tac_optimizer_eliminates_common_subexpressions() {
 #[test]
 fn tac_optimizer_eliminates_dead_temporaries() {
     let optimized = optimize_cfg("backend/tac_dead_temp.lex", TacOptimizerOptions::default());
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_eliminates_dead_temporaries_without_dropping_calls() {
+    let optimized = optimize_cfg(
+        "backend/tac_dead_temporaries.lex",
+        TacOptimizerOptions::default(),
+    );
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_collapses_redundant_copy_before_return() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(redundant_return_copy_cfg())
+        .exec(&mut diagnostics, TacOptimizerOptions::default())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
     insta::assert_snapshot!(optimized_snapshot(&optimized));
 }
