@@ -119,8 +119,38 @@ fn x86_reports_unsupported_function_calls() {
 }
 
 #[test]
+fn x86_smoke_bitwise_and_shift_operators() {
+    insta::assert_snapshot!(compile_x86("backend/x86_bitwise_shift.lex"));
+}
+
+#[test]
+fn x86_smoke_unsigned_shift_operators() {
+    insta::assert_snapshot!(compile_x86("backend/x86_unsigned_shift.lex"));
+}
+
+#[test]
+fn x86_smoke_shift_preserves_allocated_registers() {
+    let assembly = compile_x86("backend/x86_shift_register_preservation.lex");
+    assert!(
+        !assembly.contains("mov ecx, eax\n  shl eax, cl"),
+        "shift count was loaded from a clobbered result register:\n{assembly}"
+    );
+    insta::assert_snapshot!("x86_smoke_shift_preserves_allocated_registers", assembly);
+}
+
+#[test]
+fn x86_smoke_scalar_casts() {
+    insta::assert_snapshot!(compile_x86("backend/x86_scalar_casts.lex"));
+}
+
+#[test]
 fn x86_reports_unsupported_float_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_float_casts() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_cast.lex").join("\n"));
 }
 
 #[test]
@@ -141,4 +171,29 @@ fn x86_reports_unsupported_struct_values() {
 #[test]
 fn x86_reports_unsupported_address_taking() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_reference.lex").join("\n"));
+}
+
+#[test]
+fn x86_smoke_system_v_function_call() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_call.lex"));
+}
+
+#[test]
+fn x86_smoke_stack_function_call() {
+    insta::assert_snapshot!(compile_x86("backend/x86_stack_function_call.lex"));
+}
+
+#[test]
+fn x86_smoke_branch_loop_function_call() {
+    let assembly = compile_x86("backend/branch_loop_call.lex");
+    assert!(
+        !assembly.contains("cmp eax, eax"),
+        "conditional jump compare clobbered its condition:\n{assembly}"
+    );
+    insta::assert_snapshot!("x86_smoke_branch_loop_function_call", assembly);
+}
+
+#[test]
+fn x86_smoke_call_preserves_live_value() {
+    insta::assert_snapshot!(compile_x86("backend/x86_call_preserves_live_value.lex"));
 }

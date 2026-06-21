@@ -257,17 +257,7 @@ impl<'a> PipelineStage for CodeGeneratorTac<'a> {
         AstVisitor::new()
             .without_ifs()
             .visit(self.ast, |ty, node, _| self.traverse(ty, node));
-        let mut intervals: HashMap<FunctionRange, Vec<LivenessInterval>> = Default::default();
-        for interval in self.liveness_analysis() {
-            if let Some(func) = self
-                .cfg
-                .functions
-                .iter()
-                .find(|f| f.contains(interval.span))
-            {
-                intervals.entry(*func).or_default().push(interval);
-            }
-        }
+        let intervals = analyze_liveness(&mut self.cfg);
         Some((self.cfg, intervals))
     }
 }
@@ -824,7 +814,32 @@ impl<'a> CodeGeneratorTac<'a> {
     }
 }
 
-impl<'a> CodeGeneratorTac<'a> {
+pub fn analyze_liveness(
+    cfg: &mut ControlFlowGraph,
+) -> HashMap<FunctionRange, Vec<LivenessInterval>> {
+    let mut intervals: HashMap<FunctionRange, Vec<LivenessInterval>> = Default::default();
+    for interval in (TacLivenessAnalyzer { cfg }).liveness_analysis() {
+        if let Some(func) = cfg.functions.iter().find(|f| f.contains(interval.span)) {
+            intervals.entry(*func).or_default().push(interval);
+        }
+    }
+    intervals
+}
+
+struct TacLivenessAnalyzer<'a> {
+    cfg: &'a mut ControlFlowGraph,
+}
+
+impl TacLivenessAnalyzer<'_> {
+    fn clear_liveness(&mut self) {
+        for block in self.cfg.node_weights_mut() {
+            block.live = Default::default();
+            for inst in &mut block.instructions {
+                inst.live = Default::default();
+            }
+        }
+    }
+
     fn liveness_read_written(&mut self) {
         for block in self.cfg.node_weights_mut() {
             let mut written_so_far = HashSet::new();
@@ -866,6 +881,7 @@ impl<'a> CodeGeneratorTac<'a> {
     }
 
     fn liveness_analysis(&mut self) -> Vec<LivenessInterval> {
+        self.clear_liveness();
         self.liveness_read_written();
 
         let mut worklist = self.cfg.node_indices().collect::<VecDeque<_>>();
@@ -911,7 +927,7 @@ impl<'a> CodeGeneratorTac<'a> {
         self.liveness_intervals()
     }
 
-    pub fn liveness_intervals(&self) -> Vec<LivenessInterval> {
+    fn liveness_intervals(&self) -> Vec<LivenessInterval> {
         let mut result: Vec<LivenessInterval> = Default::default();
 
         for func in &self.cfg.functions {

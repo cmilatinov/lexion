@@ -1,0 +1,16 @@
+---
+source: lexion_lang/tests/tac_optimizer.rs
+expression: optimized_snapshot(&optimized)
+snapshot_kind: text
+---
+tac:
+main:
+  fn main
+  $t1 = input + 1
+  first = $t1
+  second = $t1
+  return $t1
+  endfn main
+
+cfg:
+function 0..0

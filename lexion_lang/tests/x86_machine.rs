@@ -35,6 +35,38 @@ fn compile_machine_code(fixture: &str) -> X86MachineCode {
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
 }
 
+fn compile_machine_code_error(fixture: &str) -> Vec<String> {
+    let path = format!("tests/fixtures/{fixture}");
+    let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
+    let source = NamedSource::new(&path, source_code);
+    let mut diagnostics = LexionDiagnosticList::default();
+
+    let (mut ast, mut types, _) = ParserLexion::new()
+        .exec(&mut diagnostics, source.clone())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let mut symbols = SymbolTableGenerator::new((source.clone(), &ast, &mut types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    TypeChecker::new((source, &mut symbols, &mut types))
+        .exec(&mut diagnostics, &mut ast)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let output = CodeGeneratorX86Machine::new((&cfg, &types, &symbols))
+        .exec(&mut diagnostics, X86MachineCodeOptions::default());
+
+    assert!(
+        output.is_none(),
+        "expected x86 machine-code backend to reject fixture"
+    );
+    diagnostics_string(&diagnostics)
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
 fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
     diagnostics
         .list
@@ -114,6 +146,27 @@ fn x86_machine_code_ternary_expression() {
 }
 
 #[test]
+fn x86_machine_code_bitwise_and_shift_operators() {
+    let code = compile_machine_code("backend/x86_bitwise_shift.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_unsigned_shift_operators() {
+    let code = compile_machine_code("backend/x86_unsigned_shift.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_scalar_casts() {
+    let code = compile_machine_code("backend/x86_scalar_casts.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 
@@ -125,4 +178,43 @@ fn x86_machine_code_system_v_function_call() {
     let code = compile_machine_code("backend/x86_function_call.lex");
 
     insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_stack_arguments() {
+    let code = compile_machine_code("backend/x86_stack_arguments.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_call_string_arg() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_call_string_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_call_float_arg() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_call_float_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_call_tuple_arg() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_call_tuple_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_call_reference_arg() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_call_reference_arg.lex"
+    )
+    .join("\n"));
 }

@@ -1,4 +1,4 @@
-use crate::ast::types::TypeCollection;
+use crate::ast::types::{PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
@@ -7,14 +7,24 @@ use crate::generators::tac::instructions::{
 };
 use crate::operators;
 use crate::pipeline::PipelineStage;
-use crate::symbol_table::SymbolTableGraph;
+use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
+use generational_arena::Index;
 use iced_x86::code_asm::*;
 use iced_x86::{BlockEncoderOptions, IcedError};
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-const INTEGER_ARG_COUNT: usize = 6;
+const REGISTER_ARG_COUNT: usize = 6;
+const STACK_ARG_SLOT_BYTES: usize = 8;
+const FIRST_STACK_ARG_OFFSET_FROM_RBP: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShiftKind {
+    Left,
+    SignedRight,
+    UnsignedRight,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct X86MachineCode {
@@ -43,8 +53,8 @@ pub struct X86MachineCodeOptions {
 
 pub struct CodeGeneratorX86Machine<'a> {
     cfg: &'a ControlFlowGraph,
-    _types: &'a TypeCollection,
-    _symbols: &'a SymbolTableGraph,
+    types: &'a TypeCollection,
+    symbols: &'a SymbolTableGraph,
 }
 
 impl<'a> CodeGeneratorX86Machine<'a> {
@@ -204,6 +214,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 assembler.sete(al)?;
                 assembler.movzx(eax, al)?;
             }
+            (None, operators::BITWISE_NOT) => {
+                load_operand(assembler, slots, &inst.right, eax)?;
+                assembler.not(eax)?;
+            }
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => {
+                load_operand(assembler, slots, &inst.right, eax)?;
+                assembler.cmp(eax, 0)?;
+                assembler.setne(al)?;
+                assembler.movzx(eax, al)?;
+            }
             (None, _) => {
                 load_operand(assembler, slots, &inst.right, eax)?;
             }
@@ -237,19 +257,37 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
                 self.emit_compare(assembler, slots, left, &inst.right, inst.operator)?;
             }
-            (Some(left), operators::LOGICAL_AND) => {
+            (Some(left), operators::LOGICAL_AND | operators::BITWISE_AND) => {
                 load_operand(assembler, slots, left, eax)?;
                 and_operand(assembler, slots, &inst.right)?;
             }
-            (Some(left), operators::LOGICAL_OR) => {
+            (Some(left), operators::LOGICAL_OR | operators::BITWISE_OR) => {
                 load_operand(assembler, slots, left, eax)?;
                 or_operand(assembler, slots, &inst.right)?;
+            }
+            (Some(left), operators::BITWISE_XOR) => {
+                load_operand(assembler, slots, left, eax)?;
+                xor_operand(assembler, slots, &inst.right)?;
+            }
+            (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
+                load_operand(assembler, slots, left, eax)?;
+                load_operand(assembler, slots, &inst.right, ecx)?;
+                match self.shift_kind(inst) {
+                    ShiftKind::Left => assembler.shl(eax, cl)?,
+                    ShiftKind::SignedRight => assembler.sar(eax, cl)?,
+                    ShiftKind::UnsignedRight => assembler.shr(eax, cl)?,
+                }
             }
             (Some(_), _) => {
                 unreachable!("unsupported x86 assignment operators are diagnosed before emission")
             }
         }
         store_operand(assembler, slots, &inst.target, eax)
+    }
+
+    fn cast_target_is_bool(&self, inst: &AssignmentInstruction) -> bool {
+        self.operand_type(&inst.target)
+            .is_some_and(|ty| is_bool_type(self.types, ty))
     }
 
     fn emit_compare(
@@ -299,11 +337,29 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         pending_params: &[Operand],
         inst: &FunctionCallInstruction,
     ) -> Result<(), IcedError> {
-        // TAC records call parameters in reverse source order.
-        for (idx, param) in pending_params.iter().rev().enumerate() {
+        let params = pending_params.iter().rev().collect::<Vec<_>>();
+        let stack_arg_count = params.len().saturating_sub(REGISTER_ARG_COUNT);
+        let stack_padding = if stack_arg_count % 2 == 1 {
+            STACK_ARG_SLOT_BYTES
+        } else {
+            0
+        };
+        if stack_padding > 0 {
+            assembler.sub(rsp, stack_padding as i32)?;
+        }
+
+        for param in params.iter().skip(REGISTER_ARG_COUNT).rev() {
+            load_operand(assembler, slots, param, eax)?;
+            assembler.push(rax)?;
+        }
+        for (idx, param) in params.iter().take(REGISTER_ARG_COUNT).enumerate() {
             load_operand(assembler, slots, param, integer_arg_register(idx))?;
         }
         assembler.call(label_name(labels, inst.function.as_str()))?;
+        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
+        if stack_cleanup > 0 {
+            assembler.add(rsp, stack_cleanup as i32)?;
+        }
         if let Some(return_target) = &inst.return_target {
             store_operand(assembler, slots, return_target, eax)?;
         }
@@ -321,7 +377,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         };
         for (idx, param) in params.iter().enumerate() {
             if let Some(offset) = slots.get(param.as_str()) {
-                assembler.mov(dword_ptr(rbp - *offset as i32), integer_arg_register(idx))?;
+                if idx < REGISTER_ARG_COUNT {
+                    assembler.mov(dword_ptr(rbp - *offset as i32), integer_arg_register(idx))?;
+                } else {
+                    let incoming_offset = FIRST_STACK_ARG_OFFSET_FROM_RBP
+                        + (idx - REGISTER_ARG_COUNT) * STACK_ARG_SLOT_BYTES;
+                    assembler.mov(eax, dword_ptr(rbp + incoming_offset as i32))?;
+                    assembler.mov(dword_ptr(rbp - *offset as i32), eax)?;
+                }
             }
         }
         Ok(())
@@ -343,49 +406,238 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         options: X86MachineCodeOptions,
     ) -> bool {
         let mut valid = true;
+        let mut reported_messages = BTreeSet::new();
         for range in &self.cfg.functions {
-            let mut pending_params = 0usize;
             for node in self.cfg.function_nodes(range) {
                 for inst in &self.cfg[node].instructions {
-                    match &inst.instruction {
-                        Instruction::Function(func) if func.params.len() > INTEGER_ARG_COUNT => {
-                            valid = false;
-                            diag.error(machine_code_error(
-                                options,
-                                inst.source_span,
-                                format!(
-                                    "x86 machine-code backend supports at most {INTEGER_ARG_COUNT} integer function parameters yet: {}",
-                                    func.label
-                                ),
-                            ));
-                        }
-                        Instruction::Parameter(_) => {
-                            pending_params += 1;
-                        }
-                        Instruction::FunctionCall(call) => {
-                            if pending_params > INTEGER_ARG_COUNT {
-                                valid = false;
-                                diag.error(machine_code_error(
-                                    options,
-                                    inst.source_span,
-                                    format!(
-                                        "x86 machine-code backend supports at most {INTEGER_ARG_COUNT} integer call arguments yet: {}",
-                                        call.function
-                                    ),
-                                ));
-                            }
-                            pending_params = 0;
-                        }
-                        _ => {}
-                    }
-                    if let Some(message) = unsupported_message(&inst.instruction) {
+                    if let Some(message) = self.unsupported_message(&inst.instruction) {
                         valid = false;
-                        diag.error(machine_code_error(options, inst.source_span, message));
+                        if reported_messages.insert(message.clone()) {
+                            let span = inst
+                                .source_span
+                                .or_else(|| self.instruction_source_span(&inst.instruction));
+                            diag.error(machine_code_error(options, span, message));
+                        }
                     }
                 }
             }
         }
         valid
+    }
+
+    fn instruction_source_span(&self, instruction: &Instruction) -> Option<SourceSpan> {
+        match instruction {
+            Instruction::Assignment(inst) => self
+                .operand_source_span(&inst.target)
+                .or_else(|| {
+                    inst.left
+                        .as_ref()
+                        .and_then(|left| self.operand_source_span(left))
+                })
+                .or_else(|| self.operand_source_span(&inst.right)),
+            Instruction::Copy(inst) => self
+                .operand_source_span(&inst.dst)
+                .or_else(|| self.operand_source_span(&inst.src)),
+            Instruction::ConditionalJump(inst) => inst
+                .left
+                .as_ref()
+                .and_then(|left| self.operand_source_span(left))
+                .or_else(|| self.operand_source_span(&inst.right)),
+            Instruction::FunctionCall(inst) => inst
+                .return_target
+                .as_ref()
+                .and_then(|target| self.operand_source_span(target))
+                .or_else(|| self.symbol_span(&inst.function)),
+            Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
+            Instruction::Return(inst) => inst
+                .value
+                .as_ref()
+                .and_then(|value| self.operand_source_span(value)),
+            Instruction::Function(inst) => self.symbol_span(&inst.label),
+            Instruction::EndFunction(_) | Instruction::Extern(_) | Instruction::Jump(_) => None,
+        }
+    }
+
+    fn operand_source_span(&self, operand: &Operand) -> Option<SourceSpan> {
+        match operand {
+            Operand::Variable(name) | Operand::Label(name) => self.symbol_span(name),
+            Operand::Temporary(label) => self.symbol_span(label.to_string().as_str()),
+            Operand::Literal(_) | Operand::Placeholder => None,
+        }
+    }
+
+    fn symbol_span(&self, name: &str) -> Option<SourceSpan> {
+        self.symbol_entry(name).map(|entry| entry.span)
+    }
+
+    fn symbol_entry(&self, name: &str) -> Option<&SymbolTableEntry> {
+        self.symbols
+            .graph
+            .node_weights()
+            .flat_map(|table| table.entries.iter())
+            .find(|entry| entry.name == name)
+    }
+
+    fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
+        match instruction {
+            Instruction::Assignment(inst) => self
+                .unsupported_assignment_operator_message(inst)
+                .or_else(|| self.unsupported_operand_message(&inst.target))
+                .or_else(|| {
+                    inst.left
+                        .as_ref()
+                        .and_then(|left| self.unsupported_operand_message(left))
+                })
+                .or_else(|| self.unsupported_operand_message(&inst.right)),
+            Instruction::Extern(inst) => Some(format!(
+                "x86 machine-code backend does not support extern declarations yet: {}",
+                inst.label
+            )),
+            Instruction::Copy(inst) => self
+                .unsupported_operand_message(&inst.dst)
+                .or_else(|| self.unsupported_operand_message(&inst.src)),
+            Instruction::ConditionalJump(inst) => inst
+                .left
+                .as_ref()
+                .and_then(|left| self.unsupported_operand_message(left))
+                .or_else(|| self.unsupported_operand_message(&inst.right)),
+            Instruction::Parameter(inst) => self.unsupported_operand_message(&inst.param),
+            Instruction::Return(inst) => inst
+                .value
+                .as_ref()
+                .and_then(|value| self.unsupported_operand_message(value)),
+            Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
+            Instruction::FunctionCall(_) | Instruction::Jump(_) | Instruction::EndFunction(_) => {
+                None
+            }
+        }
+    }
+
+    fn unsupported_assignment_operator_message(
+        &self,
+        inst: &AssignmentInstruction,
+    ) -> Option<String> {
+        if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
+            return self.unsupported_cast_message(inst);
+        }
+        if inst.left.is_none() && inst.operator == operators::ADDRESS_OF {
+            return Some(String::from(
+                "x86 machine-code backend does not support address-taking yet",
+            ));
+        }
+        if inst.left.is_none() && inst.operator == operators::DEREFERENCE {
+            return Some(String::from(
+                "x86 machine-code backend does not support pointer dereference yet",
+            ));
+        }
+        (!assignment_supported(inst)).then(|| {
+            format!(
+                "x86 machine-code backend does not support `{}` assignments yet",
+                inst.operator
+            )
+        })
+    }
+
+    fn unsupported_operand_message(&self, operand: &Operand) -> Option<String> {
+        match operand {
+            Operand::Literal(Lit::Float(_)) => Some(String::from(
+                "x86 machine-code backend does not support floating-point values yet: f32",
+            )),
+            Operand::Literal(Lit::String(_)) => Some(String::from(
+                "x86 machine-code backend does not support string values yet: &str",
+            )),
+            Operand::Variable(name) => self
+                .symbol_entry(name)
+                .and_then(|entry| entry.var_type)
+                .and_then(|ty| self.unsupported_type_message(ty)),
+            Operand::Temporary(label) => {
+                let name = label.to_string();
+                self.symbol_entry(&name)
+                    .and_then(|entry| entry.var_type)
+                    .and_then(|ty| self.unsupported_type_message(ty))
+            }
+            Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+        }
+    }
+
+    fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
+        let signature = self
+            .symbol_entry(function)
+            .and_then(|entry| entry.var_type)
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })?;
+        signature
+            .params
+            .iter()
+            .find_map(|ty| self.unsupported_type_message(*ty))
+            .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_type_message(&self, ty: Index) -> Option<String> {
+        let ty = self.types.canonicalize(ty);
+        let name = self.types.to_string_index(ty);
+        match self.types.get(ty)? {
+            Type::PrimitiveType(PrimitiveType::F32) => Some(format!(
+                "x86 machine-code backend does not support floating-point values yet: {name}"
+            )),
+            Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
+                "x86 machine-code backend does not support string values yet: {name}"
+            )),
+            Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
+                "x86 machine-code backend does not support tuple aggregate values yet: {name}"
+            )),
+            Type::StructType(_) => Some(format!(
+                "x86 machine-code backend does not support struct aggregate values yet: {name}"
+            )),
+            Type::RefType(ref_ty)
+                if matches!(
+                    self.types.get(self.types.canonicalize(ref_ty.to)),
+                    Some(Type::PrimitiveType(PrimitiveType::STR))
+                ) =>
+            {
+                Some(format!(
+                    "x86 machine-code backend does not support string values yet: {name}"
+                ))
+            }
+            Type::RefType(_) => Some(format!(
+                "x86 machine-code backend does not support reference or pointer values yet: {name}"
+            )),
+            Type::FunctionType(_) => Some(format!(
+                "x86 machine-code backend does not support function pointer values yet: {name}"
+            )),
+            Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
+                None
+            }
+        }
+    }
+
+    fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
+        let name = operand_name(operand)?;
+        let ty = self.symbol_entry(&name)?.var_type?;
+        match self.types.get(self.types.canonicalize(ty))? {
+            Type::PrimitiveType(primitive) => Some(*primitive),
+            _ => None,
+        }
+    }
+
+    fn shift_kind(&self, inst: &AssignmentInstruction) -> ShiftKind {
+        if inst.operator == operators::SHIFT_LEFT {
+            ShiftKind::Left
+        } else {
+            let shifted_type = inst
+                .left
+                .as_ref()
+                .and_then(|left| self.operand_primitive_type(left))
+                .or_else(|| self.operand_primitive_type(&inst.target));
+            if shifted_type == Some(PrimitiveType::U32) {
+                ShiftKind::UnsignedRight
+            } else {
+                ShiftKind::SignedRight
+            }
+        }
     }
 
     fn stack_slots(&self, range: FunctionRange) -> BTreeMap<String, usize> {
@@ -401,6 +653,44 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .map(|(idx, name)| (name, (idx + 1) * 4))
             .collect()
     }
+
+    fn unsupported_cast_message(&self, inst: &AssignmentInstruction) -> Option<String> {
+        let Some(source_ty) = self.operand_type(&inst.right) else {
+            return Some(String::from(
+                "x86 machine-code backend does not support casts from unknown values yet",
+            ));
+        };
+        let Some(target_ty) = self.operand_type(&inst.target) else {
+            return Some(String::from(
+                "x86 machine-code backend does not support casts to unknown values yet",
+            ));
+        };
+        if is_integer_bool_scalar(self.types, source_ty)
+            && is_integer_bool_scalar(self.types, target_ty)
+        {
+            None
+        } else {
+            Some(format!(
+                "x86 machine-code backend does not support casts from `{}` to `{}` yet",
+                self.types.to_string_index(source_ty),
+                self.types.to_string_index(target_ty)
+            ))
+        }
+    }
+
+    fn operand_type(&self, operand: &Operand) -> Option<Index> {
+        match operand {
+            Operand::Literal(Lit::Integer(_)) => Some(self.types.i32()),
+            Operand::Literal(Lit::Boolean(_)) => Some(self.types.bool()),
+            Operand::Literal(Lit::Float(_)) => Some(self.types.f32()),
+            Operand::Variable(name) => self.symbol_entry(name).and_then(|entry| entry.var_type),
+            Operand::Temporary(label) => {
+                let name = label.to_string();
+                self.symbol_entry(&name).and_then(|entry| entry.var_type)
+            }
+            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+        }
+    }
 }
 
 impl<'a> PipelineStage for CodeGeneratorX86Machine<'a> {
@@ -415,8 +705,8 @@ impl<'a> PipelineStage for CodeGeneratorX86Machine<'a> {
     fn new((cfg, types, symbols): Self::Input) -> Self {
         Self {
             cfg,
-            _types: types,
-            _symbols: symbols,
+            types,
+            symbols,
         }
     }
 
@@ -562,6 +852,21 @@ fn or_operand(
     }
 }
 
+fn xor_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Literal(_) => assembler.xor(eax, literal_value(operand)),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.xor(eax, stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xor(eax, 0),
+        Operand::Label(_) => unreachable!("labels are not valid i32 values"),
+    }
+}
+
 fn emit_jump(
     assembler: &mut CodeAssembler,
     labels: &HashMap<String, CodeLabel>,
@@ -626,37 +931,26 @@ fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryO
     dword_ptr(rbp - *offset as i32)
 }
 
+fn operand_name(operand: &Operand) -> Option<String> {
+    match operand {
+        Operand::Variable(name) => Some(name.clone()),
+        Operand::Temporary(label) => Some(label.to_string()),
+        Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+    }
+}
+
 fn literal_value(operand: &Operand) -> i32 {
     match operand {
         Operand::Literal(Lit::Integer(value)) => (*value)
             .try_into()
             .expect("x86 machine-code emitter only supports i32 integer literals"),
         Operand::Literal(Lit::Boolean(value)) => i32::from(*value),
-        Operand::Literal(_) => 0,
-        _ => unreachable!(),
-    }
-}
-
-fn unsupported_message(instruction: &Instruction) -> Option<String> {
-    match instruction {
-        Instruction::Assignment(inst) => (!assignment_supported(inst)).then(|| {
-            format!(
-                "x86 machine-code backend does not support `{}` assignments yet",
-                inst.operator
+        Operand::Literal(_) => {
+            unreachable!(
+                "unsupported x86 machine-code literal values are diagnosed before emission"
             )
-        }),
-        Instruction::Extern(inst) => Some(format!(
-            "x86 machine-code backend does not support extern declarations yet: {}",
-            inst.label
-        )),
-        Instruction::FunctionCall(_)
-        | Instruction::Copy(_)
-        | Instruction::ConditionalJump(_)
-        | Instruction::Jump(_)
-        | Instruction::Parameter(_)
-        | Instruction::Return(_)
-        | Instruction::Function(_)
-        | Instruction::EndFunction(_) => None,
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -665,7 +959,11 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
         (inst.left.as_ref(), inst.operator),
         (
             None,
-            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+            operators::UNARY_PLUS
+                | operators::UNARY_MINUS
+                | operators::LOGICAL_NOT
+                | operators::BITWISE_NOT
+                | operators::TYPE_CAST
         ) | (Some(_), operators::PLUS)
             | (Some(_), operators::MINUS)
             | (Some(_), operators::MULTIPLY)
@@ -679,6 +977,27 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
             | (Some(_), operators::GREATER_EQUALS)
             | (Some(_), operators::LOGICAL_AND)
             | (Some(_), operators::LOGICAL_OR)
+            | (Some(_), operators::BITWISE_AND)
+            | (Some(_), operators::BITWISE_OR)
+            | (Some(_), operators::BITWISE_XOR)
+            | (Some(_), operators::SHIFT_LEFT)
+            | (Some(_), operators::SHIFT_RIGHT)
+    )
+}
+
+fn is_bool_type(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(PrimitiveType::BOOL))
+    )
+}
+
+fn is_integer_bool_scalar(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(
+            PrimitiveType::BOOL | PrimitiveType::I32 | PrimitiveType::U32
+        ))
     )
 }
 

@@ -134,15 +134,50 @@ fn compiler_emits_x86_elf_executable_output() {
     assert!(executable.symbols().contains_key("main"));
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
-fn x86_elf_executable_runs_on_linux_x86_64() {
+fn compiler_emits_x86_elf_for_unfolded_target_word_overflow() {
+    let source_code = Arc::new(String::from(
+        "fn main() -> i32 {\n    return 2147483647 + 1;\n}\n",
+    ));
+    let source = NamedSource::new("target_word_overflow.lex", source_code);
+    let options = LexionCompilerOptions {
+        emit: EmitTarget::X86Elf64,
+        ..LexionCompilerOptions::default()
+    };
+    let output = LexionCompiler::new(options)
+        .exec(source)
+        .expect("compiler should emit x86 elf output");
+
+    assert!(output.diagnostics.is_empty());
+    assert!(output.executable.is_some());
+}
+
+#[test]
+fn x86_elf_executable_supports_stack_arguments() {
+    let executable = compile_elf("backend/x86_stack_arguments.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("combine"));
+    assert!(executable.symbols().contains_key("main"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn run_executable_fixture(fixture: &str) -> Option<i32> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
-    let executable = compile_elf("backend/x86_exit_status.lex");
+    let executable = compile_elf(fixture);
     let mut path = std::env::temp_dir();
-    path.push(format!("lexion-x86-elf-{}", std::process::id()));
+    path.push(format!(
+        "lexion-x86-elf-{}-{}",
+        std::process::id(),
+        fixture.replace(['/', '\\', '.'], "-")
+    ));
     std::fs::write(&path, executable.as_bytes()).expect("failed to write executable");
     let mut permissions = std::fs::metadata(&path)
         .expect("failed to stat executable")
@@ -155,5 +190,23 @@ fn x86_elf_executable_runs_on_linux_x86_64() {
         .expect("failed to run executable");
     let _ = std::fs::remove_file(&path);
 
-    assert_eq!(status.code(), Some(7));
+    status.code()
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_exit_status.lex"),
+        Some(7)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_function_call_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_function_call.lex"),
+        Some(9)
+    );
 }

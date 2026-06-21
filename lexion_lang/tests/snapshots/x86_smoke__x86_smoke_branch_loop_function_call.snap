@@ -1,0 +1,75 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: assembly
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  sub rsp, 16
+#     let total: i32 = 0;
+  mov ebx, 0
+#     let i: i32 = 0;
+  mov eax, 0
+  mov DWORD PTR [rbp-12], eax
+$lstart_1:
+#     while i < 3 {
+  mov eax, DWORD PTR [rbp-12]
+  cmp eax, 3
+  setl al
+  movzx eax, al
+  cmp eax, 0
+  je $lend_1
+#         total = total + add_one(i);
+  mov eax, DWORD PTR [rbp-12]
+  push rax
+  pop rdi
+  sub rsp, 8
+  call add_one
+  add rsp, 8
+  mov edi, ebx
+  add edi, eax
+  mov ebx, edi
+#         i = i + 1;
+  mov eax, DWORD PTR [rbp-12]
+  add eax, 1
+  mov DWORD PTR [rbp-12], eax
+  jmp $lstart_1
+$lend_1:
+#     let selected: i32 = 0;
+  mov eax, 0
+#     if total > 3 {
+  mov eax, ebx
+  cmp eax, 3
+  setg al
+  movzx eax, al
+  cmp eax, 0
+  je $celse_1
+$cthen_1:
+#         selected = total;
+  mov eax, ebx
+  jmp $cend_1
+$celse_1:
+#         selected = 0;
+  mov eax, 0
+$cend_1:
+#     return selected;
+  add rsp, 16
+  pop rbx
+  pop rbp
+  ret

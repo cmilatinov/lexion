@@ -60,6 +60,13 @@ pub enum AbiLocationRole {
     ReturnValue,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HardRegisterConstraint {
+    None,
+    Register(Register),
+    Conflict,
+}
+
 pub struct LinearRegisterAllocator<'a> {
     registers: Vec<Register>,
     active: Vec<AssignedLivenessInterval>,
@@ -293,21 +300,16 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                 .any(|call| interval.span.start < *call && *call < interval.span.end);
             let allowed = self.allowed_registers(crosses_call);
 
-            if let Some(reg) = self.take_register(&allowed, &interval_constraints) {
-                let assigned_interval = AssignedLivenessInterval {
-                    interval,
-                    location: Location::Register(reg),
-                    constraints: interval_constraints,
-                };
+            let location = self.allocate_location(&allowed, &interval_constraints, &mut assigned);
+            let assigned_interval = AssignedLivenessInterval {
+                interval,
+                location,
+                constraints: interval_constraints,
+            };
+            if assigned_interval.location.register().is_some() {
                 self.insert_active(assigned_interval.clone());
-                assigned.push(assigned_interval);
-            } else {
-                assigned.push(AssignedLivenessInterval {
-                    interval,
-                    location: self.next_spill_location(),
-                    constraints: interval_constraints,
-                });
             }
+            assigned.push(assigned_interval);
         }
 
         assigned
@@ -333,27 +335,79 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
         }
     }
 
-    fn take_register(
+    fn allocate_location(
         &mut self,
         allowed: &[Register],
         constraints: &[AbiLocationConstraint],
-    ) -> Option<Register> {
-        let preferred = constraints.iter().filter_map(|constraint| {
-            constraint
-                .abi_location
-                .register()
-                .filter(|register| allowed.contains(register))
-        });
-        for register in preferred.chain(allowed.iter().copied()) {
-            if let Some(position) = self
-                .available
-                .iter()
-                .position(|available| *available == register)
-            {
-                return self.available.remove(position);
+        assigned: &mut Vec<AssignedLivenessInterval>,
+    ) -> Location {
+        match hard_register_constraint(constraints) {
+            HardRegisterConstraint::Register(register) => {
+                if !allowed.contains(&register) {
+                    return self.next_spill_location();
+                }
+                if self.take_available_register(register).is_some()
+                    || self.spill_active_for_register(register, assigned)
+                {
+                    Location::Register(register)
+                } else {
+                    self.next_spill_location()
+                }
+            }
+            HardRegisterConstraint::Conflict => self.next_spill_location(),
+            HardRegisterConstraint::None => self
+                .take_next_allowed_register(allowed)
+                .map(Location::Register)
+                .unwrap_or_else(|| self.next_spill_location()),
+        }
+    }
+
+    fn take_next_allowed_register(&mut self, allowed: &[Register]) -> Option<Register> {
+        for register in allowed {
+            if let Some(register) = self.take_available_register(*register) {
+                return Some(register);
             }
         }
         None
+    }
+
+    fn take_available_register(&mut self, register: Register) -> Option<Register> {
+        self.available
+            .iter()
+            .position(|available| *available == register)
+            .and_then(|position| self.available.remove(position))
+    }
+
+    fn spill_active_for_register(
+        &mut self,
+        register: Register,
+        assigned: &mut Vec<AssignedLivenessInterval>,
+    ) -> bool {
+        let Some(position) = self
+            .active
+            .iter()
+            .position(|active| active.location.register() == Some(register))
+        else {
+            return false;
+        };
+        if active_requires_register(&self.active[position], register) {
+            return false;
+        }
+
+        let spilled = self.active.remove(position);
+        let spill_location = self.next_spill_location();
+        if let Some(assigned_spill) = assigned.iter_mut().find(|assigned| {
+            LinearRegisterAllocator::same_interval(assigned.interval(), &spilled.interval)
+        }) {
+            assigned_spill.location = spill_location;
+        } else {
+            assigned.push(AssignedLivenessInterval {
+                interval: spilled.interval,
+                location: spill_location,
+                constraints: spilled.constraints,
+            });
+        }
+        true
     }
 
     fn insert_active(&mut self, assigned: AssignedLivenessInterval) {
@@ -556,10 +610,142 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
     }
 }
 
+fn active_requires_register(assigned: &AssignedLivenessInterval, register: Register) -> bool {
+    matches!(
+        hard_register_constraint(assigned.constraints()),
+        HardRegisterConstraint::Register(required) if required == register
+    )
+}
+
+fn hard_register_constraint(constraints: &[AbiLocationConstraint]) -> HardRegisterConstraint {
+    let mut required = None;
+    for register in constraints
+        .iter()
+        .filter_map(|constraint| constraint.abi_location.register())
+    {
+        match required {
+            Some(existing) if existing != register => return HardRegisterConstraint::Conflict,
+            Some(_) => {}
+            None => required = Some(register),
+        }
+    }
+
+    required.map_or(
+        HardRegisterConstraint::None,
+        HardRegisterConstraint::Register,
+    )
+}
+
 fn operand_name(operand: &Operand) -> Option<String> {
     match operand {
         Operand::Variable(name) => Some(name.clone()),
         Operand::Temporary(label) => Some(label.to_string()),
         Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generators::tac::instructions::{CodeSpan, ControlFlowGraph};
+    use crate::{ast::types::TypeCollection, symbol_table::SymbolTableGraph};
+    use lexion_lib::petgraph::graph::NodeIndex;
+
+    #[test]
+    fn hard_register_constraint_spills_unconstrained_active_interval() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let mut allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+        allocator.available.clear();
+
+        let active = AssignedLivenessInterval {
+            interval: interval("live", 0, 3),
+            location: Location::Register(Register::RAX),
+            constraints: Vec::new(),
+        };
+        allocator.insert_active(active.clone());
+        let mut assigned = vec![active];
+
+        let location = allocator.allocate_location(
+            &[Register::RAX],
+            &[register_constraint(Register::RAX)],
+            &mut assigned,
+        );
+
+        assert_register(&location, Register::RAX);
+        assert_stack(assigned[0].location(), 0);
+    }
+
+    #[test]
+    fn conflicting_hard_register_constraints_spill_interval() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let mut allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+
+        let location = allocator.allocate_location(
+            &[Register::RAX, Register::RDI],
+            &[
+                register_constraint(Register::RAX),
+                register_constraint(Register::RDI),
+            ],
+            &mut Vec::new(),
+        );
+
+        assert_stack(&location, 0);
+    }
+
+    #[test]
+    fn caller_saved_hard_register_constraint_spills_when_disallowed() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let mut allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+
+        let location = allocator.allocate_location(
+            &[Register::RBX, Register::R12],
+            &[register_constraint(Register::RDI)],
+            &mut Vec::new(),
+        );
+
+        assert_stack(&location, 0);
+    }
+
+    fn interval(name: &str, start: usize, end: usize) -> LivenessInterval {
+        LivenessInterval {
+            variable: String::from(name),
+            span: CodeSpan::new(location(start), location(end)),
+            uses: Vec::new(),
+        }
+    }
+
+    fn register_constraint(register: Register) -> AbiLocationConstraint {
+        AbiLocationConstraint {
+            location: location(0),
+            role: AbiLocationRole::ReturnValue,
+            abi_location: Location::Register(register),
+        }
+    }
+
+    fn location(instruction: usize) -> CodeLocation {
+        CodeLocation::new(NodeIndex::new(0), instruction)
+    }
+
+    fn assert_register(location: &Location, register: Register) {
+        match location {
+            Location::Register(actual) => assert_eq!(*actual, register),
+            other => panic!("expected register {register:?}, got {other:?}"),
+        }
+    }
+
+    fn assert_stack(location: &Location, offset: usize) {
+        match location {
+            Location::Stack(actual) => assert_eq!(actual.0, offset),
+            other => panic!("expected stack offset {offset}, got {other:?}"),
+        }
     }
 }
