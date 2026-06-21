@@ -7,6 +7,12 @@ fn parser_missing_semicolon() {
 }
 
 #[test]
+fn parser_rejects_sizeof_operator() {
+    let errors = common::assert_fails("errors/parser/sizeof_operator.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn duplicate_local_identifier() {
     let errors = common::assert_fails("errors/semantics/duplicate_local.lex");
     insta::assert_snapshot!(errors.join("\n"));

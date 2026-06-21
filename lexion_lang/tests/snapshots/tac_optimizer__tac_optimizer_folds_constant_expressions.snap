@@ -14,7 +14,7 @@ main:
   comparison = true
   logical = false
   inverted = true
-  return sum
+  return 3
   endfn main
 
 cfg:

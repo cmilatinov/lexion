@@ -5,15 +5,7 @@ snapshot_kind: text
 ---
 tac:
 main:
-  goto end
-
-middle:
-
-end:
   return 0
 
 cfg:
-function 0..2
-
-0(main) -> 2(end)
-1(middle) -> 2(end)
+function 0..0

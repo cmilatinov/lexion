@@ -51,6 +51,7 @@ impl Display for Operand {
     }
 }
 
+#[derive(Clone)]
 pub struct AssignmentInstruction {
     pub target: Operand,
     pub left: Option<Operand>,
@@ -88,6 +89,7 @@ impl BaseInstruction for AssignmentInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct CopyInstruction {
     pub src: Operand,
     pub dst: Operand,
@@ -108,6 +110,7 @@ impl BaseInstruction for CopyInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct ConditionalJumpInstruction {
     pub left: Option<Operand>,
     pub operator: &'static str,
@@ -142,6 +145,7 @@ impl BaseInstruction for ConditionalJumpInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct JumpInstruction {
     pub target: Operand,
 }
@@ -154,6 +158,7 @@ impl Display for JumpInstruction {
 
 impl BaseInstruction for JumpInstruction {}
 
+#[derive(Clone)]
 pub struct ParameterInstruction {
     pub param: Operand,
 }
@@ -170,6 +175,7 @@ impl BaseInstruction for ParameterInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct FunctionCallInstruction {
     pub function: String,
     pub return_target: Option<Operand>,
@@ -196,6 +202,7 @@ impl BaseInstruction for FunctionCallInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct ReturnInstruction {
     pub value: Option<Operand>,
 }
@@ -216,6 +223,7 @@ impl BaseInstruction for ReturnInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct FunctionInstruction {
     pub label: String,
     pub params: Vec<String>,
@@ -229,6 +237,7 @@ impl Display for FunctionInstruction {
 
 impl BaseInstruction for FunctionInstruction {}
 
+#[derive(Clone)]
 pub struct EndFunctionInstruction {
     pub label: String,
 }
@@ -241,6 +250,7 @@ impl Display for EndFunctionInstruction {
 
 impl BaseInstruction for EndFunctionInstruction {}
 
+#[derive(Clone)]
 pub struct ExternInstruction {
     pub label: String,
 }
@@ -253,6 +263,7 @@ impl Display for ExternInstruction {
 
 impl BaseInstruction for ExternInstruction {}
 
+#[derive(Clone)]
 #[enum_dispatch(BaseInstruction)]
 pub enum Instruction {
     Assignment(AssignmentInstruction),
@@ -294,7 +305,7 @@ pub trait BaseInstruction {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct LiveSets {
     pub input: HashSet<String>,
     pub output: HashSet<String>,
@@ -310,6 +321,7 @@ impl Display for LiveSets {
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionInstance {
     pub instruction: Instruction,
     pub source_span: Option<SourceSpan>,
@@ -328,6 +340,7 @@ impl Debug for InstructionInstance {
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionBlock {
     pub label: String,
     pub instructions: Vec<InstructionInstance>,
@@ -393,7 +406,7 @@ impl FunctionRange {
     }
 }
 
-#[derive(Deref, DerefMut)]
+#[derive(Clone, Deref, DerefMut)]
 pub struct ControlFlowGraph {
     pub functions: Vec<FunctionRange>,
     #[target]
