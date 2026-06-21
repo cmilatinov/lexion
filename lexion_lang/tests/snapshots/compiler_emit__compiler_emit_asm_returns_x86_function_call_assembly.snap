@@ -10,13 +10,16 @@ combine:
 # fn combine(a: i32, b: i32, c: i32) -> i32 {
   push rbp
   mov rbp, rsp
+  sub rsp, 16
 #     let first = a + b;
   mov eax, edi
   add eax, esi
+  mov DWORD PTR [rbp-4], eax
+  mov eax, DWORD PTR [rbp-4]
 #     return first + c;
-  mov edi, eax
-  add edi, edx
-  mov eax, edi
+  mov eax, DWORD PTR [rbp-4]
+  add eax, edx
+  add rsp, 16
   pop rbp
   ret
 .global main

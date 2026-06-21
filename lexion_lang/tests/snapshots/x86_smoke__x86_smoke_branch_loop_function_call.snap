@@ -21,31 +21,34 @@ main:
   push rbp
   mov rbp, rsp
   push rbx
-  push r12
+  sub rsp, 16
 #     let total: i32 = 0;
   mov ebx, 0
 #     let i: i32 = 0;
-  mov r12d, 0
+  mov eax, 0
+  mov DWORD PTR [rbp-12], eax
 $lstart_1:
 #     while i < 3 {
-  mov eax, r12d
+  mov eax, DWORD PTR [rbp-12]
   cmp eax, 3
   setl al
   movzx eax, al
   cmp eax, 0
   je $lend_1
 #         total = total + add_one(i);
-  mov eax, r12d
+  mov eax, DWORD PTR [rbp-12]
   push rax
   pop rdi
+  sub rsp, 8
   call add_one
+  add rsp, 8
   mov edi, ebx
   add edi, eax
   mov ebx, edi
 #         i = i + 1;
-  mov eax, r12d
+  mov eax, DWORD PTR [rbp-12]
   add eax, 1
-  mov r12d, eax
+  mov DWORD PTR [rbp-12], eax
   jmp $lstart_1
 $lend_1:
 #     let selected: i32 = 0;
@@ -66,7 +69,7 @@ $celse_1:
   mov eax, 0
 $cend_1:
 #     return selected;
-  pop r12
+  add rsp, 16
   pop rbx
   pop rbp
   ret
