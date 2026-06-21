@@ -278,6 +278,9 @@ impl CodeOptimizerTac {
             let mut replacements = Vec::new();
             for (index, inst) in self.cfg[node].instructions.iter().enumerate() {
                 match &inst.instruction {
+                    Instruction::FunctionCall(_) => {
+                        constants.clear();
+                    }
                     Instruction::ConditionalJump(jump) => {
                         if let Some(taken) = evaluate_condition(jump, &constants, target_word_bits)
                         {
@@ -971,10 +974,33 @@ fn range_contains_node(
 
 fn is_dead_temporary_write(instruction: &Instruction, live_out: &HashSet<String>) -> bool {
     match instruction {
-        Instruction::Assignment(assignment) => is_dead_temporary(&assignment.target, live_out),
+        Instruction::Assignment(assignment) => {
+            is_dead_temporary(&assignment.target, live_out)
+                && assignment_is_safe_to_eliminate(assignment)
+        }
         Instruction::Copy(copy) => is_dead_temporary(&copy.dst, live_out),
         _ => false,
     }
+}
+
+fn assignment_is_safe_to_eliminate(assignment: &AssignmentInstruction) -> bool {
+    matches!(
+        (assignment.left.as_ref(), assignment.operator),
+        (
+            None,
+            operators::UNARY_PLUS | operators::UNARY_MINUS | operators::LOGICAL_NOT
+        ) | (Some(_), operators::PLUS)
+            | (Some(_), operators::MINUS)
+            | (Some(_), operators::MULTIPLY)
+            | (Some(_), operators::EQUALS)
+            | (Some(_), operators::NOT_EQUALS)
+            | (Some(_), operators::LESS)
+            | (Some(_), operators::LESS_EQUALS)
+            | (Some(_), operators::GREATER)
+            | (Some(_), operators::GREATER_EQUALS)
+            | (Some(_), operators::LOGICAL_AND)
+            | (Some(_), operators::LOGICAL_OR)
+    )
 }
 
 fn is_dead_temporary(operand: &Operand, live_out: &HashSet<String>) -> bool {

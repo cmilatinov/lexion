@@ -2,7 +2,8 @@ use lexion_lang::ast::Lit;
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction,
-    Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand, ReturnInstruction,
+    FunctionCallInstruction, Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand,
+    ReturnInstruction,
 };
 use lexion_lang::generators::tac::{
     analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
@@ -246,6 +247,51 @@ fn branch_inversion_cfg() -> ControlFlowGraph {
     cfg
 }
 
+fn call_branch_barrier_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let start = cfg.block(String::from("main"), true);
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Copy(CopyInstruction {
+            dst: Operand::Variable(String::from("flag")),
+            src: Operand::Literal(Lit::Boolean(true)),
+        })));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::FunctionCall(
+            FunctionCallInstruction {
+                function: String::from("touch"),
+                return_target: None,
+            },
+        )));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::ConditionalJump(
+            ConditionalJumpInstruction {
+                left: Some(Operand::Literal(Lit::Boolean(false))),
+                operator: operators::EQUALS,
+                right: Operand::Variable(String::from("flag")),
+                target: Operand::Label(String::from("else")),
+            },
+        )));
+    let then = cfg.block(String::from("then"), false);
+    cfg[then]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Literal(Lit::Integer(1))),
+        })));
+    let else_ = cfg.block(String::from("else"), false);
+    cfg[else_]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Literal(Lit::Integer(2))),
+        })));
+    cfg.link(start, then);
+    cfg.link(start, else_);
+    cfg.end_function();
+    cfg
+}
+
 #[test]
 fn tac_optimizer_noop_preserves_tac_and_cfg() {
     let raw = compile_raw_cfg("backend/branch_loop_call.lex");
@@ -315,6 +361,16 @@ fn tac_optimizer_eliminates_dead_temporaries() {
 }
 
 #[test]
+fn tac_optimizer_preserves_dead_trapping_temporaries() {
+    let optimized = optimize_cfg(
+        "backend/tac_dead_trapping_temp.lex",
+        TacOptimizerOptions::default(),
+    );
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
 fn tac_optimizer_inverts_branches_to_remove_redundant_jumps() {
     let mut diagnostics = LexionDiagnosticList::default();
     let optimized = CodeOptimizerTac::new(branch_inversion_cfg())
@@ -329,6 +385,16 @@ fn tac_optimizer_inverts_branches_to_remove_redundant_jumps() {
                 ..TacOptimizerOptions::default()
             },
         )
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_keeps_branch_facts_across_calls_conservative() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(call_branch_barrier_cfg())
+        .exec(&mut diagnostics, TacOptimizerOptions::default())
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
     insta::assert_snapshot!(optimized_snapshot(&optimized));
