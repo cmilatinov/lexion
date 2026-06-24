@@ -1,0 +1,21 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_call_string_arg.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support string values yet: &str
+   ,-[tests/fixtures/backend/x86_unsupported_call_string_arg.lex:1:4]
+ 1 | fn take(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, value: &str) -> i32 {
+   :    ^^|^
+   :      `-- here
+ 2 |     return a;
+   `----
+
+  x x86 backend does not support string values yet: &str
+   ,-[tests/fixtures/backend/x86_unsupported_call_string_arg.lex:6:12]
+ 5 | fn main() -> i32 {
+ 6 |     return take(1, 2, 3, 4, 5, 6, "hello");
+   :            ^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^
+   :                           `-- here
+ 7 | }
+   `----

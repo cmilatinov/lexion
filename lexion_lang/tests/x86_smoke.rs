@@ -159,6 +159,13 @@ fn x86_reports_unsupported_string_values() {
 }
 
 #[test]
+fn x86_reports_unsupported_call_string_arg() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_call_string_arg.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_reports_unsupported_tuple_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_tuple.lex").join("\n"));
 }
