@@ -1,0 +1,31 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_dereference.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support address-taking yet
+   ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:3:21]
+ 2 |     let value = 1;
+ 3 |     let reference = &value;
+   :                     ^^^|^^
+   :                        `-- here
+ 4 |     return *reference;
+   `----
+
+  x x86 backend does not support reference or pointer values yet: &i32
+   ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:3:9]
+ 2 |     let value = 1;
+ 3 |     let reference = &value;
+   :         ^^^^|^^^^
+   :             `-- here
+ 4 |     return *reference;
+   `----
+
+  x x86 backend does not support pointer dereference yet
+   ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:4:12]
+ 3 |     let reference = &value;
+ 4 |     return *reference;
+   :            ^^^^^|^^^^
+   :                 `-- here
+ 5 | }
+   `----

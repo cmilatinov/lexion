@@ -1,0 +1,8 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "compile_machine_code_error(\"backend/x86_unsupported_dereference.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+x86 machine-code backend does not support address-taking yet
+x86 machine-code backend does not support reference or pointer values yet: &i32
+x86 machine-code backend does not support pointer dereference yet
