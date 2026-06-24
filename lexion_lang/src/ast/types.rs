@@ -373,7 +373,10 @@ impl TypeCollection {
     }
 
     pub fn compute_memory_layouts<Builder: MemoryLayoutBuilder>(&mut self, bitness: Bitness) {
-        for (ty, _) in self.arena.iter() {
+        for (ty, value) in self.arena.iter() {
+            if matches!(value, Type::Unknown) {
+                continue;
+            }
             if self.memory_layouts.contains_key(&ty) {
                 continue;
             }
