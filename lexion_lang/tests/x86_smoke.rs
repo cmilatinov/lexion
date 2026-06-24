@@ -154,6 +154,11 @@ fn x86_reports_unsupported_float_casts() {
 }
 
 #[test]
+fn x86_reports_unsupported_float_operations() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_ops.lex").join("\n"));
+}
+
+#[test]
 fn x86_reports_unsupported_string_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_string.lex").join("\n"));
 }
