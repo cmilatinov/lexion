@@ -540,9 +540,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .as_ref()
                 .and_then(|value| self.unsupported_operand_message(value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
-            Instruction::FunctionCall(_) | Instruction::Jump(_) | Instruction::EndFunction(_) => {
-                None
+            Instruction::FunctionCall(inst) => {
+                self.unsupported_function_signature_message(&inst.function)
             }
+            Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
     }
 
@@ -595,6 +596,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
         let signature = self.function_signature(function)?;
+        if signature.is_vararg {
+            return Some(format!(
+                "x86 machine-code backend does not support vararg functions yet: {function}"
+            ));
+        }
         signature
             .params
             .iter()
