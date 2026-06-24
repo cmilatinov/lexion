@@ -9,7 +9,7 @@ use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::{AbiLocationRole, AssignedLivenessInterval, StackOffset, X86Target};
 use crate::operators;
 use crate::pipeline::PipelineStage;
-use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
+use crate::symbol_table::{SymbolTableEntry, SymbolTableEntryType, SymbolTableGraph};
 use generational_arena::Index;
 use iced_x86::Register;
 use lexion_lib::miette::{NamedSource, SourceSpan};
@@ -344,7 +344,8 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
             Instruction::FunctionCall(inst) => self
-                .unsupported_call_signature_message(&inst.function)
+                .unsupported_call_target_message(&inst.function)
+                .or_else(|| self.unsupported_call_signature_message(&inst.function))
                 .or_else(|| {
                     inst.return_target
                         .as_ref()
@@ -461,6 +462,13 @@ impl<'a> CodeGeneratorX86<'a> {
         let signature = self.function_signature(function)?;
         signature.is_vararg.then(|| {
             format!("x86 backend does not support calls to vararg functions yet: {function}")
+        })
+    }
+
+    fn unsupported_call_target_message(&self, function: &str) -> Option<String> {
+        let entry = self.symbol_entry(function)?;
+        (entry.ty != SymbolTableEntryType::Function).then(|| {
+            format!("x86 backend does not support indirect calls through function values yet: {function}")
         })
     }
 
