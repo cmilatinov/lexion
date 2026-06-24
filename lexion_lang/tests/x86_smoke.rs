@@ -144,6 +144,11 @@ fn x86_smoke_scalar_casts() {
 }
 
 #[test]
+fn x86_smoke_char_values() {
+    insta::assert_snapshot!(compile_x86("backend/x86_char_values.lex"));
+}
+
+#[test]
 fn x86_reports_unsupported_float_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
 }

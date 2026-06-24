@@ -1,0 +1,63 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_char_values.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global pass
+pass:
+# fn pass(value: char) -> char {
+  push rbp
+  mov rbp, rsp
+#     let local: char = value;
+  mov eax, edi
+#     return local;
+  pop rbp
+  ret
+.global select
+select:
+# fn select(first: char, second: char, choose_first: bool) -> char {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     let selected: char = if choose_first { first } else { second };
+  cmp edx, 0
+  je $celse_1
+$cthen_1:
+  mov eax, edi
+  mov DWORD PTR [rbp-4], eax
+  jmp $cend_1
+$celse_1:
+  mov eax, esi
+  mov DWORD PTR [rbp-4], eax
+$cend_1:
+  mov eax, DWORD PTR [rbp-4]
+#     return selected;
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main(value: char, fallback: char) -> char {
+  push rbp
+  mov rbp, rsp
+#     let selected: char = select(value, fallback, true);
+  mov eax, 1
+  push rax
+  mov eax, esi
+  push rax
+  mov eax, edi
+  push rax
+  pop rdi
+  pop rsi
+  pop rdx
+  call select
+  mov edi, eax
+#     return pass(selected);
+  mov eax, edi
+  push rax
+  pop rdi
+  call pass
+  pop rbp
+  ret

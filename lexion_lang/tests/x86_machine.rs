@@ -174,6 +174,13 @@ fn x86_machine_code_scalar_casts() {
 }
 
 #[test]
+fn x86_machine_code_char_values() {
+    let code = compile_machine_code("backend/x86_char_values.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 
