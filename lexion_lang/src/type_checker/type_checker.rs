@@ -6,9 +6,7 @@ use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 
 use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
-use crate::ast::visitor::{
-    AstNode, AstNodeMut, AstVisitor, AstVisitorAction, NodeType, TraversalType,
-};
+use crate::ast::visitor::{AstNodeMut, AstVisitor, AstVisitorAction, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr,
     Lit, LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
@@ -455,55 +453,61 @@ impl<'a> TypeChecker<'a> {
 
     fn assign(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &OperatorExpr) -> bool {
         let left = &expr.args[0];
-        if !Self::is_assignable(left) {
+        if Self::is_identifier_lvalue(left) {
+            true
+        } else if Self::is_address_derived_lvalue(left) {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: left.span,
+                message: String::from("address-aware TAC assignment lowering is not supported yet"),
+            });
+            false
+        } else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),
                 span: left.span,
                 message: String::from("lvalue required as left operand of assignment"),
             });
             false
-        } else {
-            true
         }
     }
 
-    fn is_assignable(expr: &SourcedExpr) -> bool {
-        let mut result = true;
-        AstVisitor::new().visit_expr(expr, NodeType::Root, &mut |ty, node, _| match (ty, node) {
-            (
-                TraversalType::Postorder,
-                AstNode::Expr(Sourced {
-                    value:
-                        TypedExpr {
-                            expr: Expr::IdentExpr(_) | Expr::MemberExpr(_) | Expr::IndexExpr(_),
-                            ..
-                        },
+    fn is_identifier_lvalue(expr: &SourcedExpr) -> bool {
+        matches!(
+            expr,
+            Sourced {
+                value: TypedExpr {
+                    expr: Expr::IdentExpr(_),
                     ..
-                }),
-            ) => AstVisitorAction::Continue,
-            (
-                TraversalType::Postorder,
-                AstNode::Expr(Sourced {
-                    value:
-                        TypedExpr {
-                            expr: Expr::OperatorExpr(OperatorExpr { operator, args }),
-                            ..
-                        },
-                    ..
-                }),
-            ) if ((*operator).eq(operators::DEREFERENCE)
-                || (*operator).eq(operators::ADDRESS_OF))
-                && args.len() == 1 =>
-            {
-                AstVisitorAction::Continue
+                },
+                ..
             }
-            (TraversalType::Preorder, _) => AstVisitorAction::Continue,
-            _ => {
-                result = false;
-                AstVisitorAction::Terminate
+        )
+    }
+
+    fn is_address_derived_lvalue(expr: &SourcedExpr) -> bool {
+        match expr {
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::MemberExpr(_) | Expr::IndexExpr(_),
+                        ..
+                    },
+                ..
+            } => true,
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::OperatorExpr(OperatorExpr { operator, args }),
+                        ..
+                    },
+                ..
+            } => {
+                ((*operator).eq(operators::DEREFERENCE) || (*operator).eq(operators::ADDRESS_OF))
+                    && args.len() == 1
             }
-        });
-        result
+            _ => false,
+        }
     }
 
     fn init_operators(&mut self) {
