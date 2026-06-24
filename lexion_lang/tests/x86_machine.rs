@@ -219,6 +219,14 @@ fn x86_machine_reports_unsupported_call_tuple_arg() {
 }
 
 #[test]
+fn x86_machine_reports_unsupported_call_struct_arg() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_call_struct_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
 fn x86_machine_reports_unsupported_call_reference_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_reference_arg.lex"
