@@ -530,6 +530,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support pointer dereference yet",
             ));
         }
+        if inst.left.is_some() && inst.operator == operators::INDEX {
+            return Some(String::from(
+                "x86 machine-code backend does not support index expression lowering yet",
+            ));
+        }
         (!assignment_supported(inst)).then(|| {
             format!(
                 "x86 machine-code backend does not support `{}` assignments yet",

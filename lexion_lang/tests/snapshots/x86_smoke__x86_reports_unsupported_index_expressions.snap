@@ -1,0 +1,21 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_index.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support string values yet: &str
+   ,-[tests/fixtures/backend/x86_unsupported_index.lex:1:4]
+ 1 | fn first(value: &str) -> char {
+   :    ^^|^^
+   :      `-- here
+ 2 |     return value[0];
+   `----
+
+  x x86 backend does not support index expression lowering yet
+   ,-[tests/fixtures/backend/x86_unsupported_index.lex:2:12]
+ 1 | fn first(value: &str) -> char {
+ 2 |     return value[0];
+   :            ^^^^|^^^
+   :                `-- here
+ 3 | }
+   `----
