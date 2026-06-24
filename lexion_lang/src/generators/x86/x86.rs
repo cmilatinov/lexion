@@ -343,10 +343,13 @@ impl<'a> CodeGeneratorX86<'a> {
                         .and_then(|left| self.unsupported_operand_message(left))
                 })
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
-            Instruction::FunctionCall(inst) => inst
-                .return_target
-                .as_ref()
-                .and_then(|target| self.unsupported_operand_message(target)),
+            Instruction::FunctionCall(inst) => self
+                .unsupported_extern_call_message(&inst.function)
+                .or_else(|| {
+                    inst.return_target
+                        .as_ref()
+                        .and_then(|target| self.unsupported_operand_message(target))
+                }),
             Instruction::Extern(inst) => Some(format!(
                 "x86 backend does not support extern declarations yet: {}",
                 inst.label
@@ -447,6 +450,23 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .find_map(|ty| self.unsupported_type_message(*ty))
             .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_extern_call_message(&self, function: &str) -> Option<String> {
+        self.is_extern_function(function).then(|| {
+            format!("x86 backend does not support calls to extern functions yet: {function}")
+        })
+    }
+
+    fn is_extern_function(&self, function: &str) -> bool {
+        self.cfg.node_weights().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    &inst.instruction,
+                    Instruction::Extern(external) if external.label == function
+                )
+            })
+        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {

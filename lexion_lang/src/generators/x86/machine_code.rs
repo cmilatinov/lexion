@@ -507,9 +507,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .as_ref()
                 .and_then(|value| self.unsupported_operand_message(value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
-            Instruction::FunctionCall(_) | Instruction::Jump(_) | Instruction::EndFunction(_) => {
-                None
-            }
+            Instruction::FunctionCall(inst) => self.unsupported_extern_call_message(&inst.function),
+            Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
     }
 
@@ -574,6 +573,25 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .find_map(|ty| self.unsupported_type_message(*ty))
             .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_extern_call_message(&self, function: &str) -> Option<String> {
+        self.is_extern_function(function).then(|| {
+            format!(
+                "x86 machine-code backend does not support calls to extern functions yet: {function}"
+            )
+        })
+    }
+
+    fn is_extern_function(&self, function: &str) -> bool {
+        self.cfg.node_weights().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    &inst.instruction,
+                    Instruction::Extern(external) if external.label == function
+                )
+            })
+        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
