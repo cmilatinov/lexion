@@ -179,6 +179,20 @@ fn x86_reports_unsupported_address_taking() {
 }
 
 #[test]
+fn x86_reports_unsupported_fixed_vararg_calls() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_vararg_fixed.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_reports_unsupported_zero_fixed_vararg_calls() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_vararg_zero_fixed.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_smoke_system_v_function_call() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_call.lex"));
 }

@@ -541,7 +541,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .and_then(|value| self.unsupported_operand_message(value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => {
-                self.unsupported_function_signature_message(&inst.function)
+                self.unsupported_call_signature_message(&inst.function)
             }
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
@@ -598,7 +598,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let signature = self.function_signature(function)?;
         if signature.is_vararg {
             return Some(format!(
-                "x86 machine-code backend does not support vararg functions yet: {function}"
+                "x86 machine-code backend does not support vararg function signatures yet: {function}"
             ));
         }
         signature
@@ -606,6 +606,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .find_map(|ty| self.unsupported_type_message(*ty))
             .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_call_signature_message(&self, function: &str) -> Option<String> {
+        let signature = self.function_signature(function)?;
+        signature.is_vararg.then(|| {
+            format!(
+                "x86 machine-code backend does not support calls to vararg functions yet: {function}"
+            )
+        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {

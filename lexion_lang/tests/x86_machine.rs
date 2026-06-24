@@ -239,3 +239,18 @@ fn x86_machine_reports_unsupported_vararg_call() {
         compile_machine_code_error("backend/x86_unsupported_vararg_call.lex").join("\n")
     );
 }
+
+#[test]
+fn x86_machine_reports_unsupported_fixed_vararg_calls() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_vararg_fixed.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_machine_reports_unsupported_zero_fixed_vararg_calls() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_vararg_zero_fixed.lex"
+    )
+    .join("\n"));
+}
