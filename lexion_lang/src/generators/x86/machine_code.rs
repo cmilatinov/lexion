@@ -9,7 +9,7 @@ use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::X86Target;
 use crate::operators;
 use crate::pipeline::PipelineStage;
-use crate::symbol_table::{SymbolTableEntry, SymbolTableEntryType, SymbolTableGraph};
+use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
 use generational_arena::Index;
 use iced_x86::code_asm::*;
 use iced_x86::{BlockEncoderOptions, IcedError, Register};
@@ -347,7 +347,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         inst: &FunctionCallInstruction,
     ) -> Result<(), IcedError> {
         let signature = self
-            .function_signature(&inst.function)
+            .function_call_signature(inst)
             .expect("function call should reference a checked function signature");
         let params = pending_params.iter().rev().collect::<Vec<_>>();
         let locations = self
@@ -386,7 +386,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
         if let Some(return_target) = &inst.return_target {
             let register = self
-                .function_return_register(&inst.function)
+                .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
             store_operand(assembler, slots, return_target, asm_register32(register))?;
         }
@@ -541,8 +541,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .and_then(|value| self.unsupported_operand_message(value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => self
-                .unsupported_call_target_message(&inst.function)
-                .or_else(|| self.unsupported_call_signature_message(&inst.function)),
+                .unsupported_call_target_message(inst)
+                .or_else(|| self.unsupported_call_signature_message(inst)),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
     }
@@ -608,20 +608,21 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
-    fn unsupported_call_signature_message(&self, function: &str) -> Option<String> {
-        let signature = self.function_signature(function)?;
+    fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        let signature = self.function_call_signature(inst)?;
         signature.is_vararg.then(|| {
             format!(
-                "x86 machine-code backend does not support calls to vararg functions yet: {function}"
+                "x86 machine-code backend does not support calls to vararg functions yet: {}",
+                inst.function
             )
         })
     }
 
-    fn unsupported_call_target_message(&self, function: &str) -> Option<String> {
-        let entry = self.symbol_entry(function)?;
-        (entry.ty != SymbolTableEntryType::Function).then(|| {
+    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (!inst.is_direct_function).then(|| {
             format!(
-                "x86 machine-code backend does not support indirect calls through function values yet: {function}"
+                "x86 machine-code backend does not support indirect calls through function values yet: {}",
+                inst.function
             )
         })
     }
@@ -752,8 +753,26 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             })
     }
 
+    fn function_call_signature(&self, inst: &FunctionCallInstruction) -> Option<&FunctionType> {
+        inst.function_type
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })
+    }
+
     fn function_return_register(&self, function: &str) -> Option<Register> {
         let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
+    }
+
+    fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
+        let signature = self.function_call_signature(inst)?;
         self.target
             .calling_convention()
             .assign_ret(self.types, signature)

@@ -262,3 +262,11 @@ fn x86_machine_reports_unsupported_function_pointer_values() {
     )
     .join("\n"));
 }
+
+#[test]
+fn x86_machine_reports_unsupported_shadowed_function_pointer_calls() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_shadowed_function_pointer.lex"
+    )
+    .join("\n"));
+}

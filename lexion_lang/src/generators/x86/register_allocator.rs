@@ -1,7 +1,8 @@
 use crate::ast::types::{FunctionType, Type, TypeCollection};
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::tac::instructions::{
-    CodeLocation, ControlFlowGraph, FunctionRange, Instruction, LivenessInterval, Operand,
+    CodeLocation, ControlFlowGraph, FunctionCallInstruction, FunctionRange, Instruction,
+    LivenessInterval, Operand,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location, StackOffset};
 use crate::generators::x86::{SystemV64, X86Target};
@@ -510,7 +511,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                         ));
                     }
                     Instruction::FunctionCall(call) => {
-                        let Some(signature) = self.function_signature(&call.function) else {
+                        let Some(signature) = self.function_call_signature(call) else {
                             pending_params.clear();
                             continue;
                         };
@@ -603,7 +604,15 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
     fn function_signature(&self, function: &str) -> Option<&FunctionType> {
         let (_, _, entry) = self.symbols.lookup(self.symbols.root, function)?;
         let ty = entry.var_type?;
-        match self.types.get(ty)? {
+        match self.types.get(self.types.canonicalize(ty))? {
+            Type::FunctionType(signature) => Some(signature),
+            _ => None,
+        }
+    }
+
+    fn function_call_signature(&self, inst: &FunctionCallInstruction) -> Option<&FunctionType> {
+        let ty = inst.function_type?;
+        match self.types.get(self.types.canonicalize(ty))? {
             Type::FunctionType(signature) => Some(signature),
             _ => None,
         }
