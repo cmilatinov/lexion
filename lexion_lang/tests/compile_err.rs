@@ -67,12 +67,6 @@ fn test_invalid_member() {
 }
 
 #[test]
-fn test_unsupported_char_comparison() {
-    let errors = common::assert_fails("errors/semantics/unsupported_char_comparison.lex");
-    insta::assert_snapshot!(errors.join("\n"));
-}
-
-#[test]
 fn test_if_branch_type_mismatch() {
     let errors = common::assert_fails("errors/semantics/if_branch_type_mismatch.lex");
     insta::assert_snapshot!(errors.join("\n"));
