@@ -511,6 +511,7 @@ impl<'a> TypeChecker<'a> {
         let u32 = self.types.u32();
         let f32 = self.types.f32();
         let bool = self.types.bool();
+        let char = self.types.char();
 
         // Unary plus / minus operators
         self.operators.add_definition_multiple(
@@ -620,6 +621,14 @@ impl<'a> TypeChecker<'a> {
                     is_vararg: false,
                 },
             ],
+        );
+        self.operators.add_definition_multiple(
+            &["==", "!="],
+            &[FunctionType {
+                params: vec![char, char],
+                return_type: bool,
+                is_vararg: false,
+            }],
         );
 
         // Logical operators
