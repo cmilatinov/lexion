@@ -343,10 +343,13 @@ impl<'a> CodeGeneratorX86<'a> {
                         .and_then(|left| self.unsupported_operand_message(left))
                 })
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
-            Instruction::FunctionCall(inst) => inst
-                .return_target
-                .as_ref()
-                .and_then(|target| self.unsupported_operand_message(target)),
+            Instruction::FunctionCall(inst) => self
+                .unsupported_call_signature_message(&inst.function)
+                .or_else(|| {
+                    inst.return_target
+                        .as_ref()
+                        .and_then(|target| self.unsupported_operand_message(target))
+                }),
             Instruction::Extern(inst) => Some(format!(
                 "x86 backend does not support extern declarations yet: {}",
                 inst.label
@@ -442,11 +445,23 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
         let signature = self.function_signature(function)?;
+        if signature.is_vararg {
+            return Some(format!(
+                "x86 backend does not support vararg function signatures yet: {function}"
+            ));
+        }
         signature
             .params
             .iter()
             .find_map(|ty| self.unsupported_type_message(*ty))
             .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_call_signature_message(&self, function: &str) -> Option<String> {
+        let signature = self.function_signature(function)?;
+        signature.is_vararg.then(|| {
+            format!("x86 backend does not support calls to vararg functions yet: {function}")
+        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
