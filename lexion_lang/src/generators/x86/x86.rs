@@ -1,4 +1,4 @@
-use crate::ast::types::{PrimitiveType, Type, TypeCollection};
+use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
@@ -344,7 +344,8 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
             Instruction::FunctionCall(inst) => self
-                .unsupported_call_signature_message(&inst.function)
+                .unsupported_call_target_message(inst)
+                .or_else(|| self.unsupported_call_signature_message(inst))
                 .or_else(|| {
                     inst.return_target
                         .as_ref()
@@ -457,10 +458,22 @@ impl<'a> CodeGeneratorX86<'a> {
             .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
-    fn unsupported_call_signature_message(&self, function: &str) -> Option<String> {
-        let signature = self.function_signature(function)?;
+    fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        let signature = self.function_call_signature(inst)?;
         signature.is_vararg.then(|| {
-            format!("x86 backend does not support calls to vararg functions yet: {function}")
+            format!(
+                "x86 backend does not support calls to vararg functions yet: {}",
+                inst.function
+            )
+        })
+    }
+
+    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (!inst.is_direct_function).then(|| {
+            format!(
+                "x86 backend does not support indirect calls through function values yet: {}",
+                inst.function
+            )
         })
     }
 
@@ -502,7 +515,16 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn function_signature(&self, function: &str) -> Option<&crate::ast::types::FunctionType> {
+    fn function_call_signature(&self, inst: &FunctionCallInstruction) -> Option<&FunctionType> {
+        inst.function_type
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })
+    }
+
+    fn function_signature(&self, function: &str) -> Option<&FunctionType> {
         self.symbol_entry(function)
             .and_then(|entry| entry.var_type)
             .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
@@ -751,7 +773,7 @@ impl<'a> CodeGeneratorX86<'a> {
         inst: &FunctionCallInstruction,
     ) {
         let arg_locations = self
-            .function_signature(&inst.function)
+            .function_call_signature(inst)
             .map(|signature| {
                 self.target
                     .calling_convention()
