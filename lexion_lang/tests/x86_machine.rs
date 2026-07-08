@@ -234,6 +234,13 @@ fn x86_machine_reports_unsupported_call_reference_arg() {
 }
 
 #[test]
+fn x86_machine_reports_unsupported_extern_calls() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_extern_call.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_machine_reports_unsupported_vararg_call() {
     insta::assert_snapshot!(
         compile_machine_code_error("backend/x86_unsupported_vararg_call.lex").join("\n")

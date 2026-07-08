@@ -542,6 +542,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => self
                 .unsupported_call_target_message(inst)
+                .or_else(|| self.unsupported_extern_call_message(inst))
                 .or_else(|| self.unsupported_call_signature_message(inst)),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
@@ -618,12 +619,32 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         })
     }
 
+    fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
+            format!(
+                "x86 machine-code backend does not support calls to extern functions yet: {}",
+                inst.function
+            )
+        })
+    }
+
     fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
         (!inst.is_direct_function).then(|| {
             format!(
                 "x86 machine-code backend does not support indirect calls through function values yet: {}",
                 inst.function
             )
+        })
+    }
+
+    fn is_extern_function(&self, function: &str) -> bool {
+        self.cfg.node_weights().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    &inst.instruction,
+                    Instruction::Extern(external) if external.label == function
+                )
+            })
         })
     }
 
