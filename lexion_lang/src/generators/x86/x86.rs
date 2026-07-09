@@ -88,9 +88,23 @@ impl<'a> CodeGeneratorX86<'a> {
             String::from(".text"),
         ];
         for range in &self.cfg.functions {
-            lines.extend(self.emit_function(*range, options));
+            if let Some(label) = self.extern_label(*range) {
+                lines.push(format!(".extern {label}"));
+            } else {
+                lines.extend(self.emit_function(*range, options));
+            }
         }
         X86Assembly::new(lines.join("\n"))
+    }
+
+    fn extern_label(&self, range: FunctionRange) -> Option<&str> {
+        self.cfg[range.start]
+            .instructions
+            .first()
+            .and_then(|inst| match &inst.instruction {
+                Instruction::Extern(external) => Some(external.label.as_str()),
+                _ => None,
+            })
     }
 
     fn emit_function(&self, range: FunctionRange, options: X86EmitOptions<'_>) -> Vec<String> {
@@ -345,17 +359,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
             Instruction::FunctionCall(inst) => self
                 .unsupported_call_target_message(inst)
-                .or_else(|| self.unsupported_extern_call_message(inst))
                 .or_else(|| self.unsupported_call_signature_message(inst))
                 .or_else(|| {
                     inst.return_target
                         .as_ref()
                         .and_then(|target| self.unsupported_operand_message(target))
                 }),
-            Instruction::Extern(inst) => Some(format!(
-                "x86 backend does not support extern declarations yet: {}",
-                inst.label
-            )),
+            Instruction::Extern(_) => None,
             Instruction::Copy(inst) => self
                 .unsupported_operand_message(&inst.dst)
                 .or_else(|| self.unsupported_operand_message(&inst.src)),
@@ -479,32 +489,12 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
-    fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
-            format!(
-                "x86 backend does not support calls to extern functions yet: {}",
-                inst.function
-            )
-        })
-    }
-
     fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
         (!inst.is_direct_function).then(|| {
             format!(
                 "x86 backend does not support indirect calls through function values yet: {}",
                 inst.function
             )
-        })
-    }
-
-    fn is_extern_function(&self, function: &str) -> bool {
-        self.cfg.node_weights().any(|block| {
-            block.instructions.iter().any(|inst| {
-                matches!(
-                    &inst.instruction,
-                    Instruction::Extern(external) if external.label == function
-                )
-            })
         })
     }
 
