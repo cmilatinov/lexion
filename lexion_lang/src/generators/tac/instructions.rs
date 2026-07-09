@@ -32,11 +32,12 @@ impl Operand {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = String> {
-        if self.is_literal() {
-            None.into_iter()
-        } else {
-            Some(self.to_string()).into_iter()
+        match self {
+            Operand::Variable(name) => Some(name.clone()),
+            Operand::Temporary(label) => Some(label.to_string()),
+            Operand::Label(_) | Operand::Literal(_) | Operand::Placeholder => None,
         }
+        .into_iter()
     }
 }
 

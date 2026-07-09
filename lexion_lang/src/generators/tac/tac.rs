@@ -2,7 +2,7 @@ use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IndexExpr, Lit,
-    LitExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -443,6 +443,14 @@ impl<'a> CodeGeneratorTac<'a> {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::MemberExpr(_),
+                        ..
+                    },
+                ..
+            } => self.member_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::IndexExpr(_),
                         ..
                     },
@@ -472,7 +480,6 @@ impl<'a> CodeGeneratorTac<'a> {
                     },
                 ..
             } => self.block_expr(expr).unwrap_or(Operand::Placeholder),
-            _ => Operand::Placeholder,
         }
     }
 
@@ -617,6 +624,30 @@ impl<'a> CodeGeneratorTac<'a> {
             self.assign(temp.clone(), operators::TYPE_CAST, right, None, Some(*span));
             temp
         }
+    }
+
+    fn member_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let Sourced {
+            value:
+                TypedExpr {
+                    ty,
+                    expr: Expr::MemberExpr(MemberExpr { expr: base, ident }),
+                },
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        let base = self.expr(base);
+        let temp = self.alloc_temp(*ty, *span);
+        self.assign(
+            temp.clone(),
+            operators::MEMBER,
+            Operand::Label(ident.clone()),
+            Some(base),
+            Some(*span),
+        );
+        temp
     }
 
     fn index_expr(&mut self, expr: &SourcedExpr) -> Operand {
