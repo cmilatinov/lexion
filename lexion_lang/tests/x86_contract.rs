@@ -153,6 +153,54 @@ fn system_v64_classifies_stack_and_indirect_aggregate_locations() {
 }
 
 #[test]
+fn system_v64_assigns_f32_args_and_return_xmm_registers() {
+    let types = TypeCollection::default();
+    let signature = FunctionType {
+        params: vec![types.f32(), types.i32(), types.f32()],
+        return_type: types.f32(),
+        is_vararg: false,
+    };
+
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+    let registers = locations.iter().map(Location::register).collect::<Vec<_>>();
+
+    assert_eq!(
+        registers,
+        vec![
+            Some(Register::XMM0),
+            Some(Register::RDI),
+            Some(Register::XMM1)
+        ]
+    );
+    assert_eq!(
+        SystemV64
+            .assign_ret(&types, &signature)
+            .and_then(|loc| loc.register()),
+        Some(Register::XMM0)
+    );
+}
+
+#[test]
+fn system_v64_spills_f32_args_after_xmm_registers_are_exhausted() {
+    let types = TypeCollection::default();
+    let f32_ty = types.f32();
+    let signature = FunctionType {
+        params: vec![f32_ty; 9],
+        return_type: types.unit(),
+        is_vararg: false,
+    };
+
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+
+    assert_eq!(locations[0].register(), Some(Register::XMM0));
+    assert_eq!(locations[7].register(), Some(Register::XMM7));
+    match &locations[8] {
+        Location::Stack(offset) => assert_eq!(offset.0, 0),
+        other => panic!("expected stack location for ninth f32 arg, got {other:?}"),
+    }
+}
+
+#[test]
 fn system_v64_marks_exact_call_clobbered_registers() {
     let expected = [
         Register::RAX,
