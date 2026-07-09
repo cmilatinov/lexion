@@ -1,0 +1,21 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_extern_call.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support extern declarations yet: imported
+   ,-[tests/fixtures/backend/x86_unsupported_extern_call.lex:1:11]
+ 1 | extern fn imported(value: i32) -> i32;
+   :           ^^^^|^^^
+   :               `-- here
+ 2 | fn main() -> i32 {
+   `----
+
+  x x86 backend does not support calls to extern functions yet: imported
+   ,-[tests/fixtures/backend/x86_unsupported_extern_call.lex:3:12]
+ 2 | fn main() -> i32 {
+ 3 |     return imported(1);
+   :            ^^^^^|^^^^^
+   :                 `-- here
+ 4 | }
+   `----
