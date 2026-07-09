@@ -1,3 +1,4 @@
+use generational_arena::Index;
 use iced_x86::Register;
 use lexion_lang::ast::types::{
     FunctionType, StructMember, StructType, TupleType, Type, TypeCollection,
@@ -233,7 +234,35 @@ fn system_v64_marks_exact_call_clobbered_registers() {
     assert_eq!(SystemV64.call_clobbered(), expected.as_slice());
 }
 
-fn assert_aggregate_layout(types: &TypeCollection, ty: generational_arena::Index) {
+#[test]
+fn backend_value_layouts_define_scalar_and_pointer_storage() {
+    let mut types = TypeCollection::default();
+    let i32_ref = types.reference(types.i32());
+    let function = types.insert(&Type::FunctionType(FunctionType {
+        params: vec![types.i32()],
+        return_type: types.i32(),
+        is_vararg: false,
+    }));
+
+    assert_size_align(&types, types.i32(), 4, 4);
+    assert_size_align(&types, types.u32(), 4, 4);
+    assert_size_align(&types, types.f32(), 4, 4);
+    assert_size_align(&types, types.bool(), 1, 1);
+    assert_size_align(&types, types.char(), 1, 1);
+    assert_size_align(&types, i32_ref, 8, 8);
+    assert_size_align(&types, function, 8, 8);
+}
+
+#[test]
+fn backend_value_layouts_distinguish_str_from_str_reference() {
+    let mut types = TypeCollection::default();
+    let str_ref = types.str_ref();
+
+    assert_size_align(&types, types.str(), 0, 1);
+    assert_size_align(&types, str_ref, 16, 8);
+}
+
+fn assert_aggregate_layout(types: &TypeCollection, ty: Index) {
     let layout = types.memory_layouts.get(&ty).expect("missing layout");
     let offsets = layout
         .members()
@@ -281,4 +310,16 @@ fn assert_indirect_return(location: &Location, size: usize) {
         }
         other => panic!("expected indirect return, got {other:?}"),
     }
+}
+
+fn assert_size_align(
+    types: &TypeCollection,
+    ty: Index,
+    expected_size: usize,
+    expected_align: usize,
+) {
+    let size_align = types.size_align(ty, Bitness::_64);
+
+    assert_eq!(size_align.size, expected_size);
+    assert_eq!(size_align.align.value(), expected_align);
 }
