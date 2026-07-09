@@ -6,8 +6,8 @@ snapshot_kind: text
 get_x:
   fn get_x
   $t1 = point . x
-  x = $t1
-  return x
+  selected = $t1
+  return selected
   endfn get_x
 
 tuple_first:

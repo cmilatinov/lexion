@@ -414,3 +414,10 @@ fn backend_member_expression_cfg_snapshot() {
 
     insta::assert_snapshot!(cfg_snapshot(&cfg));
 }
+
+#[test]
+fn backend_member_expression_liveness_snapshot() {
+    let output = compile_backend("backend/tac_member_expressions.lex");
+
+    insta::assert_snapshot!(liveness_snapshot(&output));
+}
