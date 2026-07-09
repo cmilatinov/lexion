@@ -164,6 +164,8 @@ impl<'a> CodeGeneratorTac<'a> {
     fn call(
         &mut self,
         function: String,
+        function_type: Option<Index>,
+        is_direct_function: bool,
         return_target: Option<Operand>,
         source_span: SourceSpan,
     ) -> CodeLocation {
@@ -172,6 +174,8 @@ impl<'a> CodeGeneratorTac<'a> {
             source_span: Some(source_span),
             instruction: Instruction::FunctionCall(FunctionCallInstruction {
                 function,
+                function_type,
+                is_direct_function,
                 return_target,
             }),
         })
@@ -320,10 +324,10 @@ impl<'a> CodeGeneratorTac<'a> {
     }
 
     fn begin_func_decl_stmt(&mut self, decl: &FuncDeclStmt) {
-        let Some((scope, _, _)) = self.symbols.lookup(self.scope, decl.name.value.as_str()) else {
+        let Some((_, _, entry)) = self.symbols.lookup(self.scope, decl.name.value.as_str()) else {
             return;
         };
-        self.scope = scope;
+        self.scope = entry.table.unwrap_or(self.scope);
         self.labels.temp = LabelGenerator::new("$t", None);
         self.block(decl.name.value.clone(), false, true);
         if decl.body.is_some() {
@@ -708,7 +712,18 @@ impl<'a> CodeGeneratorTac<'a> {
         for arg in args {
             self.param(arg, Some(*span));
         }
-        self.call(ident.ident.clone(), return_value.clone(), *span);
+        let (function_type, is_direct_function) = self
+            .symbols
+            .lookup(self.scope, ident.ident.as_str())
+            .map(|(_, _, entry)| (entry.var_type, entry.ty == SymbolTableEntryType::Function))
+            .unwrap_or((None, false));
+        self.call(
+            ident.ident.clone(),
+            function_type,
+            is_direct_function,
+            return_value.clone(),
+            *span,
+        );
         return_value
     }
 
