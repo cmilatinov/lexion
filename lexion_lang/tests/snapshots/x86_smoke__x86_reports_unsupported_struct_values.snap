@@ -1,10 +1,8 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-assertion_line: 173
 expression: "compile_x86_error(\"backend/x86_unsupported_struct.lex\").join(\"\\n\")"
-snapshot_kind: text
 ---
-  x x86 backend does not support struct aggregate values yet: Point
+  x x86 backend does not support struct values yet: Point
    ,-[tests/fixtures/backend/x86_unsupported_struct.lex:6:4]
  5 | 
  6 | fn get_x(point: Point) -> i32 {
@@ -13,7 +11,7 @@ snapshot_kind: text
  7 |     return point.x;
    `----
 
-  x x86 backend does not support `.` assignments yet
+  x x86 backend does not support member access yet
    ,-[tests/fixtures/backend/x86_unsupported_struct.lex:7:12]
  6 | fn get_x(point: Point) -> i32 {
  7 |     return point.x;

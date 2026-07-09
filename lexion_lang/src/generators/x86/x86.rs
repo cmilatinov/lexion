@@ -388,12 +388,22 @@ impl<'a> CodeGeneratorX86<'a> {
         }
         if inst.left.is_none() && inst.operator == operators::DEREFERENCE {
             return Some(String::from(
-                "x86 backend does not support pointer dereference yet",
+                "x86 backend does not support dereference expressions yet",
+            ));
+        }
+        if inst.operator == operators::MEMBER {
+            return Some(String::from(
+                "x86 backend does not support member access yet",
+            ));
+        }
+        if inst.operator == operators::INDEX {
+            return Some(String::from(
+                "x86 backend does not support indexed access yet",
             ));
         }
         (!assignment_supported(inst)).then(|| {
             format!(
-                "x86 backend does not support `{}` assignments yet",
+                "x86 backend does not support `{}` operations yet",
                 inst.operator
             )
         })
@@ -509,10 +519,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 "x86 backend does not support string values yet: {name}"
             )),
             Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 backend does not support tuple aggregate values yet: {name}"
+                "x86 backend does not support tuple values yet: {name}"
             )),
             Type::StructType(_) => Some(format!(
-                "x86 backend does not support struct aggregate values yet: {name}"
+                "x86 backend does not support struct values yet: {name}"
             )),
             Type::RefType(ref_ty)
                 if matches!(
@@ -525,10 +535,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 ))
             }
             Type::RefType(_) => Some(format!(
-                "x86 backend does not support reference or pointer values yet: {name}"
+                "x86 backend does not support reference values yet: {name}"
             )),
             Type::FunctionType(_) => Some(format!(
-                "x86 backend does not support function pointer values yet: {name}"
+                "x86 backend does not support function values yet: {name}"
             )),
             Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
                 None

@@ -174,6 +174,11 @@ fn x86_reports_unsupported_struct_values() {
 }
 
 #[test]
+fn x86_reports_unsupported_indexed_access() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_index.lex").join("\n"));
+}
+
+#[test]
 fn x86_reports_unsupported_address_taking() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_reference.lex").join("\n"));
 }
