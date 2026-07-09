@@ -1,6 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-assertion_line: 122
+assertion_line: 173
 expression: "compile_x86_error(\"backend/x86_unsupported_struct.lex\").join(\"\\n\")"
 snapshot_kind: text
 ---
@@ -11,4 +11,13 @@ snapshot_kind: text
    :    ^^|^^
    :      `-- here
  7 |     return point.x;
+   `----
+
+  x x86 backend does not support `.` assignments yet
+   ,-[tests/fixtures/backend/x86_unsupported_struct.lex:7:12]
+ 6 | fn get_x(point: Point) -> i32 {
+ 7 |     return point.x;
+   :            ^^^|^^^
+   :               `-- here
+ 8 | }
    `----
