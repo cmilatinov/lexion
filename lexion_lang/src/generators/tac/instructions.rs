@@ -2,6 +2,7 @@ use crate::ast::Lit;
 use crate::generators::label::Label;
 use derived_deref::{Deref, DerefMut};
 use enum_dispatch::enum_dispatch;
+use generational_arena::Index;
 use lexion_lib::itertools::Itertools;
 use lexion_lib::miette::SourceSpan;
 use lexion_lib::petgraph::graph::NodeIndex;
@@ -178,6 +179,8 @@ impl BaseInstruction for ParameterInstruction {
 #[derive(Clone)]
 pub struct FunctionCallInstruction {
     pub function: String,
+    pub function_type: Option<Index>,
+    pub is_direct_function: bool,
     pub return_target: Option<Operand>,
 }
 

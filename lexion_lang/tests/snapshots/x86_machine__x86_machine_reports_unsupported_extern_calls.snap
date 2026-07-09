@@ -1,0 +1,7 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "compile_machine_code_error(\"backend/x86_unsupported_extern_call.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+x86 machine-code backend does not support extern declarations yet: imported
+x86 machine-code backend does not support calls to extern functions yet: imported

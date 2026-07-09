@@ -1,6 +1,10 @@
 use iced_x86::Register;
-use lexion_lang::ast::types::{FunctionType, TypeCollection};
-use lexion_lang::generators::x86::{CallingConvention, Location, SystemV64, X86Target};
+use lexion_lang::ast::types::{
+    FunctionType, StructMember, StructType, TupleType, Type, TypeCollection,
+};
+use lexion_lang::generators::x86::{
+    Bitness, CMemoryLayoutBuilder, CallingConvention, Location, SystemV64, X86Target,
+};
 
 #[test]
 fn x86_target_uses_isolated_calling_convention() {
@@ -43,6 +47,112 @@ fn system_v64_assigns_integer_args_and_return_registers() {
 }
 
 #[test]
+fn aggregate_layout_records_member_offsets_and_padding() {
+    let mut types = TypeCollection::default();
+    let bool_ty = types.bool();
+    let i32_ty = types.i32();
+    let char_ty = types.char();
+    let tuple_ty = types.insert(&Type::TupleType(TupleType {
+        types: vec![bool_ty, i32_ty, char_ty],
+    }));
+    let struct_ty = types.insert(&Type::StructType(StructType {
+        ident: String::from("Packed"),
+        members: vec![
+            StructMember {
+                name: String::from("flag"),
+                ty: bool_ty,
+            },
+            StructMember {
+                name: String::from("value"),
+                ty: i32_ty,
+            },
+            StructMember {
+                name: String::from("tag"),
+                ty: char_ty,
+            },
+        ],
+    }));
+
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+
+    assert_aggregate_layout(&types, tuple_ty);
+    assert_aggregate_layout(&types, struct_ty);
+}
+
+#[test]
+fn system_v64_classifies_small_aggregates_like_integer_register_values() {
+    let mut types = TypeCollection::default();
+    let i32_ty = types.i32();
+    let pair_ty = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty],
+    }));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+    let signature = FunctionType {
+        params: vec![pair_ty],
+        return_type: pair_ty,
+        is_vararg: false,
+    };
+
+    assert_eq!(
+        SystemV64.assign_args(&types, 0, &signature)[0].register(),
+        Some(Register::RDI)
+    );
+    assert_eq!(
+        SystemV64
+            .assign_ret(&types, &signature)
+            .and_then(|loc| loc.register()),
+        Some(Register::RAX)
+    );
+}
+
+#[test]
+fn system_v64_classifies_two_word_aggregates_as_register_pairs() {
+    let mut types = TypeCollection::default();
+    let i32_ty = types.i32();
+    let quad_ty = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty, i32_ty, i32_ty],
+    }));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+    let signature = FunctionType {
+        params: vec![quad_ty],
+        return_type: quad_ty,
+        is_vararg: false,
+    };
+
+    assert_register_pair(
+        &SystemV64.assign_args(&types, 0, &signature)[0],
+        Register::RDI,
+        Register::RSI,
+    );
+    assert_register_pair(
+        &SystemV64.assign_ret(&types, &signature).unwrap(),
+        Register::RAX,
+        Register::RDX,
+    );
+}
+
+#[test]
+fn system_v64_classifies_stack_and_indirect_aggregate_locations() {
+    let mut types = TypeCollection::default();
+    let i32_ty = types.i32();
+    let pair_ty = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty],
+    }));
+    let large_ty = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty, i32_ty, i32_ty, i32_ty],
+    }));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+    let signature = FunctionType {
+        params: vec![i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, pair_ty],
+        return_type: large_ty,
+        is_vararg: false,
+    };
+
+    assert_stack(&SystemV64.assign_args(&types, 0, &signature)[6], 0);
+    assert_indirect_return(&SystemV64.assign_ret(&types, &signature).unwrap(), 20);
+}
+
+#[test]
 fn system_v64_assigns_f32_args_and_return_xmm_registers() {
     let types = TypeCollection::default();
     let signature = FunctionType {
@@ -76,7 +186,7 @@ fn system_v64_spills_f32_args_after_xmm_registers_are_exhausted() {
     let f32_ty = types.f32();
     let signature = FunctionType {
         params: vec![f32_ty; 9],
-        return_type: types.i32(),
+        return_type: types.unit(),
         is_vararg: false,
     };
 
@@ -121,4 +231,54 @@ fn system_v64_marks_exact_call_clobbered_registers() {
     ];
 
     assert_eq!(SystemV64.call_clobbered(), expected.as_slice());
+}
+
+fn assert_aggregate_layout(types: &TypeCollection, ty: generational_arena::Index) {
+    let layout = types.memory_layouts.get(&ty).expect("missing layout");
+    let offsets = layout
+        .members()
+        .iter()
+        .map(|member| member.offset)
+        .collect::<Vec<_>>();
+    let sizes = layout
+        .members()
+        .iter()
+        .map(|member| member.size_align.size)
+        .collect::<Vec<_>>();
+
+    assert_eq!(offsets, vec![0, 4, 8]);
+    assert_eq!(sizes, vec![1, 4, 1]);
+    let size_align = types.size_align(ty, Bitness::_64);
+    assert_eq!(size_align.size, 12);
+    assert_eq!(size_align.align.value(), 4);
+}
+
+fn assert_register_pair(location: &Location, low: Register, high: Register) {
+    match location {
+        Location::Pair { low: l, high: h } => {
+            assert_eq!(l.register(), Some(low));
+            assert_eq!(h.register(), Some(high));
+        }
+        other => panic!("expected register pair, got {other:?}"),
+    }
+}
+
+fn assert_stack(location: &Location, offset: usize) {
+    match location {
+        Location::Stack(actual) => assert_eq!(actual.0, offset),
+        other => panic!("expected stack offset {offset}, got {other:?}"),
+    }
+}
+
+fn assert_indirect_return(location: &Location, size: usize) {
+    match location {
+        Location::Indirect {
+            address_register,
+            size: actual_size,
+        } => {
+            assert_eq!(*address_register, Register::RDI);
+            assert_eq!(*actual_size, size);
+        }
+        other => panic!("expected indirect return, got {other:?}"),
+    }
 }
