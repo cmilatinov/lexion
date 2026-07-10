@@ -154,6 +154,29 @@ fn system_v64_classifies_stack_and_indirect_aggregate_locations() {
 }
 
 #[test]
+fn system_v64_classifies_large_aggregate_args_as_stack_values() {
+    let mut types = TypeCollection::default();
+    let i32_ty = types.i32();
+    let large_ty = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty, i32_ty, i32_ty, i32_ty],
+    }));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+    let signature = FunctionType {
+        params: vec![
+            i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, large_ty, i32_ty,
+        ],
+        return_type: types.unit(),
+        is_vararg: false,
+    };
+
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+
+    assert_eq!(locations.len(), signature.params.len());
+    assert_stack(&locations[6], 0);
+    assert_stack(&locations[7], 3);
+}
+
+#[test]
 fn system_v64_assigns_f32_args_and_return_xmm_registers() {
     let types = TypeCollection::default();
     let signature = FunctionType {
