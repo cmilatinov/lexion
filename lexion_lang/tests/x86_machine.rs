@@ -218,6 +218,13 @@ fn x86_machine_reports_unsupported_call_float_arg() {
 }
 
 #[test]
+fn x86_machine_reports_unsupported_float_operations() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_float_ops.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_machine_reports_unsupported_call_tuple_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_tuple_arg.lex"
