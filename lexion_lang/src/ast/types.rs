@@ -373,7 +373,10 @@ impl TypeCollection {
     }
 
     pub fn compute_memory_layouts<Builder: MemoryLayoutBuilder>(&mut self, bitness: Bitness) {
-        for (ty, _) in self.arena.iter() {
+        for (ty, value) in self.arena.iter() {
+            if matches!(value, Type::Unknown) {
+                continue;
+            }
             if self.memory_layouts.contains_key(&ty) {
                 continue;
             }
@@ -389,6 +392,14 @@ impl TypeCollection {
                 .get(&ty)
                 .map(|l| l.size_align())
                 .unwrap_or(SizeAlign::none()),
+            Type::RefType(ref_ty)
+                if matches!(
+                    self.arena.get(self.canonicalize(ref_ty.to)),
+                    Some(Type::PrimitiveType(PrimitiveType::STR))
+                ) =>
+            {
+                SizeAlign::slice(bitness)
+            }
             Type::RefType(_) | Type::FunctionType(_) => SizeAlign::ptr(bitness),
             Type::PrimitiveType(primitive_ty) => primitive_ty.layout(bitness).size_align(),
             Type::TypeDefType(_) | Type::Unknown => SizeAlign::none(),

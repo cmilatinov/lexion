@@ -5,6 +5,8 @@ use iced_x86::Register;
 
 pub struct SystemV64;
 
+const STACK_SLOT_BYTES: usize = 8;
+
 impl CallingConvention for SystemV64 {
     fn assign_args(
         &self,
@@ -62,11 +64,14 @@ impl CallingConvention for SystemV64 {
                             });
                             stack_offset += 2;
                         }
+                    } else {
+                        result.push(Location::Stack(StackOffset(stack_offset)));
+                        stack_offset += stack_slots(size);
                     }
                 }
                 TypeKind::Unknown => {
                     result.push(Location::Stack(StackOffset(stack_offset)));
-                    stack_offset += size;
+                    stack_offset += stack_slots(size);
                 }
             }
         }
@@ -160,4 +165,8 @@ impl CallingConvention for SystemV64 {
     fn fixed_stack_bytes(&self) -> usize {
         0
     }
+}
+
+fn stack_slots(size: usize) -> usize {
+    size.div_ceil(STACK_SLOT_BYTES).max(1)
 }

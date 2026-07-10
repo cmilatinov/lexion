@@ -1,4 +1,4 @@
-use crate::ast::types::{PrimitiveType, Type, TypeCollection};
+use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
@@ -88,9 +88,23 @@ impl<'a> CodeGeneratorX86<'a> {
             String::from(".text"),
         ];
         for range in &self.cfg.functions {
-            lines.extend(self.emit_function(*range, options));
+            if let Some(label) = self.extern_label(*range) {
+                lines.push(format!(".extern {label}"));
+            } else {
+                lines.extend(self.emit_function(*range, options));
+            }
         }
         X86Assembly::new(lines.join("\n"))
+    }
+
+    fn extern_label(&self, range: FunctionRange) -> Option<&str> {
+        self.cfg[range.start]
+            .instructions
+            .first()
+            .and_then(|inst| match &inst.instruction {
+                Instruction::Extern(external) => Some(external.label.as_str()),
+                _ => None,
+            })
     }
 
     fn emit_function(&self, range: FunctionRange, options: X86EmitOptions<'_>) -> Vec<String> {
@@ -343,14 +357,15 @@ impl<'a> CodeGeneratorX86<'a> {
                         .and_then(|left| self.unsupported_operand_message(left))
                 })
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
-            Instruction::FunctionCall(inst) => inst
-                .return_target
-                .as_ref()
-                .and_then(|target| self.unsupported_operand_message(target)),
-            Instruction::Extern(inst) => Some(format!(
-                "x86 backend does not support extern declarations yet: {}",
-                inst.label
-            )),
+            Instruction::FunctionCall(inst) => self
+                .unsupported_call_target_message(inst)
+                .or_else(|| self.unsupported_call_signature_message(inst))
+                .or_else(|| {
+                    inst.return_target
+                        .as_ref()
+                        .and_then(|target| self.unsupported_operand_message(target))
+                }),
+            Instruction::Extern(_) => None,
             Instruction::Copy(inst) => self
                 .unsupported_operand_message(&inst.dst)
                 .or_else(|| self.unsupported_operand_message(&inst.src)),
@@ -383,12 +398,22 @@ impl<'a> CodeGeneratorX86<'a> {
         }
         if inst.left.is_none() && inst.operator == operators::DEREFERENCE {
             return Some(String::from(
-                "x86 backend does not support pointer dereference yet",
+                "x86 backend does not support dereference expressions yet",
+            ));
+        }
+        if inst.operator == operators::MEMBER {
+            return Some(String::from(
+                "x86 backend does not support member access yet",
+            ));
+        }
+        if inst.operator == operators::INDEX {
+            return Some(String::from(
+                "x86 backend does not support indexed access yet",
             ));
         }
         (!assignment_supported(inst)).then(|| {
             format!(
-                "x86 backend does not support `{}` assignments yet",
+                "x86 backend does not support `{}` operations yet",
                 inst.operator
             )
         })
@@ -442,11 +467,35 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
         let signature = self.function_signature(function)?;
+        if signature.is_vararg {
+            return Some(format!(
+                "x86 backend does not support vararg function signatures yet: {function}"
+            ));
+        }
         signature
             .params
             .iter()
             .find_map(|ty| self.unsupported_type_message(*ty))
             .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        let signature = self.function_call_signature(inst)?;
+        signature.is_vararg.then(|| {
+            format!(
+                "x86 backend does not support calls to vararg functions yet: {}",
+                inst.function
+            )
+        })
+    }
+
+    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (!inst.is_direct_function).then(|| {
+            format!(
+                "x86 backend does not support indirect calls through function values yet: {}",
+                inst.function
+            )
+        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
@@ -460,10 +509,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 "x86 backend does not support string values yet: {name}"
             )),
             Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 backend does not support tuple aggregate values yet: {name}"
+                "x86 backend does not support tuple values yet: {name}"
             )),
             Type::StructType(_) => Some(format!(
-                "x86 backend does not support struct aggregate values yet: {name}"
+                "x86 backend does not support struct values yet: {name}"
             )),
             Type::RefType(ref_ty)
                 if matches!(
@@ -476,10 +525,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 ))
             }
             Type::RefType(_) => Some(format!(
-                "x86 backend does not support reference or pointer values yet: {name}"
+                "x86 backend does not support reference values yet: {name}"
             )),
             Type::FunctionType(_) => Some(format!(
-                "x86 backend does not support function pointer values yet: {name}"
+                "x86 backend does not support function values yet: {name}"
             )),
             Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
                 None
@@ -487,7 +536,16 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn function_signature(&self, function: &str) -> Option<&crate::ast::types::FunctionType> {
+    fn function_call_signature(&self, inst: &FunctionCallInstruction) -> Option<&FunctionType> {
+        inst.function_type
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })
+    }
+
+    fn function_signature(&self, function: &str) -> Option<&FunctionType> {
         self.symbol_entry(function)
             .and_then(|entry| entry.var_type)
             .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
@@ -736,7 +794,7 @@ impl<'a> CodeGeneratorX86<'a> {
         inst: &FunctionCallInstruction,
     ) {
         let arg_locations = self
-            .function_signature(&inst.function)
+            .function_call_signature(inst)
             .map(|signature| {
                 self.target
                     .calling_convention()
