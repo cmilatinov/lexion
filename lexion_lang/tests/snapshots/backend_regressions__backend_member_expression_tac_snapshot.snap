@@ -5,13 +5,13 @@ snapshot_kind: text
 ---
 get_x:
   fn get_x
-  $t1 = point . x
+  $t1 = load point.x
   selected = $t1
   return selected
   endfn get_x
 
 tuple_first:
   fn tuple_first
-  $t1 = pair . 0
+  $t1 = load pair.0
   return $t1
   endfn tuple_first

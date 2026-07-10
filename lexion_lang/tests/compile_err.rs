@@ -67,8 +67,8 @@ fn test_invalid_member() {
 }
 
 #[test]
-fn test_unsupported_address_assignment() {
-    let errors = common::assert_fails("errors/semantics/unsupported_address_assignment.lex");
+fn test_address_of_is_not_assignment_target() {
+    let errors = common::assert_fails("errors/semantics/invalid_address_assignment.lex");
     insta::assert_snapshot!(errors.join("\n"));
 }
 

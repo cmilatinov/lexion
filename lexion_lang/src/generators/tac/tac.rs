@@ -7,11 +7,11 @@ use crate::ast::{
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
 use crate::generators::tac::instructions::{
-    AssignmentInstruction, BaseInstruction, CodeLocation, CodeSpan, ConditionalJumpInstruction,
-    ControlFlowGraph, CopyInstruction, EndFunctionInstruction, ExternInstruction,
-    FunctionCallInstruction, FunctionInstruction, FunctionRange, Instruction, InstructionBlock,
-    InstructionInstance, JumpInstruction, LivenessInterval, Operand, ParameterInstruction,
-    ReturnInstruction,
+    Address, AddressOfInstruction, AssignmentInstruction, BaseInstruction, CodeLocation, CodeSpan,
+    ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction, EndFunctionInstruction,
+    ExternInstruction, FunctionCallInstruction, FunctionInstruction, FunctionRange, Instruction,
+    InstructionBlock, InstructionInstance, JumpInstruction, LivenessInterval, LoadInstruction,
+    Operand, ParameterInstruction, ReturnInstruction, StoreInstruction,
 };
 use crate::operators;
 use crate::pipeline::PipelineStage;
@@ -109,6 +109,45 @@ impl<'a> CodeGeneratorTac<'a> {
                 right,
                 left,
             }),
+        })
+    }
+
+    fn address_of(
+        &mut self,
+        target: Operand,
+        address: Address,
+        source_span: Option<SourceSpan>,
+    ) -> CodeLocation {
+        self.instruction(InstructionInstance {
+            live: Default::default(),
+            source_span,
+            instruction: Instruction::AddressOf(AddressOfInstruction { target, address }),
+        })
+    }
+
+    fn load(
+        &mut self,
+        target: Operand,
+        address: Address,
+        source_span: Option<SourceSpan>,
+    ) -> CodeLocation {
+        self.instruction(InstructionInstance {
+            live: Default::default(),
+            source_span,
+            instruction: Instruction::Load(LoadInstruction { target, address }),
+        })
+    }
+
+    fn store(
+        &mut self,
+        address: Address,
+        value: Operand,
+        source_span: Option<SourceSpan>,
+    ) -> CodeLocation {
+        self.instruction(InstructionInstance {
+            live: Default::default(),
+            source_span,
+            instruction: Instruction::Store(StoreInstruction { address, value }),
         })
     }
 
@@ -507,6 +546,15 @@ impl<'a> CodeGeneratorTac<'a> {
         if inner.operator == operators::TERNARY {
             return self.ternary_expr(expr);
         }
+        if inner.operator == operators::ASSIGN {
+            return self.assignment_expr(expr);
+        }
+        if inner.args.len() == 1 && inner.operator == operators::ADDRESS_OF {
+            return self.address_of_expr(expr);
+        }
+        if inner.args.len() == 1 && inner.operator == operators::DEREFERENCE {
+            return self.load_expr(expr);
+        }
         assert!(!inner.args.is_empty() && inner.args.len() <= 2);
 
         if inner.args.len() == 1 {
@@ -517,16 +565,89 @@ impl<'a> CodeGeneratorTac<'a> {
         } else if inner.args.len() == 2 {
             let left = self.expr(&inner.args[0]);
             let right = self.expr(&inner.args[1]);
-            if inner.operator == "=" {
-                self.sourced_copy(left.clone(), right, *span);
-                left
-            } else {
-                let temp = self.alloc_temp(*ty, *span);
-                self.assign(temp.clone(), inner.operator, right, Some(left), Some(*span));
-                temp
-            }
+            let temp = self.alloc_temp(*ty, *span);
+            self.assign(temp.clone(), inner.operator, right, Some(left), Some(*span));
+            temp
         } else {
             unreachable!()
+        }
+    }
+
+    fn assignment_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let Sourced {
+            value:
+                TypedExpr {
+                    expr: Expr::OperatorExpr(inner),
+                    ..
+                },
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        assert_eq!(inner.args.len(), 2);
+
+        let left = &inner.args[0];
+        if let Expr::IdentExpr(IdentExpr { ident }) = &left.value.expr {
+            let target = Operand::Variable(ident.clone());
+            let right = self.expr(&inner.args[1]);
+            self.sourced_copy(target.clone(), right, *span);
+            return target;
+        }
+
+        let address = self.address(left);
+        let right = self.expr(&inner.args[1]);
+        self.store(address, right.clone(), Some(*span));
+        right
+    }
+
+    fn address_of_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let Sourced {
+            value:
+                TypedExpr {
+                    expr: Expr::OperatorExpr(inner),
+                    ty,
+                },
+            span,
+        } = expr
+        else {
+            unreachable!()
+        };
+        assert_eq!(inner.args.len(), 1);
+
+        let address = self.address(&inner.args[0]);
+        let temp = self.alloc_temp(*ty, *span);
+        self.address_of(temp.clone(), address, Some(*span));
+        temp
+    }
+
+    fn load_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let address = self.address(expr);
+        let temp = self.alloc_temp(expr.value.ty, expr.span);
+        self.load(temp.clone(), address, Some(expr.span));
+        temp
+    }
+
+    fn address(&mut self, expr: &SourcedExpr) -> Address {
+        match &expr.value.expr {
+            Expr::IdentExpr(IdentExpr { ident }) => {
+                Address::Direct(Operand::Variable(ident.clone()))
+            }
+            Expr::MemberExpr(MemberExpr { expr: base, ident }) => Address::Member {
+                base: Box::new(self.address(base)),
+                member: ident.clone(),
+            },
+            Expr::IndexExpr(IndexExpr { expr: base, index }) => {
+                let base = Box::new(self.address(base));
+                let index = self.expr(index);
+                Address::Index { base, index }
+            }
+            Expr::OperatorExpr(inner)
+                if inner.operator == operators::DEREFERENCE && inner.args.len() == 1 =>
+            {
+                Address::Dereference(self.expr(&inner.args[0]))
+            }
+            _ => Address::Direct(self.expr(expr)),
         }
     }
 
@@ -627,52 +748,11 @@ impl<'a> CodeGeneratorTac<'a> {
     }
 
     fn member_expr(&mut self, expr: &SourcedExpr) -> Operand {
-        let Sourced {
-            value:
-                TypedExpr {
-                    ty,
-                    expr: Expr::MemberExpr(MemberExpr { expr: base, ident }),
-                },
-            span,
-        } = expr
-        else {
-            unreachable!()
-        };
-        let base = self.expr(base);
-        let temp = self.alloc_temp(*ty, *span);
-        self.assign(
-            temp.clone(),
-            operators::MEMBER,
-            Operand::Label(ident.clone()),
-            Some(base),
-            Some(*span),
-        );
-        temp
+        self.load_expr(expr)
     }
 
     fn index_expr(&mut self, expr: &SourcedExpr) -> Operand {
-        let Sourced {
-            value:
-                TypedExpr {
-                    ty,
-                    expr: Expr::IndexExpr(IndexExpr { expr: base, index }),
-                },
-            span,
-        } = expr
-        else {
-            unreachable!()
-        };
-        let base = self.expr(base);
-        let index = self.expr(index);
-        let temp = self.alloc_temp(*ty, *span);
-        self.assign(
-            temp.clone(),
-            operators::INDEX,
-            index,
-            Some(base),
-            Some(*span),
-        );
-        temp
+        self.load_expr(expr)
     }
 
     fn call_expr(&mut self, expr: &SourcedExpr) -> Option<Operand> {

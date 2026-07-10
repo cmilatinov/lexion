@@ -9,7 +9,7 @@ snapshot_kind: text
  3 |     let reference = &value;
    :                     ^^^|^^
    :                        `-- here
- 4 |     return *reference;
+ 4 |     *reference = 2;
    `----
 
   x x86 backend does not support reference values yet: &i32
@@ -18,14 +18,23 @@ snapshot_kind: text
  3 |     let reference = &value;
    :         ^^^^|^^^^
    :             `-- here
- 4 |     return *reference;
+ 4 |     *reference = 2;
+   `----
+
+  x x86 backend does not support stores through dereference expressions yet
+   ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:4:5]
+ 3 |     let reference = &value;
+ 4 |     *reference = 2;
+   :     ^^^^^^^|^^^^^^
+   :            `-- here
+ 5 |     return *reference;
    `----
 
   x x86 backend does not support dereference expressions yet
-   ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:4:12]
- 3 |     let reference = &value;
- 4 |     return *reference;
+   ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:5:12]
+ 4 |     *reference = 2;
+ 5 |     return *reference;
    :            ^^^^^|^^^^
    :                 `-- here
- 5 | }
+ 6 | }
    `----

@@ -447,17 +447,8 @@ impl<'a> TypeChecker<'a> {
 
     fn assign(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &OperatorExpr) -> bool {
         let left = &expr.args[0];
-        if Self::is_identifier_lvalue(left) {
+        if Self::is_identifier_lvalue(left) || Self::is_address_derived_lvalue(left) {
             true
-        } else if Self::is_address_derived_lvalue(left) {
-            diag.error(LexionDiagnosticError {
-                src: self.src.clone(),
-                span: left.span,
-                message: String::from(
-                    "assignment through member, index, or dereference expressions is not supported yet",
-                ),
-            });
-            false
         } else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),

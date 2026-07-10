@@ -469,3 +469,38 @@ fn tac_optimizer_skips_integer_folds_outside_target_word() {
     assert_eq!(instruction.to_string(), "value = 2147483647 + 1");
     assert!(matches!(instruction, Instruction::Assignment(_)));
 }
+
+#[test]
+fn tac_optimizer_preserves_address_memory_effects() {
+    let optimized = optimize_cfg(
+        "backend/tac_address_expressions.lex",
+        TacOptimizerOptions::default(),
+    );
+    let instructions = optimized
+        .node_weights()
+        .flat_map(|block| block.instructions.iter())
+        .map(|instance| &instance.instruction)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| matches!(instruction, Instruction::AddressOf(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| matches!(instruction, Instruction::Load(_)))
+            .count(),
+        4
+    );
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| matches!(instruction, Instruction::Store(_)))
+            .count(),
+        3
+    );
+}

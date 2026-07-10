@@ -2,8 +2,8 @@ use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
-    AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction,
-    FunctionRange, Instruction, Operand,
+    Address, AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph,
+    FunctionCallInstruction, FunctionRange, Instruction, Operand,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::X86Target;
@@ -167,6 +167,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         instruction: &Instruction,
     ) -> Result<bool, IcedError> {
         match instruction {
+            Instruction::AddressOf(_) | Instruction::Load(_) | Instruction::Store(_) => {
+                unreachable!("unsupported address instructions are diagnosed before emission")
+            }
             Instruction::Assignment(inst) => {
                 self.emit_assignment(assembler, slots, inst)?;
                 Ok(false)
@@ -460,6 +463,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn instruction_source_span(&self, instruction: &Instruction) -> Option<SourceSpan> {
         match instruction {
+            Instruction::AddressOf(inst) => self
+                .operand_source_span(&inst.target)
+                .or_else(|| self.address_source_span(&inst.address)),
+            Instruction::Load(inst) => self
+                .operand_source_span(&inst.target)
+                .or_else(|| self.address_source_span(&inst.address)),
+            Instruction::Store(inst) => self
+                .address_source_span(&inst.address)
+                .or_else(|| self.operand_source_span(&inst.value)),
             Instruction::Assignment(inst) => self
                 .operand_source_span(&inst.target)
                 .or_else(|| {
@@ -499,6 +511,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
+    fn address_source_span(&self, address: &Address) -> Option<SourceSpan> {
+        match address {
+            Address::Direct(value) | Address::Dereference(value) => self.operand_source_span(value),
+            Address::Member { base, .. } => self.address_source_span(base),
+            Address::Index { base, index } => self
+                .address_source_span(base)
+                .or_else(|| self.operand_source_span(index)),
+        }
+    }
+
     fn symbol_span(&self, name: &str) -> Option<SourceSpan> {
         self.symbol_entry(name).map(|entry| entry.span)
     }
@@ -513,6 +535,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
         match instruction {
+            Instruction::AddressOf(_) => Some(String::from(
+                "x86 machine-code backend does not support address-taking yet",
+            )),
+            Instruction::Load(inst) => Some(self.unsupported_load_message(&inst.address)),
+            Instruction::Store(inst) => Some(self.unsupported_store_message(&inst.address)),
             Instruction::Assignment(inst) => self
                 .unsupported_assignment_operator_message(inst)
                 .or_else(|| self.unsupported_operand_message(&inst.target))
@@ -548,32 +575,46 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
+    fn unsupported_load_message(&self, address: &Address) -> String {
+        match address {
+            Address::Member { .. } => {
+                String::from("x86 machine-code backend does not support member access yet")
+            }
+            Address::Index { .. } => {
+                String::from("x86 machine-code backend does not support indexed access yet")
+            }
+            Address::Dereference(_) => String::from(
+                "x86 machine-code backend does not support dereference expressions yet",
+            ),
+            Address::Direct(_) => {
+                String::from("x86 machine-code backend does not support memory loads yet")
+            }
+        }
+    }
+
+    fn unsupported_store_message(&self, address: &Address) -> String {
+        match address {
+            Address::Member { .. } => String::from(
+                "x86 machine-code backend does not support stores through member access yet",
+            ),
+            Address::Index { .. } => String::from(
+                "x86 machine-code backend does not support stores through indexed access yet",
+            ),
+            Address::Dereference(_) => String::from(
+                "x86 machine-code backend does not support stores through dereference expressions yet",
+            ),
+            Address::Direct(_) => {
+                String::from("x86 machine-code backend does not support memory stores yet")
+            }
+        }
+    }
+
     fn unsupported_assignment_operator_message(
         &self,
         inst: &AssignmentInstruction,
     ) -> Option<String> {
         if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
             return self.unsupported_cast_message(inst);
-        }
-        if inst.left.is_none() && inst.operator == operators::ADDRESS_OF {
-            return Some(String::from(
-                "x86 machine-code backend does not support address-taking yet",
-            ));
-        }
-        if inst.left.is_none() && inst.operator == operators::DEREFERENCE {
-            return Some(String::from(
-                "x86 machine-code backend does not support dereference expressions yet",
-            ));
-        }
-        if inst.operator == operators::MEMBER {
-            return Some(String::from(
-                "x86 machine-code backend does not support member access yet",
-            ));
-        }
-        if inst.operator == operators::INDEX {
-            return Some(String::from(
-                "x86 machine-code backend does not support indexed access yet",
-            ));
         }
         (!assignment_supported(inst)).then(|| {
             format!(
@@ -1166,6 +1207,18 @@ fn is_integer_bool_scalar(types: &TypeCollection, ty: Index) -> bool {
 
 fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<String>) {
     match instruction {
+        Instruction::AddressOf(inst) => {
+            collect_operand(&inst.target, names);
+            collect_address_operands(&inst.address, names);
+        }
+        Instruction::Load(inst) => {
+            collect_operand(&inst.target, names);
+            collect_address_operands(&inst.address, names);
+        }
+        Instruction::Store(inst) => {
+            collect_address_operands(&inst.address, names);
+            collect_operand(&inst.value, names);
+        }
         Instruction::Assignment(inst) => {
             collect_operand(&inst.target, names);
             if let Some(left) = &inst.left {
@@ -1198,6 +1251,17 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
         | Instruction::Function(_)
         | Instruction::EndFunction(_)
         | Instruction::Extern(_) => {}
+    }
+}
+
+fn collect_address_operands(address: &Address, names: &mut BTreeSet<String>) {
+    match address {
+        Address::Direct(value) | Address::Dereference(value) => collect_operand(value, names),
+        Address::Member { base, .. } => collect_address_operands(base, names),
+        Address::Index { base, index } => {
+            collect_address_operands(base, names);
+            collect_operand(index, names);
+        }
     }
 }
 
