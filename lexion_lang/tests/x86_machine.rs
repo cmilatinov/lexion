@@ -256,6 +256,13 @@ fn x86_machine_reports_unsupported_call_reference_arg() {
 }
 
 #[test]
+fn x86_machine_reports_unsupported_pointer_dereference() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_dereference.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_machine_reports_unsupported_indexed_access() {
     insta::assert_snapshot!(
         compile_machine_code_error("backend/x86_unsupported_index.lex").join("\n")

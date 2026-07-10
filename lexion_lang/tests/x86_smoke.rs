@@ -210,6 +210,11 @@ fn x86_reports_unsupported_address_taking() {
 }
 
 #[test]
+fn x86_reports_unsupported_pointer_dereference() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_dereference.lex").join("\n"));
+}
+
+#[test]
 fn x86_smoke_extern_call() {
     insta::assert_snapshot!(compile_x86("backend/x86_extern_call.lex"));
 }
