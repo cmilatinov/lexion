@@ -29,3 +29,12 @@ snapshot_kind: text
     :          `-- here
  17 | }
     `----
+
+  x lvalue required as left operand of assignment
+    ,-[tests/fixtures/errors/semantics/unsupported_address_assignment.lex:20:5]
+ 19 |     let value = 1;
+ 20 |     &value = 2;
+    :     ^^^|^^
+    :        `-- here
+ 21 | }
+    `----

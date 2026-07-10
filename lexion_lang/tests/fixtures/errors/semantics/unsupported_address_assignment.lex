@@ -15,3 +15,7 @@ fn dereference_assignment() {
     let reference = &value;
     *reference = 2;
 }
+fn address_of_assignment() {
+    let value = 1;
+    &value = 2;
+}

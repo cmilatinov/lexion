@@ -178,22 +178,16 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let types = types.into_iter().map(|ty| ty.unwrap()).collect::<Vec<_>>();
+        if expr.operator == operators::ASSIGN && !self.assign(diag, expr) {
+            return None;
+        }
         match self
             .operators
             .candidate_definitions(expr.operator, types.as_slice(), self.types)
         {
             Ok(defs) => {
                 if let Some(def) = defs.into_iter().find(|d| d.params.eq(&types)) {
-                    match expr {
-                        OperatorExpr { operator, .. } if (*operator).eq("=") => {
-                            if self.assign(diag, expr) {
-                                Some(def.return_type)
-                            } else {
-                                None
-                            }
-                        }
-                        _ => Some(def.return_type),
-                    }
+                    Some(def.return_type)
                 } else {
                     diag.error(LexionDiagnosticError {
                         src: self.src.clone(),
@@ -504,10 +498,7 @@ impl<'a> TypeChecker<'a> {
                         ..
                     },
                 ..
-            } => {
-                ((*operator).eq(operators::DEREFERENCE) || (*operator).eq(operators::ADDRESS_OF))
-                    && args.len() == 1
-            }
+            } => (*operator).eq(operators::DEREFERENCE) && args.len() == 1,
             _ => false,
         }
     }
