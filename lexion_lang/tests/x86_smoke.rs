@@ -169,8 +169,22 @@ fn x86_reports_unsupported_tuple_values() {
 }
 
 #[test]
+fn x86_reports_unsupported_call_tuple_arg() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_call_tuple_arg.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_reports_unsupported_struct_values() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_struct.lex").join("\n"));
+}
+
+#[test]
+fn x86_reports_unsupported_call_struct_arg() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_call_struct_arg.lex").join("\n")
+    );
 }
 
 #[test]
