@@ -34,6 +34,38 @@ fn compile_elf(fixture: &str) -> X86ElfExecutable {
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)))
 }
 
+fn compile_elf_error(fixture: &str) -> Vec<String> {
+    let path = format!("tests/fixtures/{fixture}");
+    let source_code = Arc::new(std::fs::read_to_string(&path).expect("fixture not found"));
+    let source = NamedSource::new(&path, source_code);
+    let mut diagnostics = LexionDiagnosticList::default();
+
+    let (mut ast, mut types, _) = ParserLexion::new()
+        .exec(&mut diagnostics, source.clone())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let mut symbols = SymbolTableGenerator::new((source.clone(), &ast, &mut types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    TypeChecker::new((source, &mut symbols, &mut types))
+        .exec(&mut diagnostics, &mut ast)
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+
+    let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
+        .exec(&mut diagnostics, ())
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let output = CodeGeneratorX86Elf::new((&cfg, &types, &symbols))
+        .exec(&mut diagnostics, X86ElfOptions::default());
+
+    assert!(
+        output.is_none(),
+        "expected x86 ELF backend to reject fixture"
+    );
+    diagnostics_string(&diagnostics)
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
 fn diagnostics_string(diagnostics: &LexionDiagnosticList) -> String {
     diagnostics
         .list
@@ -164,6 +196,11 @@ fn x86_elf_executable_supports_stack_arguments() {
         code,
         executable.entry_point() + executable.runtime_size() as u64
     ));
+}
+
+#[test]
+fn x86_elf_reports_unsupported_extern_calls() {
+    insta::assert_snapshot!(compile_elf_error("backend/x86_unsupported_extern_call.lex").join("\n"));
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

@@ -1,23 +1,23 @@
-use crate::ast::types::{PrimitiveType, Type, TypeCollection};
+use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction,
     FunctionRange, Instruction, Operand,
 };
+use crate::generators::x86::calling_convention::{CallingConvention, Location};
+use crate::generators::x86::X86Target;
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
 use generational_arena::Index;
 use iced_x86::code_asm::*;
-use iced_x86::{BlockEncoderOptions, IcedError};
+use iced_x86::{BlockEncoderOptions, IcedError, Register};
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-const REGISTER_ARG_COUNT: usize = 6;
 const STACK_ARG_SLOT_BYTES: usize = 8;
-const FIRST_STACK_ARG_OFFSET_FROM_RBP: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShiftKind {
@@ -55,6 +55,7 @@ pub struct CodeGeneratorX86Machine<'a> {
     cfg: &'a ControlFlowGraph,
     types: &'a TypeCollection,
     symbols: &'a SymbolTableGraph,
+    target: X86Target,
 }
 
 impl<'a> CodeGeneratorX86Machine<'a> {
@@ -104,7 +105,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         range: FunctionRange,
     ) -> Result<(), IcedError> {
         let slots = self.stack_slots(range);
-        let stack_size = align_to(slots.len() * 4, 16);
+        let stack_size = align_to(
+            slots.len() * 4,
+            self.target.calling_convention().stack_alignment(),
+        );
+        let return_register = self
+            .function_return_register(&self.cfg[range.start].label)
+            .unwrap_or(Register::RAX);
         self.set_block_label(assembler, labels, self.cfg[range.start].label.as_str())?;
         assembler.push(rbp)?;
         assembler.mov(rbp, rsp)?;
@@ -125,6 +132,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     assembler,
                     labels,
                     &slots,
+                    return_register,
                     &mut pending_params,
                     &inst.instruction,
                 )? {
@@ -154,6 +162,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         assembler: &mut CodeAssembler,
         labels: &HashMap<String, CodeLabel>,
         slots: &BTreeMap<String, usize>,
+        return_register: Register,
         pending_params: &mut Vec<Operand>,
         instruction: &Instruction,
     ) -> Result<bool, IcedError> {
@@ -177,7 +186,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(assembler, slots, value, eax)?;
+                    load_operand(assembler, slots, value, asm_register32(return_register))?;
                 }
                 emit_epilogue(assembler)?;
                 Ok(true)
@@ -337,31 +346,49 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         pending_params: &[Operand],
         inst: &FunctionCallInstruction,
     ) -> Result<(), IcedError> {
+        let signature = self
+            .function_call_signature(inst)
+            .expect("function call should reference a checked function signature");
         let params = pending_params.iter().rev().collect::<Vec<_>>();
-        let stack_arg_count = params.len().saturating_sub(REGISTER_ARG_COUNT);
-        let stack_padding = if stack_arg_count % 2 == 1 {
-            STACK_ARG_SLOT_BYTES
-        } else {
-            0
-        };
-        if stack_padding > 0 {
-            assembler.sub(rsp, stack_padding as i32)?;
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
+        let stack_args = params
+            .iter()
+            .zip(locations.iter())
+            .filter_map(|(param, location)| stack_offset(location).map(|offset| (*param, offset)))
+            .collect::<Vec<_>>();
+        let fixed_stack_bytes = self.target.calling_convention().fixed_stack_bytes();
+        let stack_padding = call_stack_padding(
+            stack_args.len(),
+            fixed_stack_bytes,
+            self.target.calling_convention().stack_alignment(),
+        );
+        let reserved_stack_bytes = fixed_stack_bytes + stack_padding;
+        if reserved_stack_bytes > 0 {
+            assembler.sub(rsp, reserved_stack_bytes as i32)?;
         }
 
-        for param in params.iter().skip(REGISTER_ARG_COUNT).rev() {
+        for (param, _) in stack_args.iter().rev() {
             load_operand(assembler, slots, param, eax)?;
             assembler.push(rax)?;
         }
-        for (idx, param) in params.iter().take(REGISTER_ARG_COUNT).enumerate() {
-            load_operand(assembler, slots, param, integer_arg_register(idx))?;
+        for (param, location) in params.iter().zip(locations.iter()) {
+            if let Some(register) = outgoing_register(location) {
+                load_operand(assembler, slots, param, asm_register32(register))?;
+            }
         }
         assembler.call(label_name(labels, inst.function.as_str()))?;
-        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
+        let stack_cleanup = stack_args.len() * STACK_ARG_SLOT_BYTES + reserved_stack_bytes;
         if stack_cleanup > 0 {
             assembler.add(rsp, stack_cleanup as i32)?;
         }
         if let Some(return_target) = &inst.return_target {
-            store_operand(assembler, slots, return_target, eax)?;
+            let register = self
+                .function_call_return_register(inst)
+                .unwrap_or(Register::RAX);
+            store_operand(assembler, slots, return_target, asm_register32(register))?;
         }
         Ok(())
     }
@@ -375,13 +402,19 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let Some(params) = self.function_params(range) else {
             return Ok(());
         };
-        for (idx, param) in params.iter().enumerate() {
+        let Some(signature) = self.function_signature(&self.cfg[range.start].label) else {
+            return Ok(());
+        };
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
+        for (param, location) in params.iter().zip(locations.iter()) {
             if let Some(offset) = slots.get(param.as_str()) {
-                if idx < REGISTER_ARG_COUNT {
-                    assembler.mov(dword_ptr(rbp - *offset as i32), integer_arg_register(idx))?;
-                } else {
-                    let incoming_offset = FIRST_STACK_ARG_OFFSET_FROM_RBP
-                        + (idx - REGISTER_ARG_COUNT) * STACK_ARG_SLOT_BYTES;
+                if let Some(register) = outgoing_register(location) {
+                    assembler.mov(dword_ptr(rbp - *offset as i32), asm_register32(register))?;
+                } else if let Some(stack_offset) = stack_offset(location) {
+                    let incoming_offset = incoming_stack_arg_offset(stack_offset);
                     assembler.mov(eax, dword_ptr(rbp + incoming_offset as i32))?;
                     assembler.mov(dword_ptr(rbp - *offset as i32), eax)?;
                 }
@@ -507,9 +540,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .as_ref()
                 .and_then(|value| self.unsupported_operand_message(value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
-            Instruction::FunctionCall(_) | Instruction::Jump(_) | Instruction::EndFunction(_) => {
-                None
-            }
+            Instruction::FunctionCall(inst) => self
+                .unsupported_call_target_message(inst)
+                .or_else(|| self.unsupported_extern_call_message(inst))
+                .or_else(|| self.unsupported_call_signature_message(inst)),
+            Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
     }
 
@@ -527,12 +562,22 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
         if inst.left.is_none() && inst.operator == operators::DEREFERENCE {
             return Some(String::from(
-                "x86 machine-code backend does not support pointer dereference yet",
+                "x86 machine-code backend does not support dereference expressions yet",
+            ));
+        }
+        if inst.operator == operators::MEMBER {
+            return Some(String::from(
+                "x86 machine-code backend does not support member access yet",
+            ));
+        }
+        if inst.operator == operators::INDEX {
+            return Some(String::from(
+                "x86 machine-code backend does not support indexed access yet",
             ));
         }
         (!assignment_supported(inst)).then(|| {
             format!(
-                "x86 machine-code backend does not support `{}` assignments yet",
+                "x86 machine-code backend does not support `{}` operations yet",
                 inst.operator
             )
         })
@@ -561,19 +606,56 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     }
 
     fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
-        let signature = self
-            .symbol_entry(function)
-            .and_then(|entry| entry.var_type)
-            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
-            .and_then(|ty| match ty {
-                Type::FunctionType(signature) => Some(signature),
-                _ => None,
-            })?;
+        let signature = self.function_signature(function)?;
+        if signature.is_vararg {
+            return Some(format!(
+                "x86 machine-code backend does not support vararg function signatures yet: {function}"
+            ));
+        }
         signature
             .params
             .iter()
             .find_map(|ty| self.unsupported_type_message(*ty))
             .or_else(|| self.unsupported_type_message(signature.return_type))
+    }
+
+    fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        let signature = self.function_call_signature(inst)?;
+        signature.is_vararg.then(|| {
+            format!(
+                "x86 machine-code backend does not support calls to vararg functions yet: {}",
+                inst.function
+            )
+        })
+    }
+
+    fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
+            format!(
+                "x86 machine-code backend does not support calls to extern functions yet: {}",
+                inst.function
+            )
+        })
+    }
+
+    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (!inst.is_direct_function).then(|| {
+            format!(
+                "x86 machine-code backend does not support indirect calls through function values yet: {}",
+                inst.function
+            )
+        })
+    }
+
+    fn is_extern_function(&self, function: &str) -> bool {
+        self.cfg.node_weights().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    &inst.instruction,
+                    Instruction::Extern(external) if external.label == function
+                )
+            })
+        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
@@ -587,10 +669,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support string values yet: {name}"
             )),
             Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 machine-code backend does not support tuple aggregate values yet: {name}"
+                "x86 machine-code backend does not support tuple values yet: {name}"
             )),
             Type::StructType(_) => Some(format!(
-                "x86 machine-code backend does not support struct aggregate values yet: {name}"
+                "x86 machine-code backend does not support struct values yet: {name}"
             )),
             Type::RefType(ref_ty)
                 if matches!(
@@ -603,10 +685,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 ))
             }
             Type::RefType(_) => Some(format!(
-                "x86 machine-code backend does not support reference or pointer values yet: {name}"
+                "x86 machine-code backend does not support reference values yet: {name}"
             )),
             Type::FunctionType(_) => Some(format!(
-                "x86 machine-code backend does not support function pointer values yet: {name}"
+                "x86 machine-code backend does not support function values yet: {name}"
             )),
             Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
                 None
@@ -691,6 +773,43 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
         }
     }
+
+    fn function_signature(&self, function: &str) -> Option<&FunctionType> {
+        self.symbol_entry(function)
+            .and_then(|entry| entry.var_type)
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })
+    }
+
+    fn function_call_signature(&self, inst: &FunctionCallInstruction) -> Option<&FunctionType> {
+        inst.function_type
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature),
+                _ => None,
+            })
+    }
+
+    fn function_return_register(&self, function: &str) -> Option<Register> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
+    }
+
+    fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
+    }
 }
 
 impl<'a> PipelineStage for CodeGeneratorX86Machine<'a> {
@@ -707,6 +826,7 @@ impl<'a> PipelineStage for CodeGeneratorX86Machine<'a> {
             cfg,
             types,
             symbols,
+            target: X86Target::default(),
         }
     }
 
@@ -907,15 +1027,58 @@ fn label_name(labels: &HashMap<String, CodeLabel>, label: &str) -> CodeLabel {
         .unwrap_or_else(|| panic!("missing block label `{label}`"))
 }
 
-fn integer_arg_register(index: usize) -> AsmRegister32 {
-    match index {
-        0 => edi,
-        1 => esi,
-        2 => edx,
-        3 => ecx,
-        4 => r8d,
-        5 => r9d,
-        _ => unreachable!("integer argument index was validated before emission"),
+fn outgoing_register(location: &Location) -> Option<Register> {
+    match location {
+        Location::Register(register) | Location::RegisterAndStack(register, _) => Some(*register),
+        Location::Stack(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+    }
+}
+
+fn stack_offset(location: &Location) -> Option<usize> {
+    match location {
+        Location::Stack(offset) => Some(offset.0),
+        Location::RegisterAndStack(_, offset) => Some(offset.0),
+        Location::Register(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+    }
+}
+
+fn incoming_stack_arg_offset(stack_offset: usize) -> usize {
+    2 * STACK_ARG_SLOT_BYTES + stack_offset * STACK_ARG_SLOT_BYTES
+}
+
+fn call_stack_padding(
+    stack_arg_count: usize,
+    fixed_stack_bytes: usize,
+    stack_alignment: usize,
+) -> usize {
+    let outgoing_stack_bytes = stack_arg_count * STACK_ARG_SLOT_BYTES + fixed_stack_bytes;
+    let remainder = outgoing_stack_bytes % stack_alignment;
+    if remainder == 0 {
+        0
+    } else {
+        stack_alignment - remainder
+    }
+}
+
+fn asm_register32(register: Register) -> AsmRegister32 {
+    match register.full_register() {
+        Register::RAX => eax,
+        Register::RBX => ebx,
+        Register::RCX => ecx,
+        Register::RDX => edx,
+        Register::RSI => esi,
+        Register::RDI => edi,
+        Register::RBP => ebp,
+        Register::RSP => esp,
+        Register::R8 => r8d,
+        Register::R9 => r9d,
+        Register::R10 => r10d,
+        Register::R11 => r11d,
+        Register::R12 => r12d,
+        Register::R13 => r13d,
+        Register::R14 => r14d,
+        Register::R15 => r15d,
+        _ => unreachable!("x86 machine-code emitter only supports general-purpose registers"),
     }
 }
 

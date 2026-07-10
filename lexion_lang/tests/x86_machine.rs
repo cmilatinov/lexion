@@ -174,6 +174,13 @@ fn x86_machine_code_scalar_casts() {
 }
 
 #[test]
+fn x86_machine_code_char_values() {
+    let code = compile_machine_code("backend/x86_char_values.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 
@@ -222,6 +229,58 @@ fn x86_machine_reports_unsupported_call_tuple_arg() {
 fn x86_machine_reports_unsupported_call_reference_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_reference_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_indexed_access() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_index.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_machine_reports_unsupported_extern_calls() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_extern_call.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_machine_reports_unsupported_vararg_call() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_vararg_call.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_machine_reports_unsupported_fixed_vararg_calls() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_vararg_fixed.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_machine_reports_unsupported_zero_fixed_vararg_calls() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_vararg_zero_fixed.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_function_pointer_values() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_function_pointer.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_shadowed_function_pointer_calls() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_shadowed_function_pointer.lex"
     )
     .join("\n"));
 }

@@ -1,6 +1,8 @@
 use crate::ast::types::TypeCollection;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
-use crate::generators::tac::instructions::ControlFlowGraph;
+use crate::generators::tac::instructions::{
+    ControlFlowGraph, FunctionCallInstruction, Instruction,
+};
 use crate::generators::x86::{CodeGeneratorX86Machine, X86MachineCode, X86MachineCodeOptions};
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::SymbolTableGraph;
@@ -75,6 +77,10 @@ impl<'a> CodeGeneratorX86Elf<'a> {
         diag: &mut dyn DiagnosticConsumer,
         options: X86ElfOptions,
     ) -> Option<X86ElfExecutable> {
+        if !self.validate_supported(diag) {
+            return None;
+        }
+
         let min_text_offset = (ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE) as u64;
         if options.text_offset < min_text_offset {
             diag.error(elf_error(format!(
@@ -133,6 +139,50 @@ impl<'a> CodeGeneratorX86Elf<'a> {
             text_offset: options.text_offset as usize,
             runtime_size: runtime.len(),
             symbols,
+        })
+    }
+
+    fn validate_supported(&self, diag: &mut dyn DiagnosticConsumer) -> bool {
+        let mut valid = true;
+        for block in self.cfg.node_weights() {
+            for inst in &block.instructions {
+                if let Some(message) = self.unsupported_message(&inst.instruction) {
+                    valid = false;
+                    diag.error(elf_error(message));
+                }
+            }
+        }
+        valid
+    }
+
+    fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
+        match instruction {
+            Instruction::Extern(inst) => Some(format!(
+                "x86 ELF executable output does not support extern declarations yet: {}",
+                inst.label
+            )),
+            Instruction::FunctionCall(inst) => self.unsupported_extern_call_message(inst),
+            _ => None,
+        }
+    }
+
+    fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
+        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
+            format!(
+                "x86 ELF executable output does not support calls to extern functions until relocations are implemented: {}",
+                inst.function
+            )
+        })
+    }
+
+    fn is_extern_function(&self, function: &str) -> bool {
+        self.cfg.node_weights().any(|block| {
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    &inst.instruction,
+                    Instruction::Extern(external) if external.label == function
+                )
+            })
         })
     }
 }
