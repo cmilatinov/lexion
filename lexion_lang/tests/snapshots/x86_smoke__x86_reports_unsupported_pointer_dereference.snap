@@ -12,7 +12,7 @@ snapshot_kind: text
  4 |     return *reference;
    `----
 
-  x x86 backend does not support reference or pointer values yet: &i32
+  x x86 backend does not support reference values yet: &i32
    ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:3:9]
  2 |     let value = 1;
  3 |     let reference = &value;
@@ -21,7 +21,7 @@ snapshot_kind: text
  4 |     return *reference;
    `----
 
-  x x86 backend does not support pointer dereference yet
+  x x86 backend does not support dereference expressions yet
    ,-[tests/fixtures/backend/x86_unsupported_dereference.lex:4:12]
  3 |     let reference = &value;
  4 |     return *reference;

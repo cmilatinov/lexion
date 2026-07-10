@@ -4,5 +4,5 @@ expression: "compile_machine_code_error(\"backend/x86_unsupported_dereference.le
 snapshot_kind: text
 ---
 x86 machine-code backend does not support address-taking yet
-x86 machine-code backend does not support reference or pointer values yet: &i32
-x86 machine-code backend does not support pointer dereference yet
+x86 machine-code backend does not support reference values yet: &i32
+x86 machine-code backend does not support dereference expressions yet
