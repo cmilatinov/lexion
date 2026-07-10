@@ -471,9 +471,9 @@ fn tac_optimizer_skips_integer_folds_outside_target_word() {
 }
 
 #[test]
-fn tac_optimizer_preserves_address_memory_effects() {
+fn tac_optimizer_preserves_place_memory_effects() {
     let optimized = optimize_cfg(
-        "backend/tac_address_expressions.lex",
+        "backend/tac_place_expressions.lex",
         TacOptimizerOptions::default(),
     );
     let instructions = optimized
@@ -485,7 +485,7 @@ fn tac_optimizer_preserves_address_memory_effects() {
     assert_eq!(
         instructions
             .iter()
-            .filter(|instruction| matches!(instruction, Instruction::AddressOf(_)))
+            .filter(|instruction| matches!(instruction, Instruction::Borrow(_)))
             .count(),
         1
     );

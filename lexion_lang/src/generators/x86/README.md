@@ -19,7 +19,7 @@ registers in instruction selection.
 - Floating-point values and operations.
 - Structs, tuples, strings, references, and other aggregate or memory values.
 - Calls, extern functions, varargs, and ABI argument passing in generated code.
-- Heap allocation, pointer arithmetic, and address-taking.
+- Heap allocation and reference operations.
 - Multi-function executable output.
 
 Unsupported forms should fail before emission with a diagnostic rather than

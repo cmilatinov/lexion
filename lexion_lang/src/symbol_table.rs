@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy)]
 pub enum Properties {
     Parameter,
-    AddressTaken,
+    Borrowed,
 }
 
 pub struct VariableMeta {}

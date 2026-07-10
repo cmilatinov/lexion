@@ -1,34 +1,35 @@
 ---
 source: lexion_lang/tests/backend_regressions.rs
 expression: tac_snapshot(&cfg)
+snapshot_kind: text
 ---
 make_point:
   extern make_point
 
-member_address:
-  fn member_address
+member_place:
+  fn member_place
   $t1 = call make_point
   point = $t1
   store 7 -> point.x
   $t2 = load point.x
   return $t2
-  endfn member_address
+  endfn member_place
 
-index_address:
-  fn index_address
+index_place:
+  fn index_place
   text = "abc"
   $t1 = load text[1]
   store $t1 -> text[0]
   $t2 = load text[0]
   return $t2
-  endfn index_address
+  endfn index_place
 
-reference_address:
-  fn reference_address
+reference_place:
+  fn reference_place
   value = 1
-  $t1 = address_of value
+  $t1 = borrow value
   reference = $t1
   store 2 -> *reference
   $t2 = load *reference
   return $t2
-  endfn reference_address
+  endfn reference_place

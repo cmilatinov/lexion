@@ -588,7 +588,7 @@ fn substitute_instruction_reads(instruction: &mut Instruction, values: &KnownVal
             .as_mut()
             .is_some_and(|value| substitute_operand(value, values)),
         Instruction::FunctionCall(_)
-        | Instruction::AddressOf(_)
+        | Instruction::Borrow(_)
         | Instruction::Load(_)
         | Instruction::Store(_)
         | Instruction::Function(_)

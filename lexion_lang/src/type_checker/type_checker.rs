@@ -447,7 +447,7 @@ impl<'a> TypeChecker<'a> {
 
     fn assign(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &OperatorExpr) -> bool {
         let left = &expr.args[0];
-        if Self::is_identifier_lvalue(left) || Self::is_address_derived_lvalue(left) {
+        if Self::is_identifier_lvalue(left) || Self::is_place_expression(left) {
             true
         } else {
             diag.error(LexionDiagnosticError {
@@ -472,7 +472,7 @@ impl<'a> TypeChecker<'a> {
         )
     }
 
-    fn is_address_derived_lvalue(expr: &SourcedExpr) -> bool {
+    fn is_place_expression(expr: &SourcedExpr) -> bool {
         match expr {
             Sourced {
                 value:

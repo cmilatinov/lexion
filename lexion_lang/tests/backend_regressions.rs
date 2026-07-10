@@ -423,15 +423,15 @@ fn backend_member_expression_liveness_snapshot() {
 }
 
 #[test]
-fn backend_address_expression_tac_snapshot() {
-    let cfg = compile_cfg("backend/tac_address_expressions.lex");
+fn backend_place_expression_tac_snapshot() {
+    let cfg = compile_cfg("backend/tac_place_expressions.lex");
 
     insta::assert_snapshot!(tac_snapshot(&cfg));
 }
 
 #[test]
-fn backend_address_expression_liveness_snapshot() {
-    let output = compile_backend("backend/tac_address_expressions.lex");
+fn backend_place_expression_liveness_snapshot() {
+    let output = compile_backend("backend/tac_place_expressions.lex");
 
     insta::assert_snapshot!(liveness_snapshot(&output));
 }

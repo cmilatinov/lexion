@@ -54,14 +54,14 @@ impl Display for Operand {
 }
 
 #[derive(Debug, Clone)]
-pub enum Address {
+pub enum Place {
     Direct(Operand),
-    Member { base: Box<Address>, member: String },
-    Index { base: Box<Address>, index: Operand },
+    Member { base: Box<Place>, member: String },
+    Index { base: Box<Place>, index: Operand },
     Dereference(Operand),
 }
 
-impl Address {
+impl Place {
     pub fn iter(&self) -> impl Iterator<Item = String> {
         let mut variables = Vec::new();
         self.collect_variables(&mut variables);
@@ -70,9 +70,9 @@ impl Address {
 
     fn collect_variables(&self, variables: &mut Vec<String>) {
         match self {
-            Address::Direct(value) | Address::Dereference(value) => variables.extend(value.iter()),
-            Address::Member { base, .. } => base.collect_variables(variables),
-            Address::Index { base, index } => {
+            Place::Direct(value) | Place::Dereference(value) => variables.extend(value.iter()),
+            Place::Member { base, .. } => base.collect_variables(variables),
+            Place::Index { base, index } => {
                 base.collect_variables(variables);
                 variables.extend(index.iter());
             }
@@ -80,32 +80,32 @@ impl Address {
     }
 }
 
-impl Display for Address {
+impl Display for Place {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Address::Direct(value) => write!(f, "{value}"),
-            Address::Member { base, member } => write!(f, "{base}.{member}"),
-            Address::Index { base, index } => write!(f, "{base}[{index}]"),
-            Address::Dereference(value) => write!(f, "*{value}"),
+            Place::Direct(value) => write!(f, "{value}"),
+            Place::Member { base, member } => write!(f, "{base}.{member}"),
+            Place::Index { base, index } => write!(f, "{base}[{index}]"),
+            Place::Dereference(value) => write!(f, "*{value}"),
         }
     }
 }
 
 #[derive(Clone)]
-pub struct AddressOfInstruction {
+pub struct BorrowInstruction {
     pub target: Operand,
-    pub address: Address,
+    pub place: Place,
 }
 
-impl Display for AddressOfInstruction {
+impl Display for BorrowInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} = address_of {}", self.target, self.address)
+        write!(f, "{} = borrow {}", self.target, self.place)
     }
 }
 
-impl BaseInstruction for AddressOfInstruction {
+impl BaseInstruction for BorrowInstruction {
     fn variables_read(&self) -> HashSet<String> {
-        HashSet::from_iter(self.address.iter())
+        HashSet::from_iter(self.place.iter())
     }
 
     fn variables_written(&self) -> HashSet<String> {
@@ -116,18 +116,18 @@ impl BaseInstruction for AddressOfInstruction {
 #[derive(Clone)]
 pub struct LoadInstruction {
     pub target: Operand,
-    pub address: Address,
+    pub place: Place,
 }
 
 impl Display for LoadInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} = load {}", self.target, self.address)
+        write!(f, "{} = load {}", self.target, self.place)
     }
 }
 
 impl BaseInstruction for LoadInstruction {
     fn variables_read(&self) -> HashSet<String> {
-        HashSet::from_iter(self.address.iter())
+        HashSet::from_iter(self.place.iter())
     }
 
     fn variables_written(&self) -> HashSet<String> {
@@ -137,19 +137,19 @@ impl BaseInstruction for LoadInstruction {
 
 #[derive(Clone)]
 pub struct StoreInstruction {
-    pub address: Address,
+    pub place: Place,
     pub value: Operand,
 }
 
 impl Display for StoreInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "store {} -> {}", self.value, self.address)
+        write!(f, "store {} -> {}", self.value, self.place)
     }
 }
 
 impl BaseInstruction for StoreInstruction {
     fn variables_read(&self) -> HashSet<String> {
-        HashSet::from_iter(self.address.iter().chain(self.value.iter()))
+        HashSet::from_iter(self.place.iter().chain(self.value.iter()))
     }
 }
 
@@ -370,7 +370,7 @@ impl BaseInstruction for ExternInstruction {}
 #[derive(Clone)]
 #[enum_dispatch(BaseInstruction)]
 pub enum Instruction {
-    AddressOf(AddressOfInstruction),
+    Borrow(BorrowInstruction),
     Load(LoadInstruction),
     Store(StoreInstruction),
     Assignment(AssignmentInstruction),
@@ -388,7 +388,7 @@ pub enum Instruction {
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Instruction::AddressOf(address_of) => address_of.fmt(f),
+            Instruction::Borrow(borrow) => borrow.fmt(f),
             Instruction::Load(load) => load.fmt(f),
             Instruction::Store(store) => store.fmt(f),
             Instruction::Assignment(assignment) => assignment.fmt(f),

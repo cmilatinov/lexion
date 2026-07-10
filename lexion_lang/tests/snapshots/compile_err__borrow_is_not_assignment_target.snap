@@ -1,9 +1,10 @@
 ---
 source: lexion_lang/tests/compile_err.rs
 expression: "errors.join(\"\\n\")"
+snapshot_kind: text
 ---
   x lvalue required as left operand of assignment
-   ,-[tests/fixtures/errors/semantics/invalid_address_assignment.lex:3:5]
+   ,-[tests/fixtures/errors/semantics/invalid_borrow_assignment.lex:3:5]
  2 |     let value = 1;
  3 |     &value = 2;
    :     ^^^|^^

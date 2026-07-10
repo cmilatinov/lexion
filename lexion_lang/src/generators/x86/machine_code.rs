@@ -2,8 +2,8 @@ use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
 use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
-    Address, AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph,
-    FunctionCallInstruction, FunctionRange, Instruction, Operand,
+    AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction,
+    FunctionRange, Instruction, Operand, Place,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::X86Target;
@@ -167,8 +167,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         instruction: &Instruction,
     ) -> Result<bool, IcedError> {
         match instruction {
-            Instruction::AddressOf(_) | Instruction::Load(_) | Instruction::Store(_) => {
-                unreachable!("unsupported address instructions are diagnosed before emission")
+            Instruction::Borrow(_) | Instruction::Load(_) | Instruction::Store(_) => {
+                unreachable!("unsupported place instructions are diagnosed before emission")
             }
             Instruction::Assignment(inst) => {
                 self.emit_assignment(assembler, slots, inst)?;
@@ -463,14 +463,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn instruction_source_span(&self, instruction: &Instruction) -> Option<SourceSpan> {
         match instruction {
-            Instruction::AddressOf(inst) => self
+            Instruction::Borrow(inst) => self
                 .operand_source_span(&inst.target)
-                .or_else(|| self.address_source_span(&inst.address)),
+                .or_else(|| self.place_source_span(&inst.place)),
             Instruction::Load(inst) => self
                 .operand_source_span(&inst.target)
-                .or_else(|| self.address_source_span(&inst.address)),
+                .or_else(|| self.place_source_span(&inst.place)),
             Instruction::Store(inst) => self
-                .address_source_span(&inst.address)
+                .place_source_span(&inst.place)
                 .or_else(|| self.operand_source_span(&inst.value)),
             Instruction::Assignment(inst) => self
                 .operand_source_span(&inst.target)
@@ -511,12 +511,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn address_source_span(&self, address: &Address) -> Option<SourceSpan> {
-        match address {
-            Address::Direct(value) | Address::Dereference(value) => self.operand_source_span(value),
-            Address::Member { base, .. } => self.address_source_span(base),
-            Address::Index { base, index } => self
-                .address_source_span(base)
+    fn place_source_span(&self, place: &Place) -> Option<SourceSpan> {
+        match place {
+            Place::Direct(value) | Place::Dereference(value) => self.operand_source_span(value),
+            Place::Member { base, .. } => self.place_source_span(base),
+            Place::Index { base, index } => self
+                .place_source_span(base)
                 .or_else(|| self.operand_source_span(index)),
         }
     }
@@ -535,11 +535,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
         match instruction {
-            Instruction::AddressOf(_) => Some(String::from(
-                "x86 machine-code backend does not support address-taking yet",
+            Instruction::Borrow(_) => Some(String::from(
+                "x86 machine-code backend does not support reference creation yet",
             )),
-            Instruction::Load(inst) => Some(self.unsupported_load_message(&inst.address)),
-            Instruction::Store(inst) => Some(self.unsupported_store_message(&inst.address)),
+            Instruction::Load(inst) => Some(self.unsupported_load_message(&inst.place)),
+            Instruction::Store(inst) => Some(self.unsupported_store_message(&inst.place)),
             Instruction::Assignment(inst) => self
                 .unsupported_assignment_operator_message(inst)
                 .or_else(|| self.unsupported_operand_message(&inst.target))
@@ -575,35 +575,35 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn unsupported_load_message(&self, address: &Address) -> String {
-        match address {
-            Address::Member { .. } => {
+    fn unsupported_load_message(&self, place: &Place) -> String {
+        match place {
+            Place::Member { .. } => {
                 String::from("x86 machine-code backend does not support member access yet")
             }
-            Address::Index { .. } => {
+            Place::Index { .. } => {
                 String::from("x86 machine-code backend does not support indexed access yet")
             }
-            Address::Dereference(_) => String::from(
+            Place::Dereference(_) => String::from(
                 "x86 machine-code backend does not support dereference expressions yet",
             ),
-            Address::Direct(_) => {
+            Place::Direct(_) => {
                 String::from("x86 machine-code backend does not support memory loads yet")
             }
         }
     }
 
-    fn unsupported_store_message(&self, address: &Address) -> String {
-        match address {
-            Address::Member { .. } => String::from(
+    fn unsupported_store_message(&self, place: &Place) -> String {
+        match place {
+            Place::Member { .. } => String::from(
                 "x86 machine-code backend does not support stores through member access yet",
             ),
-            Address::Index { .. } => String::from(
+            Place::Index { .. } => String::from(
                 "x86 machine-code backend does not support stores through indexed access yet",
             ),
-            Address::Dereference(_) => String::from(
+            Place::Dereference(_) => String::from(
                 "x86 machine-code backend does not support stores through dereference expressions yet",
             ),
-            Address::Direct(_) => {
+            Place::Direct(_) => {
                 String::from("x86 machine-code backend does not support memory stores yet")
             }
         }
@@ -1207,16 +1207,16 @@ fn is_integer_bool_scalar(types: &TypeCollection, ty: Index) -> bool {
 
 fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<String>) {
     match instruction {
-        Instruction::AddressOf(inst) => {
+        Instruction::Borrow(inst) => {
             collect_operand(&inst.target, names);
-            collect_address_operands(&inst.address, names);
+            collect_place_operands(&inst.place, names);
         }
         Instruction::Load(inst) => {
             collect_operand(&inst.target, names);
-            collect_address_operands(&inst.address, names);
+            collect_place_operands(&inst.place, names);
         }
         Instruction::Store(inst) => {
-            collect_address_operands(&inst.address, names);
+            collect_place_operands(&inst.place, names);
             collect_operand(&inst.value, names);
         }
         Instruction::Assignment(inst) => {
@@ -1254,12 +1254,12 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
     }
 }
 
-fn collect_address_operands(address: &Address, names: &mut BTreeSet<String>) {
-    match address {
-        Address::Direct(value) | Address::Dereference(value) => collect_operand(value, names),
-        Address::Member { base, .. } => collect_address_operands(base, names),
-        Address::Index { base, index } => {
-            collect_address_operands(base, names);
+fn collect_place_operands(place: &Place, names: &mut BTreeSet<String>) {
+    match place {
+        Place::Direct(value) | Place::Dereference(value) => collect_operand(value, names),
+        Place::Member { base, .. } => collect_place_operands(base, names),
+        Place::Index { base, index } => {
+            collect_place_operands(base, names);
             collect_operand(index, names);
         }
     }

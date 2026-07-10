@@ -1,6 +1,7 @@
 ---
 source: lexion_lang/tests/backend_regressions.rs
 expression: liveness_snapshot(&output)
+snapshot_kind: text
 ---
 function 1..1 $t1 [1:1..1:3] uses [1:2]
 function 1..1 $t2 [1:4..1:6] uses [1:5]

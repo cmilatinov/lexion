@@ -26,5 +26,5 @@ pub const UNARY_PLUS: &str = "+";
 pub const UNARY_MINUS: &str = "-";
 pub const LOGICAL_NOT: &str = "!";
 pub const BITWISE_NOT: &str = "~";
-pub const ADDRESS_OF: &str = "&";
+pub const BORROW: &str = "&";
 pub const DEREFERENCE: &str = "*";
