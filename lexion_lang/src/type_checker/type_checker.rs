@@ -459,7 +459,9 @@ impl<'a> TypeChecker<'a> {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),
                 span: left.span,
-                message: String::from("address-aware TAC assignment lowering is not supported yet"),
+                message: String::from(
+                    "assignment through member, index, or dereference expressions is not supported yet",
+                ),
             });
             false
         } else {

@@ -3,7 +3,7 @@ source: lexion_lang/tests/compile_err.rs
 expression: "errors.join(\"\\n\")"
 snapshot_kind: text
 ---
-  x address-aware TAC assignment lowering is not supported yet
+  x assignment through member, index, or dereference expressions is not supported yet
    ,-[tests/fixtures/errors/semantics/unsupported_address_assignment.lex:7:5]
  6 |     let value = point();
  7 |     value.x = 1;
@@ -12,7 +12,7 @@ snapshot_kind: text
  8 | }
    `----
 
-  x address-aware TAC assignment lowering is not supported yet
+  x assignment through member, index, or dereference expressions is not supported yet
     ,-[tests/fixtures/errors/semantics/unsupported_address_assignment.lex:11:5]
  10 |     let text = "abc";
  11 |     text[0] = text[1];
@@ -21,7 +21,7 @@ snapshot_kind: text
  12 | }
     `----
 
-  x address-aware TAC assignment lowering is not supported yet
+  x assignment through member, index, or dereference expressions is not supported yet
     ,-[tests/fixtures/errors/semantics/unsupported_address_assignment.lex:16:5]
  15 |     let reference = &value;
  16 |     *reference = 2;
