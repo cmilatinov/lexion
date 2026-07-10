@@ -6,9 +6,7 @@ use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 
 use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
-use crate::ast::visitor::{
-    AstNode, AstNodeMut, AstVisitor, AstVisitorAction, NodeType, TraversalType,
-};
+use crate::ast::visitor::{AstNodeMut, AstVisitor, AstVisitorAction, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr,
     Lit, LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
@@ -180,22 +178,16 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let types = types.into_iter().map(|ty| ty.unwrap()).collect::<Vec<_>>();
+        if expr.operator == operators::ASSIGN && !self.assign(diag, expr) {
+            return None;
+        }
         match self
             .operators
             .candidate_definitions(expr.operator, types.as_slice(), self.types)
         {
             Ok(defs) => {
                 if let Some(def) = defs.into_iter().find(|d| d.params.eq(&types)) {
-                    match expr {
-                        OperatorExpr { operator, .. } if (*operator).eq("=") => {
-                            if self.assign(diag, expr) {
-                                Some(def.return_type)
-                            } else {
-                                None
-                            }
-                        }
-                        _ => Some(def.return_type),
-                    }
+                    Some(def.return_type)
                 } else {
                     diag.error(LexionDiagnosticError {
                         src: self.src.clone(),
@@ -455,55 +447,60 @@ impl<'a> TypeChecker<'a> {
 
     fn assign(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &OperatorExpr) -> bool {
         let left = &expr.args[0];
-        if !Self::is_assignable(left) {
+        if Self::is_identifier_lvalue(left) {
+            true
+        } else if Self::is_address_derived_lvalue(left) {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: left.span,
+                message: String::from(
+                    "assignment through member, index, or dereference expressions is not supported yet",
+                ),
+            });
+            false
+        } else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),
                 span: left.span,
                 message: String::from("lvalue required as left operand of assignment"),
             });
             false
-        } else {
-            true
         }
     }
 
-    fn is_assignable(expr: &SourcedExpr) -> bool {
-        let mut result = true;
-        AstVisitor::new().visit_expr(expr, NodeType::Root, &mut |ty, node, _| match (ty, node) {
-            (
-                TraversalType::Postorder,
-                AstNode::Expr(Sourced {
-                    value:
-                        TypedExpr {
-                            expr: Expr::IdentExpr(_) | Expr::MemberExpr(_) | Expr::IndexExpr(_),
-                            ..
-                        },
+    fn is_identifier_lvalue(expr: &SourcedExpr) -> bool {
+        matches!(
+            expr,
+            Sourced {
+                value: TypedExpr {
+                    expr: Expr::IdentExpr(_),
                     ..
-                }),
-            ) => AstVisitorAction::Continue,
-            (
-                TraversalType::Postorder,
-                AstNode::Expr(Sourced {
-                    value:
-                        TypedExpr {
-                            expr: Expr::OperatorExpr(OperatorExpr { operator, args }),
-                            ..
-                        },
-                    ..
-                }),
-            ) if ((*operator).eq(operators::DEREFERENCE)
-                || (*operator).eq(operators::ADDRESS_OF))
-                && args.len() == 1 =>
-            {
-                AstVisitorAction::Continue
+                },
+                ..
             }
-            (TraversalType::Preorder, _) => AstVisitorAction::Continue,
-            _ => {
-                result = false;
-                AstVisitorAction::Terminate
-            }
-        });
-        result
+        )
+    }
+
+    fn is_address_derived_lvalue(expr: &SourcedExpr) -> bool {
+        match expr {
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::MemberExpr(_) | Expr::IndexExpr(_),
+                        ..
+                    },
+                ..
+            } => true,
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::OperatorExpr(OperatorExpr { operator, args }),
+                        ..
+                    },
+                ..
+            } => (*operator).eq(operators::DEREFERENCE) && args.len() == 1,
+            _ => false,
+        }
     }
 
     fn init_operators(&mut self) {
@@ -511,6 +508,7 @@ impl<'a> TypeChecker<'a> {
         let u32 = self.types.u32();
         let f32 = self.types.f32();
         let bool = self.types.bool();
+        let char = self.types.char();
 
         // Unary plus / minus operators
         self.operators.add_definition_multiple(
@@ -620,6 +618,14 @@ impl<'a> TypeChecker<'a> {
                     is_vararg: false,
                 },
             ],
+        );
+        self.operators.add_definition_multiple(
+            &["==", "!="],
+            &[FunctionType {
+                params: vec![char, char],
+                return_type: bool,
+                is_vararg: false,
+            }],
         );
 
         // Logical operators

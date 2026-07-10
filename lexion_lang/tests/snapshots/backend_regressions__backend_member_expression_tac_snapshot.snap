@@ -1,0 +1,17 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+get_x:
+  fn get_x
+  $t1 = point . x
+  selected = $t1
+  return selected
+  endfn get_x
+
+tuple_first:
+  fn tuple_first
+  $t1 = pair . 0
+  return $t1
+  endfn tuple_first
