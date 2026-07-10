@@ -99,7 +99,7 @@ impl Layout for MemberLayout {
 pub struct MemoryLayout {
     align: Align,
     next: usize,
-    _members: Vec<MemberLayout>,
+    members: Vec<MemberLayout>,
 }
 
 impl MemoryLayout {
@@ -107,8 +107,12 @@ impl MemoryLayout {
         Self {
             align: Align::none(),
             next: 0,
-            _members: vec![],
+            members: vec![],
         }
+    }
+
+    pub fn members(&self) -> &[MemberLayout] {
+        &self.members
     }
 }
 
@@ -160,7 +164,7 @@ impl MemoryLayoutBuilder for CMemoryLayoutBuilder {
         MemoryLayout {
             align: self.align,
             next: self.next,
-            _members: self.members,
+            members: self.members,
         }
     }
 }

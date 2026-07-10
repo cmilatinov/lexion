@@ -1,0 +1,12 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_index.lex\").join(\"\\n\")"
+---
+  x x86 backend does not support indexed access yet
+   ,-[tests/fixtures/backend/x86_unsupported_index.lex:2:12]
+ 1 | fn first() -> char {
+ 2 |     return "abc"[0];
+   :            ^^^^|^^^
+   :                `-- here
+ 3 | }
+   `----
