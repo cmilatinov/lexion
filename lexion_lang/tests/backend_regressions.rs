@@ -400,3 +400,24 @@ fn backend_ternary_false_abi_register_allocation_snapshot() {
 
     insta::assert_snapshot!(abi_allocation_snapshot(output));
 }
+
+#[test]
+fn backend_member_expression_tac_snapshot() {
+    let cfg = compile_cfg("backend/tac_member_expressions.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}
+
+#[test]
+fn backend_member_expression_cfg_snapshot() {
+    let cfg = compile_cfg("backend/tac_member_expressions.lex");
+
+    insta::assert_snapshot!(cfg_snapshot(&cfg));
+}
+
+#[test]
+fn backend_member_expression_liveness_snapshot() {
+    let output = compile_backend("backend/tac_member_expressions.lex");
+
+    insta::assert_snapshot!(liveness_snapshot(&output));
+}

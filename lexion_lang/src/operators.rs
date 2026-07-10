@@ -21,6 +21,7 @@ pub const DIVIDE: &str = "/";
 pub const REMAINDER: &str = "%";
 pub const TYPE_CAST: &str = "type()";
 pub const INDEX: &str = "[]";
+pub const MEMBER: &str = ".";
 pub const UNARY_PLUS: &str = "+";
 pub const UNARY_MINUS: &str = "-";
 pub const LOGICAL_NOT: &str = "!";

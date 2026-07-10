@@ -293,6 +293,8 @@ fn call_branch_barrier_cfg() -> ControlFlowGraph {
         .push(instruction(Instruction::FunctionCall(
             FunctionCallInstruction {
                 function: String::from("touch"),
+                function_type: None,
+                is_direct_function: true,
                 return_target: None,
             },
         )));
