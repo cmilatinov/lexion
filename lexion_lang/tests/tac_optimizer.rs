@@ -3,7 +3,7 @@ use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction,
     FunctionCallInstruction, Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand,
-    ReturnInstruction,
+    Place, ReturnInstruction, StoreInstruction,
 };
 use lexion_lang::generators::tac::{
     analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
@@ -243,6 +243,30 @@ fn propagation_algebra_cfg() -> ControlFlowGraph {
     cfg
 }
 
+fn aliased_store_cfg() -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let start = cfg.block(String::from("main"), true);
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Copy(CopyInstruction {
+            dst: Operand::Variable(String::from("value")),
+            src: Operand::Literal(Lit::Integer(1)),
+        })));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Store(StoreInstruction {
+            place: Place::Dereference(Operand::Variable(String::from("reference"))),
+            value: Operand::Literal(Lit::Integer(2)),
+        })));
+    cfg[start]
+        .instructions
+        .push(instruction(Instruction::Return(ReturnInstruction {
+            value: Some(Operand::Variable(String::from("value"))),
+        })));
+    cfg.end_function();
+    cfg
+}
+
 fn branch_inversion_cfg() -> ControlFlowGraph {
     let mut cfg = ControlFlowGraph::new();
     let start = cfg.block(String::from("main"), true);
@@ -375,6 +399,29 @@ fn tac_optimizer_propagates_values_and_simplifies_algebra() {
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
 
     insta::assert_snapshot!(optimized_snapshot(&optimized));
+}
+
+#[test]
+fn tac_optimizer_invalidates_known_values_after_aliased_store() {
+    let mut diagnostics = LexionDiagnosticList::default();
+    let optimized = CodeOptimizerTac::new(aliased_store_cfg())
+        .exec(
+            &mut diagnostics,
+            TacOptimizerOptions {
+                value_propagation: true,
+                ..TacOptimizerOptions::none()
+            },
+        )
+        .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    let block = optimized.node_indices().next().unwrap();
+    let Instruction::Return(return_) = &optimized[block].instructions[2].instruction else {
+        panic!("expected return instruction");
+    };
+
+    assert!(matches!(
+        return_.value,
+        Some(Operand::Variable(ref name)) if name == "value"
+    ));
 }
 
 #[test]

@@ -140,7 +140,10 @@ impl CodeOptimizerTac {
                 changed |= substitute_instruction_reads(&mut inst.instruction, &values);
                 changed |= simplify_instruction(&mut inst.instruction, target_word_bits);
 
-                if matches!(inst.instruction, Instruction::FunctionCall(_)) {
+                if matches!(
+                    inst.instruction,
+                    Instruction::FunctionCall(_) | Instruction::Store(_)
+                ) {
                     values.clear();
                 } else {
                     let written = inst.instruction.variables_written();
