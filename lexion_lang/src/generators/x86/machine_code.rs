@@ -106,7 +106,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> Result<(), IcedError> {
         let slots = self.stack_slots(range);
         let stack_size = align_to(
-            slots.len() * 4,
+            slots.values().copied().max().unwrap_or(0),
             self.target.calling_convention().stack_alignment(),
         );
         let return_register = self
@@ -167,16 +167,30 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         instruction: &Instruction,
     ) -> Result<bool, IcedError> {
         match instruction {
-            Instruction::Borrow(_) | Instruction::Load(_) | Instruction::Store(_) => {
-                unreachable!("unsupported place instructions are diagnosed before emission")
+            Instruction::Borrow(inst) => {
+                self.emit_borrow(assembler, slots, inst)?;
+                Ok(false)
+            }
+            Instruction::Load(inst) => {
+                self.emit_load(assembler, slots, inst)?;
+                Ok(false)
+            }
+            Instruction::Store(inst) => {
+                self.emit_store(assembler, slots, inst)?;
+                Ok(false)
             }
             Instruction::Assignment(inst) => {
                 self.emit_assignment(assembler, slots, inst)?;
                 Ok(false)
             }
             Instruction::Copy(inst) => {
-                load_operand(assembler, slots, &inst.src, eax)?;
-                store_operand(assembler, slots, &inst.dst, eax)?;
+                if self.operand_is_reference(&inst.src) || self.operand_is_reference(&inst.dst) {
+                    load_reference_operand(assembler, slots, &inst.src, rax)?;
+                    store_reference_operand(assembler, slots, &inst.dst, rax)?;
+                } else {
+                    load_operand(assembler, slots, &inst.src, eax)?;
+                    store_operand(assembler, slots, &inst.dst, eax)?;
+                }
                 Ok(false)
             }
             Instruction::ConditionalJump(inst) => {
@@ -535,19 +549,32 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
         match instruction {
-            Instruction::Borrow(_) => Some(String::from(
-                "x86 machine-code backend does not support reference creation yet",
-            )),
-            Instruction::Load(inst) => Some(self.unsupported_load_message(&inst.place)),
-            Instruction::Store(inst) => Some(self.unsupported_store_message(&inst.place)),
+            Instruction::Borrow(inst) => self
+                .unsupported_borrow_message(&inst.place)
+                .or_else(|| self.unsupported_operand_message(&inst.target)),
+            Instruction::Load(inst) => self
+                .unsupported_load_message(&inst.place)
+                .or_else(|| self.unsupported_place_operand_message(&inst.place))
+                .or_else(|| self.unsupported_operand_message(&inst.target)),
+            Instruction::Store(inst) => self
+                .unsupported_store_message(&inst.place)
+                .or_else(|| self.unsupported_place_operand_message(&inst.place))
+                .or_else(|| self.unsupported_operand_message(&inst.value)),
             Instruction::Assignment(inst) => self
                 .unsupported_assignment_operator_message(inst)
+                .or_else(|| self.unsupported_reference_operation_message(&inst.target))
                 .or_else(|| self.unsupported_operand_message(&inst.target))
+                .or_else(|| {
+                    inst.left
+                        .as_ref()
+                        .and_then(|left| self.unsupported_reference_operation_message(left))
+                })
                 .or_else(|| {
                     inst.left
                         .as_ref()
                         .and_then(|left| self.unsupported_operand_message(left))
                 })
+                .or_else(|| self.unsupported_reference_operation_message(&inst.right))
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
             Instruction::Extern(inst) => Some(format!(
                 "x86 machine-code backend does not support extern declarations yet: {}",
@@ -559,7 +586,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
-                .and_then(|left| self.unsupported_operand_message(left))
+                .and_then(|left| self.unsupported_reference_operation_message(left))
+                .or_else(|| {
+                    inst.left
+                        .as_ref()
+                        .and_then(|left| self.unsupported_operand_message(left))
+                })
+                .or_else(|| self.unsupported_reference_operation_message(&inst.right))
                 .or_else(|| self.unsupported_operand_message(&inst.right)),
             Instruction::Parameter(inst) => self.unsupported_operand_message(&inst.param),
             Instruction::Return(inst) => inst
@@ -575,38 +608,130 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn unsupported_load_message(&self, place: &Place) -> String {
+    fn unsupported_borrow_message(&self, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => {
-                String::from("x86 machine-code backend does not support member access yet")
-            }
-            Place::Index { .. } => {
-                String::from("x86 machine-code backend does not support indexed access yet")
-            }
-            Place::Dereference(_) => String::from(
-                "x86 machine-code backend does not support dereference expressions yet",
-            ),
-            Place::Direct(_) => {
-                String::from("x86 machine-code backend does not support memory loads yet")
+            Place::Direct(value) if operand_name(value).is_some() => None,
+            Place::Direct(_) => Some(String::from(
+                "x86 machine-code backend can only borrow stored values",
+            )),
+            Place::Member { .. } | Place::Index { .. } | Place::Dereference(_) => {
+                Some(String::from(
+                    "x86 machine-code backend does not support references to projected places yet",
+                ))
             }
         }
     }
 
-    fn unsupported_store_message(&self, place: &Place) -> String {
-        match place {
-            Place::Member { .. } => String::from(
-                "x86 machine-code backend does not support stores through member access yet",
-            ),
-            Place::Index { .. } => String::from(
-                "x86 machine-code backend does not support stores through indexed access yet",
-            ),
-            Place::Dereference(_) => String::from(
-                "x86 machine-code backend does not support stores through dereference expressions yet",
-            ),
-            Place::Direct(_) => {
-                String::from("x86 machine-code backend does not support memory stores yet")
+    fn emit_borrow(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        inst: &crate::generators::tac::instructions::BorrowInstruction,
+    ) -> Result<(), IcedError> {
+        let Place::Direct(value) = &inst.place else {
+            unreachable!("unsupported borrow places are diagnosed before emission")
+        };
+        assembler.lea(rax, qword_ptr(rbp - stack_slot_offset(slots, value)))?;
+        store_reference_operand(assembler, slots, &inst.target, rax)
+    }
+
+    fn emit_load(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        inst: &crate::generators::tac::instructions::LoadInstruction,
+    ) -> Result<(), IcedError> {
+        match &inst.place {
+            Place::Direct(value) => load_operand(assembler, slots, value, eax)?,
+            Place::Dereference(reference) => {
+                load_reference_operand(assembler, slots, reference, rax)?;
+                assembler.mov(eax, dword_ptr(rax))?;
+            }
+            Place::Member { .. } | Place::Index { .. } => {
+                unreachable!("unsupported load places are diagnosed before emission")
             }
         }
+        store_operand(assembler, slots, &inst.target, eax)
+    }
+
+    fn emit_store(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        inst: &crate::generators::tac::instructions::StoreInstruction,
+    ) -> Result<(), IcedError> {
+        match &inst.place {
+            Place::Direct(target) => {
+                load_operand(assembler, slots, &inst.value, eax)?;
+                store_operand(assembler, slots, target, eax)
+            }
+            Place::Dereference(reference) => {
+                load_reference_operand(assembler, slots, reference, rax)?;
+                load_operand(assembler, slots, &inst.value, ecx)?;
+                assembler.mov(dword_ptr(rax), ecx)
+            }
+            Place::Member { .. } | Place::Index { .. } => {
+                unreachable!("unsupported store places are diagnosed before emission")
+            }
+        }
+    }
+
+    fn operand_is_reference(&self, operand: &Operand) -> bool {
+        self.operand_type(operand).is_some_and(|ty| {
+            matches!(
+                self.types.get(self.types.canonicalize(ty)),
+                Some(Type::RefType(_))
+            )
+        })
+    }
+
+    fn unsupported_load_message(&self, place: &Place) -> Option<String> {
+        match place {
+            Place::Member { .. } => Some(String::from(
+                "x86 machine-code backend does not support member access yet",
+            )),
+            Place::Index { .. } => Some(String::from(
+                "x86 machine-code backend does not support indexed access yet",
+            )),
+            Place::Dereference(_) | Place::Direct(_) => None,
+        }
+    }
+
+    fn unsupported_store_message(&self, place: &Place) -> Option<String> {
+        match place {
+            Place::Member { .. } => Some(String::from(
+                "x86 machine-code backend does not support stores through member access yet",
+            )),
+            Place::Index { .. } => Some(String::from(
+                "x86 machine-code backend does not support stores through indexed access yet",
+            )),
+            Place::Dereference(_) | Place::Direct(_) => None,
+        }
+    }
+
+    fn unsupported_place_operand_message(&self, place: &Place) -> Option<String> {
+        match place {
+            Place::Direct(value) | Place::Dereference(value) => {
+                self.unsupported_operand_message(value)
+            }
+            Place::Member { base, .. } => self.unsupported_place_operand_message(base),
+            Place::Index { base, index } => self
+                .unsupported_place_operand_message(base)
+                .or_else(|| self.unsupported_operand_message(index)),
+        }
+    }
+
+    fn unsupported_reference_abi_message(&self, ty: Index) -> Option<String> {
+        let ty = self.types.canonicalize(ty);
+        if matches!(self.types.get(ty), Some(Type::RefType(_)))
+            && self.unsupported_type_message(ty).is_none()
+        {
+            return Some(format!(
+                "x86 machine-code backend does not support reference parameters or returns yet: {}",
+                self.types.to_string_index(ty)
+            ));
+        }
+        None
     }
 
     fn unsupported_assignment_operator_message(
@@ -646,6 +771,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
+    fn unsupported_reference_operation_message(&self, operand: &Operand) -> Option<String> {
+        self.operand_is_reference(operand).then(|| {
+            format!(
+                "x86 machine-code backend does not support operations on reference values yet: {operand}"
+            )
+        })
+    }
+
     fn unsupported_function_signature_message(&self, function: &str) -> Option<String> {
         let signature = self.function_signature(function)?;
         if signature.is_vararg {
@@ -656,18 +789,29 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| self.unsupported_type_message(*ty))
-            .or_else(|| self.unsupported_type_message(signature.return_type))
+            .find_map(|ty| {
+                self.unsupported_type_message(*ty)
+                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            })
+            .or_else(|| {
+                self.unsupported_type_message(signature.return_type)
+                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+            })
     }
 
     fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
         let signature = self.function_call_signature(inst)?;
-        signature.is_vararg.then(|| {
-            format!(
+        if signature.is_vararg {
+            return Some(format!(
                 "x86 machine-code backend does not support calls to vararg functions yet: {}",
                 inst.function
-            )
-        })
+            ));
+        }
+        signature
+            .params
+            .iter()
+            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
+            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -725,8 +869,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     "x86 machine-code backend does not support string values yet: {name}"
                 ))
             }
+            Type::RefType(ref_ty) if self.reference_target_supported(ref_ty.to) => None,
             Type::RefType(_) => Some(format!(
-                "x86 machine-code backend does not support reference values yet: {name}"
+                "x86 machine-code backend does not support references to `{name}` values yet"
             )),
             Type::FunctionType(_) => Some(format!(
                 "x86 machine-code backend does not support function values yet: {name}"
@@ -735,6 +880,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 None
             }
         }
+    }
+
+    fn reference_target_supported(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::PrimitiveType(
+                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
+            ))
+        )
     }
 
     fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
@@ -770,11 +924,31 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 collect_instruction_operands(&inst.instruction, &mut names);
             }
         }
+        let mut offset = 0;
         names
             .into_iter()
-            .enumerate()
-            .map(|(idx, name)| (name, (idx + 1) * 4))
+            .map(|name| {
+                let size = if self.symbol_is_reference(&name) {
+                    8
+                } else {
+                    4
+                };
+                offset = align_to(offset, size);
+                offset += size;
+                (name, offset)
+            })
             .collect()
+    }
+
+    fn symbol_is_reference(&self, name: &str) -> bool {
+        self.symbol_entry(name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| {
+                matches!(
+                    self.types.get(self.types.canonicalize(ty)),
+                    Some(Type::RefType(_))
+                )
+            })
     }
 
     fn unsupported_cast_message(&self, inst: &AssignmentInstruction) -> Option<String> {
@@ -919,6 +1093,35 @@ fn store_operand(
 ) -> Result<(), IcedError> {
     if matches!(operand, Operand::Variable(_) | Operand::Temporary(_)) {
         assembler.mov(stack_value(slots, operand), register)?;
+    }
+    Ok(())
+}
+
+fn load_reference_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    register: AsmRegister64,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.mov(register, reference_stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xor(register, register),
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("references must be stored in variables or temporaries")
+        }
+    }
+}
+
+fn store_reference_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    register: AsmRegister64,
+) -> Result<(), IcedError> {
+    if matches!(operand, Operand::Variable(_) | Operand::Temporary(_)) {
+        assembler.mov(reference_stack_value(slots, operand), register)?;
     }
     Ok(())
 }
@@ -1124,6 +1327,14 @@ fn asm_register32(register: Register) -> AsmRegister32 {
 }
 
 fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {
+    dword_ptr(rbp - stack_slot_offset(slots, operand))
+}
+
+fn reference_stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {
+    qword_ptr(rbp - stack_slot_offset(slots, operand))
+}
+
+fn stack_slot_offset(slots: &BTreeMap<String, usize>, operand: &Operand) -> i32 {
     let name = match operand {
         Operand::Variable(name) => name.clone(),
         Operand::Temporary(label) => label.to_string(),
@@ -1132,7 +1343,7 @@ fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryO
     let offset = slots
         .get(name.as_str())
         .unwrap_or_else(|| panic!("missing stack slot for {name}"));
-    dword_ptr(rbp - *offset as i32)
+    *offset as i32
 }
 
 fn operand_name(operand: &Operand) -> Option<String> {

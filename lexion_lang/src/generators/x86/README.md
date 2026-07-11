@@ -17,9 +17,9 @@ registers in instruction selection.
 ## Unsupported Until Later
 
 - Floating-point values and operations.
-- Structs, tuples, strings, references, and other aggregate or memory values.
+- Structs, tuples, strings, and other aggregate values.
 - Calls, extern functions, varargs, and ABI argument passing in generated code.
-- Heap allocation and reference operations.
+- Heap allocation, projected-place references, and reference parameters or returns.
 - Multi-function executable output.
 
 Unsupported forms should fail before emission with a diagnostic rather than
