@@ -205,12 +205,12 @@ fn x86_reports_unsupported_indexed_access() {
 }
 
 #[test]
-fn x86_reports_unsupported_address_taking() {
+fn x86_reports_unsupported_reference_creation() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_reference.lex").join("\n"));
 }
 
 #[test]
-fn x86_reports_unsupported_pointer_dereference() {
+fn x86_reports_unsupported_reference_dereference() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_dereference.lex").join("\n"));
 }
 
@@ -234,16 +234,16 @@ fn x86_reports_unsupported_zero_fixed_vararg_calls() {
 }
 
 #[test]
-fn x86_reports_unsupported_function_pointer_values() {
+fn x86_reports_unsupported_function_values() {
     insta::assert_snapshot!(
-        compile_x86_error("backend/x86_unsupported_function_pointer.lex").join("\n")
+        compile_x86_error("backend/x86_unsupported_function_value.lex").join("\n")
     );
 }
 
 #[test]
-fn x86_reports_unsupported_shadowed_function_pointer_calls() {
+fn x86_reports_unsupported_shadowed_function_value_calls() {
     insta::assert_snapshot!(compile_x86_error(
-        "backend/x86_unsupported_shadowed_function_pointer.lex"
+        "backend/x86_unsupported_shadowed_function_value.lex"
     )
     .join("\n"));
 }

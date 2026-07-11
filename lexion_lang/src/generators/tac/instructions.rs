@@ -53,6 +53,106 @@ impl Display for Operand {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Place {
+    Direct(Operand),
+    Member { base: Box<Place>, member: String },
+    Index { base: Box<Place>, index: Operand },
+    Dereference(Operand),
+}
+
+impl Place {
+    pub fn iter(&self) -> impl Iterator<Item = String> {
+        let mut variables = Vec::new();
+        self.collect_variables(&mut variables);
+        variables.into_iter()
+    }
+
+    fn collect_variables(&self, variables: &mut Vec<String>) {
+        match self {
+            Place::Direct(value) | Place::Dereference(value) => variables.extend(value.iter()),
+            Place::Member { base, .. } => base.collect_variables(variables),
+            Place::Index { base, index } => {
+                base.collect_variables(variables);
+                variables.extend(index.iter());
+            }
+        }
+    }
+}
+
+impl Display for Place {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Place::Direct(value) => write!(f, "{value}"),
+            Place::Member { base, member } => write!(f, "{base}.{member}"),
+            Place::Index { base, index } => write!(f, "{base}[{index}]"),
+            Place::Dereference(value) => write!(f, "*{value}"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct BorrowInstruction {
+    pub target: Operand,
+    pub place: Place,
+}
+
+impl Display for BorrowInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} = borrow {}", self.target, self.place)
+    }
+}
+
+impl BaseInstruction for BorrowInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.place.iter())
+    }
+
+    fn variables_written(&self) -> HashSet<String> {
+        HashSet::from_iter(self.target.iter())
+    }
+}
+
+#[derive(Clone)]
+pub struct LoadInstruction {
+    pub target: Operand,
+    pub place: Place,
+}
+
+impl Display for LoadInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} = load {}", self.target, self.place)
+    }
+}
+
+impl BaseInstruction for LoadInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.place.iter())
+    }
+
+    fn variables_written(&self) -> HashSet<String> {
+        HashSet::from_iter(self.target.iter())
+    }
+}
+
+#[derive(Clone)]
+pub struct StoreInstruction {
+    pub place: Place,
+    pub value: Operand,
+}
+
+impl Display for StoreInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "store {} -> {}", self.value, self.place)
+    }
+}
+
+impl BaseInstruction for StoreInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.place.iter().chain(self.value.iter()))
+    }
+}
+
 #[derive(Clone)]
 pub struct AssignmentInstruction {
     pub target: Operand,
@@ -270,6 +370,9 @@ impl BaseInstruction for ExternInstruction {}
 #[derive(Clone)]
 #[enum_dispatch(BaseInstruction)]
 pub enum Instruction {
+    Borrow(BorrowInstruction),
+    Load(LoadInstruction),
+    Store(StoreInstruction),
     Assignment(AssignmentInstruction),
     Copy(CopyInstruction),
     ConditionalJump(ConditionalJumpInstruction),
@@ -285,6 +388,9 @@ pub enum Instruction {
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Instruction::Borrow(borrow) => borrow.fmt(f),
+            Instruction::Load(load) => load.fmt(f),
+            Instruction::Store(store) => store.fmt(f),
             Instruction::Assignment(assignment) => assignment.fmt(f),
             Instruction::Copy(copy) => copy.fmt(f),
             Instruction::ConditionalJump(conditional_jump) => conditional_jump.fmt(f),

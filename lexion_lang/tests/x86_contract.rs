@@ -258,7 +258,7 @@ fn system_v64_marks_exact_call_clobbered_registers() {
 }
 
 #[test]
-fn backend_value_layouts_define_scalar_and_pointer_storage() {
+fn backend_value_layouts_define_scalar_and_reference_storage() {
     let mut types = TypeCollection::default();
     let i32_ref = types.reference(types.i32());
     let function = types.insert(&Type::FunctionType(FunctionType {

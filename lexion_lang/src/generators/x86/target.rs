@@ -4,7 +4,7 @@ use crate::generators::x86::SystemV64;
 pub enum X86MvpUnsupported {
     FloatingPoint,
     Aggregates,
-    Pointers,
+    References,
     FunctionCalls,
     Externs,
     Varargs,

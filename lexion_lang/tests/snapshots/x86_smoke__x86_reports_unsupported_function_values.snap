@@ -1,9 +1,10 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-expression: "compile_x86_error(\"backend/x86_unsupported_function_pointer.lex\").join(\"\\n\")"
+expression: "compile_x86_error(\"backend/x86_unsupported_function_value.lex\").join(\"\\n\")"
+snapshot_kind: text
 ---
   x x86 backend does not support function values yet: fn (i32) -> i32
-   ,-[tests/fixtures/backend/x86_unsupported_function_pointer.lex:6:9]
+   ,-[tests/fixtures/backend/x86_unsupported_function_value.lex:6:9]
  5 | fn main() -> i32 {
  6 |     let callback = add_one;
    :         ^^^^|^^^
@@ -12,7 +13,7 @@ expression: "compile_x86_error(\"backend/x86_unsupported_function_pointer.lex\")
    `----
 
   x x86 backend does not support indirect calls through function values yet: callback
-   ,-[tests/fixtures/backend/x86_unsupported_function_pointer.lex:7:12]
+   ,-[tests/fixtures/backend/x86_unsupported_function_value.lex:7:12]
  6 |     let callback = add_one;
  7 |     return callback(1);
    :            ^^^^^|^^^^^
