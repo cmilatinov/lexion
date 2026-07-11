@@ -247,3 +247,12 @@ fn x86_elf_function_call_executable_runs_on_linux_x86_64() {
         Some(9)
     );
 }
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_local_reference_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_reference_dereference.lex"),
+        Some(2)
+    );
+}

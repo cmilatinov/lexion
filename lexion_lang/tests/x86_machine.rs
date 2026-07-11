@@ -256,10 +256,17 @@ fn x86_machine_reports_unsupported_call_reference_arg() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_reference_dereference() {
-    insta::assert_snapshot!(
-        compile_machine_code_error("backend/x86_unsupported_dereference.lex").join("\n")
-    );
+fn x86_machine_code_reference_borrow() {
+    let code = compile_machine_code("backend/x86_reference_borrow.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_reference_dereference() {
+    let code = compile_machine_code("backend/x86_reference_dereference.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
 }
 
 #[test]

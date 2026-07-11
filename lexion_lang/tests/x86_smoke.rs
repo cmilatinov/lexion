@@ -205,13 +205,20 @@ fn x86_reports_unsupported_indexed_access() {
 }
 
 #[test]
-fn x86_reports_unsupported_reference_creation() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_reference.lex").join("\n"));
+fn x86_smoke_reference_borrow() {
+    insta::assert_snapshot!(compile_x86("backend/x86_reference_borrow.lex"));
 }
 
 #[test]
-fn x86_reports_unsupported_reference_dereference() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_dereference.lex").join("\n"));
+fn x86_reports_unsupported_call_reference_arg() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_call_reference_arg.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_smoke_reference_dereference() {
+    insta::assert_snapshot!(compile_x86("backend/x86_reference_dereference.lex"));
 }
 
 #[test]
