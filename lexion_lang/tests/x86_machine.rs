@@ -247,11 +247,17 @@ fn x86_machine_reports_unsupported_call_struct_arg() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_call_reference_arg() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_call_reference_arg.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_reference_call() {
+    let code = compile_machine_code("backend/x86_reference_call.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_reference_stack_arguments() {
+    let code = compile_machine_code("backend/x86_reference_stack_arguments.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
 }
 
 #[test]

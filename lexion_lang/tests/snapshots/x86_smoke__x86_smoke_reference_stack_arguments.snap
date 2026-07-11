@@ -1,0 +1,81 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_reference_stack_arguments.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global select_last
+select_last:
+# fn select_last(
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov rax, QWORD PTR [rbp+16]
+  mov QWORD PTR [rbp-8], rax
+#     return g;
+  mov rax, QWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+#     let value = 1;
+  mov eax, 1
+  mov DWORD PTR [rbp-48], eax
+#     let reference = &value;
+  lea rax, [rbp-48]
+  mov QWORD PTR [rbp-16], rax
+  mov rax, QWORD PTR [rbp-16]
+  mov QWORD PTR [rbp-32], rax
+#     let returned = select_last(
+#         reference,
+#         reference,
+#         reference,
+#         reference,
+#         reference,
+#         reference,
+#         reference
+#     );
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  pop rdi
+  pop rsi
+  pop rdx
+  pop rcx
+  pop r8
+  pop r9
+  sub rsp, 8
+  mov rax, QWORD PTR [rsp+8]
+  mov QWORD PTR [rsp], rax
+  call select_last
+  add rsp, 16
+  mov QWORD PTR [rbp-24], rax
+#     let returned = select_last(
+  mov rax, QWORD PTR [rbp-24]
+  mov QWORD PTR [rbp-40], rax
+#     *returned = 6;
+  mov ecx, 6
+  mov rax, QWORD PTR [rbp-40]
+  mov DWORD PTR [rax], ecx
+#     return value;
+  mov eax, DWORD PTR [rbp-48]
+  add rsp, 48
+  pop rbp
+  ret

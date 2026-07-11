@@ -20,7 +20,7 @@ registers in instruction selection.
 
 - Structs, tuples, strings, and other aggregate values.
 - Extern calls, varargs, and aggregate ABI argument passing in generated code.
-- Heap allocation, projected-place references, and reference parameters or returns.
+- Heap allocation and projected-place references.
 - Multi-function executable output.
 
 Unsupported forms should fail before emission with a diagnostic rather than

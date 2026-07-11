@@ -1,0 +1,54 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+main=0x0019
+select_last=0x0000
+
+bytes:
+55 48 89 E5 48 83 EC 10 48 8B 45 10 48 89 45 F8 48 8B 45 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 30 B8 01 00 00 00 89 45 DC 48 8D 45 DC 48 89 45 F8 48 8B 45 F8 48 89 45 E8 48 83 EC 08 48 8B 45 E8 50 48 8B 7D E8 48 8B 75 E8 48 8B 55 E8 48 8B 4D E8 4C 8B 45 E8 4C 8B 4D E8 E8 A1 FF FF FF 48 83 C4 10 48 89 45 F0 48 8B 45 F0 48 89 45 E0 48 8B 45 E0 B9 06 00 00 00 89 08 8B 45 DC 48 89 EC 5D C3
+
+disassembly:
+select_last:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov rax,[rbp+10h]
+000C: mov [rbp-8],rax
+0010: mov rax,[rbp-8]
+0014: mov rsp,rbp
+0017: pop rbp
+0018: ret
+main:
+0019: push rbp
+001A: mov rbp,rsp
+001D: sub rsp,30h
+0021: mov eax,1
+0026: mov [rbp-24h],eax
+0029: lea rax,[rbp-24h]
+002D: mov [rbp-8],rax
+0031: mov rax,[rbp-8]
+0035: mov [rbp-18h],rax
+0039: sub rsp,8
+003D: mov rax,[rbp-18h]
+0041: push rax
+0042: mov rdi,[rbp-18h]
+0046: mov rsi,[rbp-18h]
+004A: mov rdx,[rbp-18h]
+004E: mov rcx,[rbp-18h]
+0052: mov r8,[rbp-18h]
+0056: mov r9,[rbp-18h]
+005A: call 0 <select_last>
+005F: add rsp,10h
+0063: mov [rbp-10h],rax
+0067: mov rax,[rbp-10h]
+006B: mov [rbp-20h],rax
+006F: mov rax,[rbp-20h]
+0073: mov ecx,6
+0078: mov [rax],ecx
+007A: mov eax,[rbp-24h]
+007D: mov rsp,rbp
+0080: pop rbp
+0081: ret

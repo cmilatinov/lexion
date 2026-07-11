@@ -221,7 +221,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    if self.operand_is_f32(context.name, value) {
+                    if self.operand_is_reference(context.name, value) {
+                        load_reference_operand(
+                            assembler,
+                            slots,
+                            value,
+                            asm_register64(context.return_register),
+                        )?;
+                    } else if self.operand_is_f32(context.name, value) {
                         load_float_operand(
                             assembler,
                             slots,
@@ -494,7 +501,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let stack_args = params
             .iter()
             .zip(locations.iter())
-            .filter_map(|(param, location)| stack_offset(location).map(|offset| (*param, offset)))
+            .zip(signature.params.iter())
+            .filter_map(|((param, location), ty)| {
+                stack_offset(location).map(|offset| (*param, offset, *ty))
+            })
             .collect::<Vec<_>>();
         let fixed_stack_bytes = self.target.calling_convention().fixed_stack_bytes();
         let stack_padding = call_stack_padding(
@@ -507,8 +517,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             assembler.sub(rsp, reserved_stack_bytes as i32)?;
         }
 
-        for (param, _) in stack_args.iter().rev() {
-            if self.operand_is_f32(function, param) {
+        for (param, _, ty) in stack_args.iter().rev() {
+            if self.type_is_reference(*ty) {
+                load_reference_operand(assembler, slots, param, rax)?;
+            } else if self.operand_is_f32(function, param) {
                 load_float_operand(assembler, slots, param, xmm0)?;
                 assembler.movd(eax, xmm0)?;
             } else {
@@ -516,10 +528,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             assembler.push(rax)?;
         }
-        for (param, location) in params.iter().zip(locations.iter()) {
+        for ((param, location), ty) in params
+            .iter()
+            .zip(locations.iter())
+            .zip(signature.params.iter())
+        {
             if let Some(register) = outgoing_register(location) {
                 if is_xmm_register(register) {
                     load_float_operand(assembler, slots, param, asm_register_xmm(register))?;
+                } else if self.type_is_reference(*ty) {
+                    load_reference_operand(assembler, slots, param, asm_register64(register))?;
                 } else {
                     load_operand(assembler, slots, param, asm_register32(register))?;
                 }
@@ -534,7 +552,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             let register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            if self.operand_is_f32(function, return_target) {
+            if self.operand_is_reference(function, return_target) {
+                store_reference_operand(assembler, slots, return_target, asm_register64(register))?;
+            } else if self.operand_is_f32(function, return_target) {
                 store_float_operand(assembler, slots, return_target, asm_register_xmm(register))?;
             } else {
                 store_operand(assembler, slots, return_target, asm_register32(register))?;
@@ -573,6 +593,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         let incoming_offset = incoming_stack_arg_offset(stack_offset);
                         assembler.movss(xmm15, dword_ptr(rbp + incoming_offset as i32))?;
                         assembler.movss(dword_ptr(rbp - *offset as i32), xmm15)?;
+                    }
+                } else if self.type_is_reference(*ty) {
+                    if let Some(register) = outgoing_register(location) {
+                        assembler.mov(qword_ptr(rbp - *offset as i32), asm_register64(register))?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        let incoming_offset = incoming_stack_arg_offset(stack_offset);
+                        assembler.mov(rax, qword_ptr(rbp + incoming_offset as i32))?;
+                        assembler.mov(qword_ptr(rbp - *offset as i32), rax)?;
                     }
                 } else if let Some(register) = outgoing_register(location) {
                     assembler.mov(dword_ptr(rbp - *offset as i32), asm_register32(register))?;
@@ -828,12 +856,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     }
 
     fn operand_is_reference(&self, function: &str, operand: &Operand) -> bool {
-        self.operand_type(function, operand).is_some_and(|ty| {
-            matches!(
-                self.types.get(self.types.canonicalize(ty)),
-                Some(Type::RefType(_))
-            )
-        })
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_reference(ty))
+    }
+
+    fn type_is_reference(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::RefType(_))
+        )
     }
 
     fn unsupported_load_message(&self, place: &Place) -> Option<String> {
@@ -870,19 +901,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .unsupported_place_operand_message(function, base)
                 .or_else(|| self.unsupported_operand_message(function, index)),
         }
-    }
-
-    fn unsupported_reference_abi_message(&self, ty: Index) -> Option<String> {
-        let ty = self.types.canonicalize(ty);
-        if matches!(self.types.get(ty), Some(Type::RefType(_)))
-            && self.unsupported_type_message(ty).is_none()
-        {
-            return Some(format!(
-                "x86 machine-code backend does not support reference parameters or returns yet: {}",
-                self.types.to_string_index(ty)
-            ));
-        }
-        None
     }
 
     fn unsupported_assignment_operator_message(
@@ -948,14 +966,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_type_message(*ty)
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
-            })
-            .or_else(|| {
-                self.unsupported_type_message(signature.return_type)
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
-            })
+            .find_map(|ty| self.unsupported_type_message(*ty))
+            .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
     fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -966,11 +978,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 inst.function
             ));
         }
-        signature
-            .params
-            .iter()
-            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
-            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+        None
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -1322,7 +1330,7 @@ fn load_reference_operand(
         }
         Operand::Placeholder => assembler.xor(register, register),
         Operand::Literal(_) | Operand::Label(_) => {
-            unreachable!("references must be stored in variables or temporaries")
+            unreachable!("references must be stored in variables or temporaries: {operand:?}")
         }
     }
 }
@@ -1655,6 +1663,28 @@ fn is_xmm_register(register: Register) -> bool {
             | Register::XMM14
             | Register::XMM15
     )
+}
+
+fn asm_register64(register: Register) -> AsmRegister64 {
+    match register.full_register() {
+        Register::RAX => rax,
+        Register::RBX => rbx,
+        Register::RCX => rcx,
+        Register::RDX => rdx,
+        Register::RSI => rsi,
+        Register::RDI => rdi,
+        Register::RBP => rbp,
+        Register::RSP => rsp,
+        Register::R8 => r8,
+        Register::R9 => r9,
+        Register::R10 => r10,
+        Register::R11 => r11,
+        Register::R12 => r12,
+        Register::R13 => r13,
+        Register::R14 => r14,
+        Register::R15 => r15,
+        _ => unreachable!("x86 machine-code emitter only supports general-purpose registers"),
+    }
 }
 
 fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {

@@ -354,7 +354,9 @@ impl<'a> CodeGeneratorX86<'a> {
                     let return_register = self
                         .function_return_register(function)
                         .unwrap_or(Register::RAX);
-                    if self.operand_is_f32(function, value) {
+                    if self.operand_is_reference(function, value) {
+                        load_reference_operand(lines, frame, location, value, return_register);
+                    } else if self.operand_is_f32(function, value) {
                         load_float_operand(lines, frame, location, value, return_register);
                     } else {
                         load_operand(lines, frame, location, value, return_register);
@@ -592,19 +594,6 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn unsupported_reference_abi_message(&self, ty: Index) -> Option<String> {
-        let ty = self.types.canonicalize(ty);
-        if matches!(self.types.get(ty), Some(Type::RefType(_)))
-            && self.unsupported_type_message(ty).is_none()
-        {
-            return Some(format!(
-                "x86 backend does not support reference parameters or returns yet: {}",
-                self.types.to_string_index(ty)
-            ));
-        }
-        None
-    }
-
     fn unsupported_assignment_operator_message(
         &self,
         function: &str,
@@ -694,14 +683,8 @@ impl<'a> CodeGeneratorX86<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_type_message(*ty)
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
-            })
-            .or_else(|| {
-                self.unsupported_type_message(signature.return_type)
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
-            })
+            .find_map(|ty| self.unsupported_type_message(*ty))
+            .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
     fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -712,11 +695,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 inst.function
             ));
         }
-        signature
-            .params
-            .iter()
-            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
-            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+        None
     }
 
     fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -1181,7 +1160,9 @@ impl<'a> CodeGeneratorX86<'a> {
             let return_register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            if self.operand_is_f32(function, return_target) {
+            if self.operand_is_reference(function, return_target) {
+                store_reference_operand(lines, frame, location, return_target, return_register);
+            } else if self.operand_is_f32(function, return_target) {
                 store_float_operand(lines, frame, location, return_target, return_register);
             } else {
                 store_operand(lines, frame, location, return_target, return_register);
@@ -1201,7 +1182,11 @@ impl<'a> CodeGeneratorX86<'a> {
             stage_float_parameter(lines, frame, location, operand);
             return;
         }
-        load_operand(lines, frame, location, operand, Register::RAX);
+        if self.operand_is_reference(function, operand) {
+            load_reference_operand(lines, frame, location, operand, Register::RAX);
+        } else {
+            load_operand(lines, frame, location, operand, Register::RAX);
+        }
         lines.push(String::from("  push rax"));
     }
 
@@ -1296,7 +1281,20 @@ impl<'a> CodeGeneratorX86<'a> {
                 };
                 if self.symbol_is_f32(&self.cfg[range.start].label, &assigned.interval().variable) {
                     move_float_location(lines, source, destination, Register::XMM15);
+                } else if self.symbol_is_reference(&self.cfg[range.start].label, &assigned.interval().variable) {
+                    let Some(destination) = frame.variable_location(
+                        assigned.interval().variable.as_str(),
+                        assigned.location(),
+                    ) else {
+                        continue;
+                    };
+                    move_location_64(lines, source, destination, Register::RAX);
                 } else {
+                    let parameter = Operand::Variable(assigned.interval().variable.clone());
+                    let Some(destination) = frame.operand_location(constraint.location(), &parameter)
+                    else {
+                        continue;
+                    };
                     move_location(lines, source, destination, Register::RAX);
                 }
             }
@@ -1646,6 +1644,13 @@ struct FrameLayout<'a> {
 }
 
 impl<'a> FrameLayout<'a> {
+    fn variable_location(&self, name: &str, allocated: &Location) -> Option<AssemblyLocation> {
+        self.home_slots
+            .get(name)
+            .map(|offset| AssemblyLocation::FrameStack { offset: *offset })
+            .or_else(|| self.frame_location(allocated))
+    }
+
     fn operand_location(
         &self,
         location: CodeLocation,
@@ -2242,6 +2247,52 @@ fn move_float_location(
             lines.push(format!(
                 "  movss {}, {}",
                 float_assembly_operand(dst),
+                register_name(scratch)
+            ));
+        }
+    }
+}
+
+fn move_location_64(
+    lines: &mut Vec<String>,
+    source: AssemblyLocation,
+    destination: AssemblyLocation,
+    scratch: Register,
+) {
+    if source == destination {
+        return;
+    }
+    match (source, destination) {
+        (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name(dst),
+                register_name(src)
+            ));
+        }
+        (AssemblyLocation::Register(src), dst) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                assembly_operand_64(dst),
+                register_name(src)
+            ));
+        }
+        (src, AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name(dst),
+                assembly_operand_64(src)
+            ));
+        }
+        (src, dst) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                register_name(scratch),
+                assembly_operand_64(src)
+            ));
+            lines.push(format!(
+                "  mov {}, {}",
+                assembly_operand_64(dst),
                 register_name(scratch)
             ));
         }
