@@ -11,17 +11,22 @@ fn select_last(
 }
 
 fn main() -> i32 {
-    let value = 1;
-    let reference = &value;
+    let first = 1;
+    let second = 2;
+    let third = 3;
+    let fourth = 4;
+    let fifth = 5;
+    let sixth = 6;
+    let seventh = 7;
     let returned = select_last(
-        reference,
-        reference,
-        reference,
-        reference,
-        reference,
-        reference,
-        reference
+        &first,
+        &second,
+        &third,
+        &fourth,
+        &fifth,
+        &sixth,
+        &seventh
     );
-    *returned = 6;
-    return value;
+    *returned = 9;
+    return seventh;
 }

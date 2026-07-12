@@ -1288,14 +1288,21 @@ impl<'a> CodeGeneratorX86<'a> {
                     ) else {
                         continue;
                     };
-                    move_location_64(lines, source, destination, Register::RAX);
+                    move_location(
+                        lines,
+                        source,
+                        destination,
+                        Register::RAX,
+                        MoveWidth::Bits64,
+                    );
                 } else {
-                    let parameter = Operand::Variable(assigned.interval().variable.clone());
-                    let Some(destination) = frame.operand_location(constraint.location(), &parameter)
-                    else {
-                        continue;
-                    };
-                    move_location(lines, source, destination, Register::RAX);
+                    move_location(
+                        lines,
+                        source,
+                        destination,
+                        Register::RAX,
+                        MoveWidth::Bits32,
+                    );
                 }
             }
         }
@@ -1885,6 +1892,7 @@ fn store_operand(
         AssemblyLocation::Register(register),
         destination,
         Register::RAX,
+        MoveWidth::Bits32,
     );
 }
 
@@ -2161,11 +2169,34 @@ fn swapped_comparison_operator(operator: &'static str) -> &'static str {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MoveWidth {
+    Bits32,
+    Bits64,
+}
+
+impl MoveWidth {
+    fn register_name(self, register: Register) -> String {
+        match self {
+            MoveWidth::Bits32 => register_name_32(register),
+            MoveWidth::Bits64 => register_name(register),
+        }
+    }
+
+    fn assembly_operand(self, location: AssemblyLocation) -> String {
+        match self {
+            MoveWidth::Bits32 => assembly_operand(location),
+            MoveWidth::Bits64 => assembly_operand_64(location),
+        }
+    }
+}
+
 fn move_location(
     lines: &mut Vec<String>,
     source: AssemblyLocation,
     destination: AssemblyLocation,
     scratch: Register,
+    width: MoveWidth,
 ) {
     if source == destination {
         return;
@@ -2174,34 +2205,34 @@ fn move_location(
         (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
             lines.push(format!(
                 "  mov {}, {}",
-                register_name_32(dst),
-                register_name_32(src)
+                width.register_name(dst),
+                width.register_name(src)
             ));
         }
         (AssemblyLocation::Register(src), dst) => {
             lines.push(format!(
                 "  mov {}, {}",
-                assembly_operand(dst),
-                register_name_32(src)
+                width.assembly_operand(dst),
+                width.register_name(src)
             ));
         }
         (src, AssemblyLocation::Register(dst)) => {
             lines.push(format!(
                 "  mov {}, {}",
-                register_name_32(dst),
-                assembly_operand(src)
+                width.register_name(dst),
+                width.assembly_operand(src)
             ));
         }
         (src, dst) => {
             lines.push(format!(
                 "  mov {}, {}",
-                register_name_32(scratch),
-                assembly_operand(src)
+                width.register_name(scratch),
+                width.assembly_operand(src)
             ));
             lines.push(format!(
                 "  mov {}, {}",
-                assembly_operand(dst),
-                register_name_32(scratch)
+                width.assembly_operand(dst),
+                width.register_name(scratch)
             ));
         }
     }
@@ -2247,52 +2278,6 @@ fn move_float_location(
             lines.push(format!(
                 "  movss {}, {}",
                 float_assembly_operand(dst),
-                register_name(scratch)
-            ));
-        }
-    }
-}
-
-fn move_location_64(
-    lines: &mut Vec<String>,
-    source: AssemblyLocation,
-    destination: AssemblyLocation,
-    scratch: Register,
-) {
-    if source == destination {
-        return;
-    }
-    match (source, destination) {
-        (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
-            lines.push(format!(
-                "  mov {}, {}",
-                register_name(dst),
-                register_name(src)
-            ));
-        }
-        (AssemblyLocation::Register(src), dst) => {
-            lines.push(format!(
-                "  mov {}, {}",
-                assembly_operand_64(dst),
-                register_name(src)
-            ));
-        }
-        (src, AssemblyLocation::Register(dst)) => {
-            lines.push(format!(
-                "  mov {}, {}",
-                register_name(dst),
-                assembly_operand_64(src)
-            ));
-        }
-        (src, dst) => {
-            lines.push(format!(
-                "  mov {}, {}",
-                register_name(scratch),
-                assembly_operand_64(src)
-            ));
-            lines.push(format!(
-                "  mov {}, {}",
-                assembly_operand_64(dst),
                 register_name(scratch)
             ));
         }
