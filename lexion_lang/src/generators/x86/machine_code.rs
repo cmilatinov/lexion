@@ -221,12 +221,21 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(
-                        assembler,
-                        slots,
-                        value,
-                        asm_register32(context.return_register),
-                    )?;
+                    if self.operand_is_f32(context.name, value) {
+                        load_float_operand(
+                            assembler,
+                            slots,
+                            value,
+                            asm_register_xmm(context.return_register),
+                        )?;
+                    } else {
+                        load_operand(
+                            assembler,
+                            slots,
+                            value,
+                            asm_register32(context.return_register),
+                        )?;
+                    }
                 }
                 emit_epilogue(assembler)?;
                 Ok(true)
@@ -236,7 +245,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(assembler, labels, slots, pending_params, inst)?;
+                self.emit_function_call(
+                    assembler,
+                    labels,
+                    slots,
+                    context.name,
+                    pending_params,
+                    inst,
+                )?;
                 pending_params.clear();
                 Ok(false)
             }
@@ -463,6 +479,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         assembler: &mut CodeAssembler,
         labels: &HashMap<String, CodeLabel>,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         pending_params: &[Operand],
         inst: &FunctionCallInstruction,
     ) -> Result<(), IcedError> {
@@ -491,12 +508,21 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
 
         for (param, _) in stack_args.iter().rev() {
-            load_operand(assembler, slots, param, eax)?;
+            if self.operand_is_f32(function, param) {
+                load_float_operand(assembler, slots, param, xmm0)?;
+                assembler.movd(eax, xmm0)?;
+            } else {
+                load_operand(assembler, slots, param, eax)?;
+            }
             assembler.push(rax)?;
         }
         for (param, location) in params.iter().zip(locations.iter()) {
             if let Some(register) = outgoing_register(location) {
-                load_operand(assembler, slots, param, asm_register32(register))?;
+                if is_xmm_register(register) {
+                    load_float_operand(assembler, slots, param, asm_register_xmm(register))?;
+                } else {
+                    load_operand(assembler, slots, param, asm_register32(register))?;
+                }
             }
         }
         assembler.call(label_name(labels, inst.function.as_str()))?;
@@ -508,7 +534,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             let register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            store_operand(assembler, slots, return_target, asm_register32(register))?;
+            if self.operand_is_f32(function, return_target) {
+                store_float_operand(assembler, slots, return_target, asm_register_xmm(register))?;
+            } else {
+                store_operand(assembler, slots, return_target, asm_register32(register))?;
+            }
         }
         Ok(())
     }
@@ -529,9 +559,22 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .target
             .calling_convention()
             .assign_args(self.types, 0, signature);
-        for (param, location) in params.iter().zip(locations.iter()) {
+        for ((param, ty), location) in params
+            .iter()
+            .zip(signature.params.iter())
+            .zip(locations.iter())
+        {
             if let Some(offset) = slots.get(param.as_str()) {
-                if let Some(register) = outgoing_register(location) {
+                if is_f32_type(self.types, *ty) {
+                    if let Some(register) = outgoing_register(location) {
+                        assembler
+                            .movss(dword_ptr(rbp - *offset as i32), asm_register_xmm(register))?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        let incoming_offset = incoming_stack_arg_offset(stack_offset);
+                        assembler.movss(xmm15, dword_ptr(rbp + incoming_offset as i32))?;
+                        assembler.movss(dword_ptr(rbp - *offset as i32), xmm15)?;
+                    }
+                } else if let Some(register) = outgoing_register(location) {
                     assembler.mov(dword_ptr(rbp - *offset as i32), asm_register32(register))?;
                 } else if let Some(stack_offset) = stack_offset(location) {
                     let incoming_offset = incoming_stack_arg_offset(stack_offset);
@@ -907,12 +950,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .find_map(|ty| {
                 self.unsupported_type_message(*ty)
-                    .or_else(|| self.unsupported_float_abi_message(*ty))
                     .or_else(|| self.unsupported_reference_abi_message(*ty))
             })
             .or_else(|| {
                 self.unsupported_type_message(signature.return_type)
-                    .or_else(|| self.unsupported_float_abi_message(signature.return_type))
                     .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
             })
     }
@@ -928,14 +969,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_float_abi_message(*ty)
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
-            })
-            .or_else(|| {
-                self.unsupported_float_abi_message(signature.return_type)
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
-            })
+            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
+            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -1010,15 +1045,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
             ))
         )
-    }
-
-    fn unsupported_float_abi_message(&self, ty: Index) -> Option<String> {
-        is_f32_type(self.types, ty).then(|| {
-            format!(
-                "x86 machine-code backend does not support f32 parameters, calls, or returns yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
     }
 
     fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
@@ -1585,6 +1611,50 @@ fn asm_register32(register: Register) -> AsmRegister32 {
         Register::R15 => r15d,
         _ => unreachable!("x86 machine-code emitter only supports general-purpose registers"),
     }
+}
+
+fn asm_register_xmm(register: Register) -> AsmRegisterXmm {
+    match register {
+        Register::XMM0 => xmm0,
+        Register::XMM1 => xmm1,
+        Register::XMM2 => xmm2,
+        Register::XMM3 => xmm3,
+        Register::XMM4 => xmm4,
+        Register::XMM5 => xmm5,
+        Register::XMM6 => xmm6,
+        Register::XMM7 => xmm7,
+        Register::XMM8 => xmm8,
+        Register::XMM9 => xmm9,
+        Register::XMM10 => xmm10,
+        Register::XMM11 => xmm11,
+        Register::XMM12 => xmm12,
+        Register::XMM13 => xmm13,
+        Register::XMM14 => xmm14,
+        Register::XMM15 => xmm15,
+        _ => unreachable!("x86 machine-code emitter expected an XMM register"),
+    }
+}
+
+fn is_xmm_register(register: Register) -> bool {
+    matches!(
+        register,
+        Register::XMM0
+            | Register::XMM1
+            | Register::XMM2
+            | Register::XMM3
+            | Register::XMM4
+            | Register::XMM5
+            | Register::XMM6
+            | Register::XMM7
+            | Register::XMM8
+            | Register::XMM9
+            | Register::XMM10
+            | Register::XMM11
+            | Register::XMM12
+            | Register::XMM13
+            | Register::XMM14
+            | Register::XMM15
+    )
 }
 
 fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {

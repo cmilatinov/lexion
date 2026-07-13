@@ -351,7 +351,14 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(lines, frame, location, value, Register::RAX);
+                    let return_register = self
+                        .function_return_register(function)
+                        .unwrap_or(Register::RAX);
+                    if self.operand_is_f32(function, value) {
+                        load_float_operand(lines, frame, location, value, return_register);
+                    } else {
+                        load_operand(lines, frame, location, value, return_register);
+                    }
                 }
                 emit_epilogue(lines, frame);
                 true
@@ -360,12 +367,19 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Parameter(inst) => {
-                self.emit_parameter(lines, frame, location, &inst.param);
+                self.emit_parameter(lines, frame, function, location, &inst.param);
                 *pending_param_count += 1;
                 false
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(lines, frame, location, *pending_param_count, inst);
+                self.emit_function_call(
+                    lines,
+                    frame,
+                    function,
+                    location,
+                    *pending_param_count,
+                    inst,
+                );
                 *pending_param_count = 0;
                 false
             }
@@ -682,12 +696,10 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .find_map(|ty| {
                 self.unsupported_type_message(*ty)
-                    .or_else(|| self.unsupported_float_abi_message(*ty))
                     .or_else(|| self.unsupported_reference_abi_message(*ty))
             })
             .or_else(|| {
                 self.unsupported_type_message(signature.return_type)
-                    .or_else(|| self.unsupported_float_abi_message(signature.return_type))
                     .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
             })
     }
@@ -703,14 +715,8 @@ impl<'a> CodeGeneratorX86<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_float_abi_message(*ty)
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
-            })
-            .or_else(|| {
-                self.unsupported_float_abi_message(signature.return_type)
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
-            })
+            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
+            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
     }
 
     fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -767,15 +773,6 @@ impl<'a> CodeGeneratorX86<'a> {
         )
     }
 
-    fn unsupported_float_abi_message(&self, ty: Index) -> Option<String> {
-        is_f32_type(self.types, ty).then(|| {
-            format!(
-                "x86 backend does not support f32 parameters, calls, or returns yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
-    }
-
     fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
         self.operand_type(function, operand)
             .is_some_and(|ty| is_f32_type(self.types, ty))
@@ -809,6 +806,24 @@ impl<'a> CodeGeneratorX86<'a> {
                 Type::FunctionType(signature) => Some(signature),
                 _ => None,
             })
+    }
+
+    fn function_return_register(&self, function: &str) -> Option<Register> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
+    }
+
+    fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
     }
 
     fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
@@ -1112,6 +1127,7 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         pending_param_count: usize,
         inst: &FunctionCallInstruction,
@@ -1124,32 +1140,51 @@ impl<'a> CodeGeneratorX86<'a> {
                     .assign_args(self.types, 0, signature)
             })
             .unwrap_or_default();
-        let register_args = arg_locations
-            .iter()
-            .take(pending_param_count)
-            .filter_map(outgoing_register)
-            .collect::<Vec<_>>();
-        for register in register_args {
-            lines.push(format!("  pop {}", register_name(register)));
-        }
-
+        let arg_locations = &arg_locations[..pending_param_count];
         let stack_arg_count = arg_locations
             .iter()
-            .take(pending_param_count)
             .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
             .count();
         let stack_padding = frame.call_stack_padding(
             stack_arg_count,
             self.target.calling_convention().stack_alignment(),
         );
-        emit_call_stack_padding(lines, stack_arg_count, stack_padding);
+        let indexed_arguments = register_argument_follows_stack_argument(arg_locations);
+        if indexed_arguments {
+            emit_indexed_call_arguments(lines, arg_locations, stack_padding);
+        } else {
+            for abi_location in arg_locations {
+                let Some(register) = outgoing_register(abi_location) else {
+                    continue;
+                };
+                if is_xmm_register(register) {
+                    lines.push(format!(
+                        "  movss {}, DWORD PTR [rsp]",
+                        register_name(register)
+                    ));
+                    lines.push(String::from("  add rsp, 8"));
+                } else {
+                    lines.push(format!("  pop {}", register_name(register)));
+                }
+            }
+            emit_call_stack_padding(lines, stack_arg_count, stack_padding);
+        }
         lines.push(format!("  call {}", inst.function));
-        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
+        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
+            + stack_padding
+            + usize::from(indexed_arguments) * pending_param_count * STACK_ARG_SLOT_BYTES;
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
         }
         if let Some(return_target) = &inst.return_target {
-            store_operand(lines, frame, location, return_target, Register::RAX);
+            let return_register = self
+                .function_call_return_register(inst)
+                .unwrap_or(Register::RAX);
+            if self.operand_is_f32(function, return_target) {
+                store_float_operand(lines, frame, location, return_target, return_register);
+            } else {
+                store_operand(lines, frame, location, return_target, return_register);
+            }
         }
     }
 
@@ -1157,9 +1192,16 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         operand: &Operand,
     ) {
+        if self.operand_is_f32(function, operand) {
+            load_float_operand(lines, frame, location, operand, Register::XMM0);
+            lines.push(String::from("  sub rsp, 8"));
+            lines.push(String::from("  movss DWORD PTR [rsp], xmm0"));
+            return;
+        }
         load_operand(lines, frame, location, operand, Register::RAX);
         lines.push(String::from("  push rax"));
     }
@@ -1248,10 +1290,16 @@ impl<'a> CodeGeneratorX86<'a> {
                 let Some(source) = incoming_location(constraint.abi_location()) else {
                     continue;
                 };
-                let Some(destination) = frame.frame_location(assigned.location()) else {
+                let parameter = Operand::Variable(assigned.interval().variable.clone());
+                let Some(destination) = frame.operand_location(constraint.location(), &parameter)
+                else {
                     continue;
                 };
-                move_location(lines, source, destination, Register::RAX);
+                if self.symbol_is_f32(&self.cfg[range.start].label, &assigned.interval().variable) {
+                    move_float_location(lines, source, destination, Register::XMM15);
+                } else {
+                    move_location(lines, source, destination, Register::RAX);
+                }
             }
         }
     }
@@ -1912,6 +1960,60 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
     }
 }
 
+fn register_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
+    let mut saw_stack_argument = false;
+    arg_locations.iter().any(|location| {
+        if matches!(location, Location::Stack(_)) {
+            saw_stack_argument = true;
+            return false;
+        }
+        saw_stack_argument && outgoing_register(location).is_some()
+    })
+}
+
+fn emit_indexed_call_arguments(
+    lines: &mut Vec<String>,
+    arg_locations: &[Location],
+    stack_padding: usize,
+) {
+    for (index, location) in arg_locations.iter().enumerate() {
+        let Some(register) = outgoing_register(location) else {
+            continue;
+        };
+        let source = rsp_slot(index * STACK_ARG_SLOT_BYTES);
+        if is_xmm_register(register) {
+            lines.push(format!(
+                "  movss {}, DWORD PTR {source}",
+                register_name(register)
+            ));
+        } else {
+            lines.push(format!(
+                "  mov {}, QWORD PTR {source}",
+                register_name(register)
+            ));
+        }
+    }
+
+    let stack_arg_count = arg_locations
+        .iter()
+        .filter(|location| matches!(location, Location::Stack(_)))
+        .count();
+    let outgoing_bytes = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
+    if outgoing_bytes == 0 {
+        return;
+    }
+    lines.push(format!("  sub rsp, {outgoing_bytes}"));
+    for (index, location) in arg_locations.iter().enumerate() {
+        let Location::Stack(offset) = location else {
+            continue;
+        };
+        let source = rsp_slot(outgoing_bytes + index * STACK_ARG_SLOT_BYTES);
+        let destination = rsp_slot(offset.0 * STACK_ARG_SLOT_BYTES);
+        lines.push(format!("  mov rax, QWORD PTR {source}"));
+        lines.push(format!("  mov QWORD PTR {destination}, rax"));
+    }
+}
+
 fn rsp_slot(offset: usize) -> String {
     if offset == 0 {
         String::from("[rsp]")
@@ -2063,6 +2165,52 @@ fn move_location(
                 "  mov {}, {}",
                 assembly_operand(dst),
                 register_name_32(scratch)
+            ));
+        }
+    }
+}
+
+fn move_float_location(
+    lines: &mut Vec<String>,
+    source: AssemblyLocation,
+    destination: AssemblyLocation,
+    scratch: Register,
+) {
+    if source == destination {
+        return;
+    }
+    match (source, destination) {
+        (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  movss {}, {}",
+                register_name(dst),
+                register_name(src)
+            ));
+        }
+        (AssemblyLocation::Register(src), dst) => {
+            lines.push(format!(
+                "  movss {}, {}",
+                float_assembly_operand(dst),
+                register_name(src)
+            ));
+        }
+        (src, AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  movss {}, {}",
+                register_name(dst),
+                float_assembly_operand(src)
+            ));
+        }
+        (src, dst) => {
+            lines.push(format!(
+                "  movss {}, {}",
+                register_name(scratch),
+                float_assembly_operand(src)
+            ));
+            lines.push(format!(
+                "  movss {}, {}",
+                float_assembly_operand(dst),
+                register_name(scratch)
             ));
         }
     }

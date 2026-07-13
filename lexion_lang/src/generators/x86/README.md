@@ -12,14 +12,14 @@ registers in instruction selection.
 - Integer arithmetic: `+`, `-`, `*`, `/`, `%`.
 - Integer comparisons and equality producing boolean results.
 - Boolean literals and simple boolean values.
-- Local `f32` literals, copies, unary negation, arithmetic, and comparisons lowered with scalar SSE instructions.
+- `f32` literals, copies, unary negation, arithmetic, and comparisons lowered with scalar SSE instructions.
+- System V `f32` parameters, calls, stack arguments, and returns lowered through XMM registers.
 - Function prologue, epilogue, return values, and local stack slots.
 
 ## Unsupported Until Later
 
-- Floating-point parameters, calls, and returns.
 - Structs, tuples, strings, and other aggregate values.
-- Calls, extern functions, varargs, and ABI argument passing in generated code.
+- Extern calls, varargs, and aggregate ABI argument passing in generated code.
 - Heap allocation, projected-place references, and reference parameters or returns.
 - Multi-function executable output.
 

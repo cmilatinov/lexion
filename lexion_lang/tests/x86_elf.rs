@@ -199,6 +199,20 @@ fn x86_elf_executable_supports_stack_arguments() {
 }
 
 #[test]
+fn x86_elf_executable_supports_f32_function_calls() {
+    let executable = compile_elf("backend/x86_f32_function_calls.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("scale"));
+    assert!(executable.symbols().contains_key("sum9"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
 fn x86_elf_reports_unsupported_extern_calls() {
     insta::assert_snapshot!(compile_elf_error("backend/x86_unsupported_extern_call.lex").join("\n"));
 }

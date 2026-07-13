@@ -146,6 +146,13 @@ fn x86_machine_code_f32_arithmetic_and_comparisons() {
 }
 
 #[test]
+fn x86_machine_code_f32_function_calls() {
+    let code = compile_machine_code("backend/x86_f32_function_calls.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_ternary_expression() {
     let code = compile_machine_code("backend/ternary_expression.lex");
 
@@ -221,21 +228,6 @@ fn x86_machine_reports_unsupported_call_string_arg() {
         "backend/x86_unsupported_call_string_arg.lex"
     )
     .join("\n"));
-}
-
-#[test]
-fn x86_machine_reports_unsupported_call_float_arg() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_call_float_arg.lex"
-    )
-    .join("\n"));
-}
-
-#[test]
-fn x86_machine_reports_unsupported_float_operations() {
-    insta::assert_snapshot!(
-        compile_machine_code_error("backend/x86_unsupported_float_ops.lex").join("\n")
-    );
 }
 
 #[test]
