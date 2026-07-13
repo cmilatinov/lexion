@@ -1,7 +1,7 @@
 use generational_arena::Index;
 use iced_x86::Register;
 use lexion_lang::ast::types::{
-    FunctionType, StructMember, StructType, TupleType, Type, TypeCollection,
+    FunctionType, StructMember, StructType, TupleType, Type, TypeCollection, TypeDefType,
 };
 use lexion_lang::generators::x86::{
     Bitness, CMemoryLayoutBuilder, CallingConvention, Location, SystemV64, X86Target,
@@ -283,6 +283,41 @@ fn backend_value_layouts_distinguish_str_from_str_reference() {
 
     assert_size_align(&types, types.str(), 0, 1);
     assert_size_align(&types, str_ref, 16, 8);
+}
+
+#[test]
+fn backend_value_layouts_resolve_aggregate_alias_chains() {
+    let mut types = TypeCollection::default();
+    let i32_ty = types.i32();
+    let pair = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty],
+    }));
+    let pair_alias = types.insert(&Type::TypeDefType(TypeDefType {
+        ident: String::from("Pair"),
+        ty: pair,
+    }));
+    let pair_alias_alias = types.insert(&Type::TypeDefType(TypeDefType {
+        ident: String::from("PairAlias"),
+        ty: pair_alias,
+    }));
+    let pair_ref = types.reference(pair_alias_alias);
+
+    let mapped_pair = types.insert(&Type::TypeDefType(TypeDefType {
+        ident: String::from("MappedPair"),
+        ty: pair_alias_alias,
+    }));
+    types.type_map.insert(mapped_pair, pair_alias_alias);
+    types.type_map.insert(pair_alias_alias, pair_alias);
+
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+
+    assert!(matches!(
+        types.kind(pair_alias_alias),
+        lexion_lang::ast::types::TypeKind::Memory
+    ));
+    assert_size_align(&types, pair_alias_alias, 8, 4);
+    assert_size_align(&types, pair_ref, 8, 8);
+    assert_eq!(types.canonicalize(mapped_pair), pair);
 }
 
 fn assert_aggregate_layout(types: &TypeCollection, ty: Index) {
