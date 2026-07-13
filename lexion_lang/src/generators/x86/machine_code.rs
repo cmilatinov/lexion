@@ -32,6 +32,12 @@ pub struct X86MachineCode {
     symbols: BTreeMap<String, usize>,
 }
 
+#[derive(Clone, Copy)]
+struct MachineFunctionContext<'a> {
+    name: &'a str,
+    return_register: Register,
+}
+
 impl X86MachineCode {
     pub fn new(bytes: Vec<u8>, symbols: BTreeMap<String, usize>) -> Self {
         Self { bytes, symbols }
@@ -104,6 +110,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         labels: &mut HashMap<String, CodeLabel>,
         range: FunctionRange,
     ) -> Result<(), IcedError> {
+        let function = self.cfg[range.start].label.as_str();
         let slots = self.stack_slots(range);
         let stack_size = align_to(
             slots.values().copied().max().unwrap_or(0),
@@ -112,6 +119,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let return_register = self
             .function_return_register(&self.cfg[range.start].label)
             .unwrap_or(Register::RAX);
+        let context = MachineFunctionContext {
+            name: function,
+            return_register,
+        };
         self.set_block_label(assembler, labels, self.cfg[range.start].label.as_str())?;
         assembler.push(rbp)?;
         assembler.mov(rbp, rsp)?;
@@ -132,7 +143,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     assembler,
                     labels,
                     &slots,
-                    return_register,
+                    context,
                     &mut pending_params,
                     &inst.instruction,
                 )? {
@@ -162,7 +173,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         assembler: &mut CodeAssembler,
         labels: &HashMap<String, CodeLabel>,
         slots: &BTreeMap<String, usize>,
-        return_register: Register,
+        context: MachineFunctionContext<'_>,
         pending_params: &mut Vec<Operand>,
         instruction: &Instruction,
     ) -> Result<bool, IcedError> {
@@ -180,11 +191,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::Assignment(inst) => {
-                self.emit_assignment(assembler, slots, inst)?;
+                self.emit_assignment(assembler, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Copy(inst) => {
-                if self.operand_is_reference(&inst.src) || self.operand_is_reference(&inst.dst) {
+                if self.operand_is_reference(context.name, &inst.src)
+                    || self.operand_is_reference(context.name, &inst.dst)
+                {
                     load_reference_operand(assembler, slots, &inst.src, rax)?;
                     store_reference_operand(assembler, slots, &inst.dst, rax)?;
                 } else {
@@ -203,7 +216,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(assembler, slots, value, asm_register32(return_register))?;
+                    load_operand(
+                        assembler,
+                        slots,
+                        value,
+                        asm_register32(context.return_register),
+                    )?;
                 }
                 emit_epilogue(assembler)?;
                 Ok(true)
@@ -227,6 +245,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         &self,
         assembler: &mut CodeAssembler,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &AssignmentInstruction,
     ) -> Result<(), IcedError> {
         match (inst.left.as_ref(), inst.operator) {
@@ -244,7 +263,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 load_operand(assembler, slots, &inst.right, eax)?;
                 assembler.not(eax)?;
             }
-            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => {
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(function, inst) => {
                 load_operand(assembler, slots, &inst.right, eax)?;
                 assembler.cmp(eax, 0)?;
                 assembler.setne(al)?;
@@ -298,7 +317,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
                 load_operand(assembler, slots, left, eax)?;
                 load_operand(assembler, slots, &inst.right, ecx)?;
-                match self.shift_kind(inst) {
+                match self.shift_kind(function, inst) {
                     ShiftKind::Left => assembler.shl(eax, cl)?,
                     ShiftKind::SignedRight => assembler.sar(eax, cl)?,
                     ShiftKind::UnsignedRight => assembler.shr(eax, cl)?,
@@ -311,8 +330,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         store_operand(assembler, slots, &inst.target, eax)
     }
 
-    fn cast_target_is_bool(&self, inst: &AssignmentInstruction) -> bool {
-        self.operand_type(&inst.target)
+    fn cast_target_is_bool(&self, function: &str, inst: &AssignmentInstruction) -> bool {
+        self.operand_type(function, &inst.target)
             .is_some_and(|ty| is_bool_type(self.types, ty))
     }
 
@@ -458,9 +477,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let mut valid = true;
         let mut reported_messages = BTreeSet::new();
         for range in &self.cfg.functions {
+            let function = self.cfg[range.start].label.as_str();
             for node in self.cfg.function_nodes(range) {
                 for inst in &self.cfg[node].instructions {
-                    if let Some(message) = self.unsupported_message(&inst.instruction) {
+                    if let Some(message) = self.unsupported_message(function, &inst.instruction) {
                         valid = false;
                         if reported_messages.insert(message.clone()) {
                             let span = inst
@@ -536,69 +556,73 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     }
 
     fn symbol_span(&self, name: &str) -> Option<SourceSpan> {
-        self.symbol_entry(name).map(|entry| entry.span)
+        self.global_symbol_entry(name).map(|entry| entry.span)
     }
 
-    fn symbol_entry(&self, name: &str) -> Option<&SymbolTableEntry> {
+    fn global_symbol_entry(&self, name: &str) -> Option<&SymbolTableEntry> {
         self.symbols
-            .graph
-            .node_weights()
-            .flat_map(|table| table.entries.iter())
-            .find(|entry| entry.name == name)
+            .lookup(self.symbols.root, name)
+            .map(|(_, _, entry)| entry)
     }
 
-    fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
+    fn function_symbol_entry(&self, function: &str, name: &str) -> Option<&SymbolTableEntry> {
+        self.symbols
+            .lookup_function(function, name)
+            .map(|(_, _, entry)| entry)
+    }
+
+    fn unsupported_message(&self, function: &str, instruction: &Instruction) -> Option<String> {
         match instruction {
             Instruction::Borrow(inst) => self
                 .unsupported_borrow_message(&inst.place)
-                .or_else(|| self.unsupported_operand_message(&inst.target)),
+                .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
                 .unsupported_load_message(&inst.place)
-                .or_else(|| self.unsupported_place_operand_message(&inst.place))
-                .or_else(|| self.unsupported_operand_message(&inst.target)),
+                .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
+                .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Store(inst) => self
                 .unsupported_store_message(&inst.place)
-                .or_else(|| self.unsupported_place_operand_message(&inst.place))
-                .or_else(|| self.unsupported_operand_message(&inst.value)),
+                .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
+                .or_else(|| self.unsupported_operand_message(function, &inst.value)),
             Instruction::Assignment(inst) => self
-                .unsupported_assignment_operator_message(inst)
-                .or_else(|| self.unsupported_reference_operation_message(&inst.target))
-                .or_else(|| self.unsupported_operand_message(&inst.target))
+                .unsupported_assignment_operator_message(function, inst)
+                .or_else(|| self.unsupported_reference_operation_message(function, &inst.target))
+                .or_else(|| self.unsupported_operand_message(function, &inst.target))
                 .or_else(|| {
-                    inst.left
-                        .as_ref()
-                        .and_then(|left| self.unsupported_reference_operation_message(left))
+                    inst.left.as_ref().and_then(|left| {
+                        self.unsupported_reference_operation_message(function, left)
+                    })
                 })
                 .or_else(|| {
                     inst.left
                         .as_ref()
-                        .and_then(|left| self.unsupported_operand_message(left))
+                        .and_then(|left| self.unsupported_operand_message(function, left))
                 })
-                .or_else(|| self.unsupported_reference_operation_message(&inst.right))
-                .or_else(|| self.unsupported_operand_message(&inst.right)),
+                .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
+                .or_else(|| self.unsupported_operand_message(function, &inst.right)),
             Instruction::Extern(inst) => Some(format!(
                 "x86 machine-code backend does not support extern declarations yet: {}",
                 inst.label
             )),
             Instruction::Copy(inst) => self
-                .unsupported_operand_message(&inst.dst)
-                .or_else(|| self.unsupported_operand_message(&inst.src)),
+                .unsupported_operand_message(function, &inst.dst)
+                .or_else(|| self.unsupported_operand_message(function, &inst.src)),
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
-                .and_then(|left| self.unsupported_reference_operation_message(left))
+                .and_then(|left| self.unsupported_reference_operation_message(function, left))
                 .or_else(|| {
                     inst.left
                         .as_ref()
-                        .and_then(|left| self.unsupported_operand_message(left))
+                        .and_then(|left| self.unsupported_operand_message(function, left))
                 })
-                .or_else(|| self.unsupported_reference_operation_message(&inst.right))
-                .or_else(|| self.unsupported_operand_message(&inst.right)),
-            Instruction::Parameter(inst) => self.unsupported_operand_message(&inst.param),
+                .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
+                .or_else(|| self.unsupported_operand_message(function, &inst.right)),
+            Instruction::Parameter(inst) => self.unsupported_operand_message(function, &inst.param),
             Instruction::Return(inst) => inst
                 .value
                 .as_ref()
-                .and_then(|value| self.unsupported_operand_message(value)),
+                .and_then(|value| self.unsupported_operand_message(function, value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => self
                 .unsupported_call_target_message(inst)
@@ -676,8 +700,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn operand_is_reference(&self, operand: &Operand) -> bool {
-        self.operand_type(operand).is_some_and(|ty| {
+    fn operand_is_reference(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand).is_some_and(|ty| {
             matches!(
                 self.types.get(self.types.canonicalize(ty)),
                 Some(Type::RefType(_))
@@ -709,15 +733,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn unsupported_place_operand_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_place_operand_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Direct(value) | Place::Dereference(value) => {
-                self.unsupported_operand_message(value)
+                self.unsupported_operand_message(function, value)
             }
-            Place::Member { base, .. } => self.unsupported_place_operand_message(base),
+            Place::Member { base, .. } => self.unsupported_place_operand_message(function, base),
             Place::Index { base, index } => self
-                .unsupported_place_operand_message(base)
-                .or_else(|| self.unsupported_operand_message(index)),
+                .unsupported_place_operand_message(function, base)
+                .or_else(|| self.unsupported_operand_message(function, index)),
         }
     }
 
@@ -736,10 +760,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_assignment_operator_message(
         &self,
+        function: &str,
         inst: &AssignmentInstruction,
     ) -> Option<String> {
         if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
-            return self.unsupported_cast_message(inst);
+            return self.unsupported_cast_message(function, inst);
         }
         (!assignment_supported(inst)).then(|| {
             format!(
@@ -749,7 +774,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         })
     }
 
-    fn unsupported_operand_message(&self, operand: &Operand) -> Option<String> {
+    fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
             Operand::Literal(Lit::Float(_)) => Some(String::from(
                 "x86 machine-code backend does not support floating-point values yet: f32",
@@ -758,12 +783,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support string values yet: &str",
             )),
             Operand::Variable(name) => self
-                .symbol_entry(name)
+                .function_symbol_entry(function, name)
                 .and_then(|entry| entry.var_type)
                 .and_then(|ty| self.unsupported_type_message(ty)),
             Operand::Temporary(label) => {
                 let name = label.to_string();
-                self.symbol_entry(&name)
+                self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
                     .and_then(|ty| self.unsupported_type_message(ty))
             }
@@ -771,8 +796,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn unsupported_reference_operation_message(&self, operand: &Operand) -> Option<String> {
-        self.operand_is_reference(operand).then(|| {
+    fn unsupported_reference_operation_message(
+        &self,
+        function: &str,
+        operand: &Operand,
+    ) -> Option<String> {
+        self.operand_is_reference(function, operand).then(|| {
             format!(
                 "x86 machine-code backend does not support operations on reference values yet: {operand}"
             )
@@ -891,24 +920,24 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         )
     }
 
-    fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
+    fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
         let name = operand_name(operand)?;
-        let ty = self.symbol_entry(&name)?.var_type?;
+        let ty = self.function_symbol_entry(function, &name)?.var_type?;
         match self.types.get(self.types.canonicalize(ty))? {
             Type::PrimitiveType(primitive) => Some(*primitive),
             _ => None,
         }
     }
 
-    fn shift_kind(&self, inst: &AssignmentInstruction) -> ShiftKind {
+    fn shift_kind(&self, function: &str, inst: &AssignmentInstruction) -> ShiftKind {
         if inst.operator == operators::SHIFT_LEFT {
             ShiftKind::Left
         } else {
             let shifted_type = inst
                 .left
                 .as_ref()
-                .and_then(|left| self.operand_primitive_type(left))
-                .or_else(|| self.operand_primitive_type(&inst.target));
+                .and_then(|left| self.operand_primitive_type(function, left))
+                .or_else(|| self.operand_primitive_type(function, &inst.target));
             if shifted_type == Some(PrimitiveType::U32) {
                 ShiftKind::UnsignedRight
             } else {
@@ -918,6 +947,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     }
 
     fn stack_slots(&self, range: FunctionRange) -> BTreeMap<String, usize> {
+        let function = self.cfg[range.start].label.as_str();
         let mut names = BTreeSet::new();
         for node in self.cfg.function_nodes(&range) {
             for inst in &self.cfg[node].instructions {
@@ -928,7 +958,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         names
             .into_iter()
             .map(|name| {
-                let size = if self.symbol_is_reference(&name) {
+                let size = if self.symbol_is_reference(function, &name) {
                     8
                 } else {
                     4
@@ -940,8 +970,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .collect()
     }
 
-    fn symbol_is_reference(&self, name: &str) -> bool {
-        self.symbol_entry(name)
+    fn symbol_is_reference(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
             .and_then(|entry| entry.var_type)
             .is_some_and(|ty| {
                 matches!(
@@ -951,13 +981,17 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             })
     }
 
-    fn unsupported_cast_message(&self, inst: &AssignmentInstruction) -> Option<String> {
-        let Some(source_ty) = self.operand_type(&inst.right) else {
+    fn unsupported_cast_message(
+        &self,
+        function: &str,
+        inst: &AssignmentInstruction,
+    ) -> Option<String> {
+        let Some(source_ty) = self.operand_type(function, &inst.right) else {
             return Some(String::from(
                 "x86 machine-code backend does not support casts from unknown values yet",
             ));
         };
-        let Some(target_ty) = self.operand_type(&inst.target) else {
+        let Some(target_ty) = self.operand_type(function, &inst.target) else {
             return Some(String::from(
                 "x86 machine-code backend does not support casts to unknown values yet",
             ));
@@ -975,22 +1009,25 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn operand_type(&self, operand: &Operand) -> Option<Index> {
+    fn operand_type(&self, function: &str, operand: &Operand) -> Option<Index> {
         match operand {
             Operand::Literal(Lit::Integer(_)) => Some(self.types.i32()),
             Operand::Literal(Lit::Boolean(_)) => Some(self.types.bool()),
             Operand::Literal(Lit::Float(_)) => Some(self.types.f32()),
-            Operand::Variable(name) => self.symbol_entry(name).and_then(|entry| entry.var_type),
+            Operand::Variable(name) => self
+                .function_symbol_entry(function, name)
+                .and_then(|entry| entry.var_type),
             Operand::Temporary(label) => {
                 let name = label.to_string();
-                self.symbol_entry(&name).and_then(|entry| entry.var_type)
+                self.function_symbol_entry(function, &name)
+                    .and_then(|entry| entry.var_type)
             }
             Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
         }
     }
 
     fn function_signature(&self, function: &str) -> Option<&FunctionType> {
-        self.symbol_entry(function)
+        self.global_symbol_entry(function)
             .and_then(|entry| entry.var_type)
             .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
             .and_then(|ty| match ty {

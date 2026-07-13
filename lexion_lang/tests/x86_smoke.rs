@@ -222,6 +222,11 @@ fn x86_smoke_reference_dereference() {
 }
 
 #[test]
+fn x86_smoke_function_scoped_symbol_types() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_scoped_symbols.lex"));
+}
+
+#[test]
 fn x86_smoke_extern_call() {
     insta::assert_snapshot!(compile_x86("backend/x86_extern_call.lex"));
 }

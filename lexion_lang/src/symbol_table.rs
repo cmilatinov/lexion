@@ -9,7 +9,7 @@ use generational_arena::Index;
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 use lexion_lib::petgraph::prelude::Bfs;
-use lexion_lib::petgraph::visit::Walker;
+use lexion_lib::petgraph::visit::{Reversed, Walker};
 use lexion_lib::petgraph::Graph;
 use lexion_lib::tabled::builder::Builder;
 use lexion_lib::tabled::settings::Style;
@@ -158,6 +158,30 @@ impl SymbolTableGraph {
             }
         }
         None
+    }
+
+    /// Looks up a symbol within a function and its nested scopes without
+    /// considering symbols from other functions.
+    pub fn lookup_function(
+        &self,
+        function: &str,
+        identifier: &str,
+    ) -> Option<(NodeIndex, usize, &SymbolTableEntry)> {
+        let (_, _, function_entry) = self.lookup(self.root, function)?;
+        let function_scope = function_entry.table?;
+        let graph = Reversed(&self.graph);
+        Bfs::new(&graph, function_scope)
+            .iter(&graph)
+            .find_map(|node| {
+                self.graph.node_weight(node).and_then(|table| {
+                    table
+                        .entries
+                        .as_slice()
+                        .binary_search_by(|probe| probe.name.as_str().cmp(identifier))
+                        .ok()
+                        .map(|index| (node, index, &table.entries[index]))
+                })
+            })
     }
 
     pub fn table(&self, node: NodeIndex, types: Option<&TypeCollection>) -> Option<Table> {

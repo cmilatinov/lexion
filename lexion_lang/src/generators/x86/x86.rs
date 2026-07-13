@@ -141,6 +141,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 if self.emit_instruction(
                     &mut lines,
                     &frame,
+                    name.as_str(),
                     location,
                     &mut pending_param_count,
                     &inst.instruction,
@@ -261,26 +262,33 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn symbol_span(&self, name: &str) -> Option<SourceSpan> {
-        self.symbol_entry(name).map(|entry| entry.span)
+        self.global_symbol_entry(name).map(|entry| entry.span)
     }
 
-    fn symbol_entry(&self, name: &str) -> Option<&SymbolTableEntry> {
+    fn global_symbol_entry(&self, name: &str) -> Option<&SymbolTableEntry> {
         self.symbols
-            .graph
-            .node_weights()
-            .flat_map(|table| table.entries.iter())
-            .find(|entry| entry.name == name)
+            .lookup(self.symbols.root, name)
+            .map(|(_, _, entry)| entry)
     }
 
-    fn operand_type(&self, operand: &Operand) -> Option<Index> {
+    fn function_symbol_entry(&self, function: &str, name: &str) -> Option<&SymbolTableEntry> {
+        self.symbols
+            .lookup_function(function, name)
+            .map(|(_, _, entry)| entry)
+    }
+
+    fn operand_type(&self, function: &str, operand: &Operand) -> Option<Index> {
         match operand {
             Operand::Literal(Lit::Integer(_)) => Some(self.types.i32()),
             Operand::Literal(Lit::Boolean(_)) => Some(self.types.bool()),
             Operand::Literal(Lit::Float(_)) => Some(self.types.f32()),
-            Operand::Variable(name) => self.symbol_entry(name).and_then(|entry| entry.var_type),
+            Operand::Variable(name) => self
+                .function_symbol_entry(function, name)
+                .and_then(|entry| entry.var_type),
             Operand::Temporary(label) => {
                 let name = label.to_string();
-                self.symbol_entry(&name).and_then(|entry| entry.var_type)
+                self.function_symbol_entry(function, &name)
+                    .and_then(|entry| entry.var_type)
             }
             Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
         }
@@ -290,6 +298,7 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         pending_param_count: &mut usize,
         instruction: &Instruction,
@@ -308,11 +317,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Assignment(inst) => {
-                self.emit_assignment(lines, frame, location, inst);
+                self.emit_assignment(lines, frame, function, location, inst);
                 false
             }
             Instruction::Copy(inst) => {
-                if self.operand_is_reference(&inst.src) || self.operand_is_reference(&inst.dst) {
+                if self.operand_is_reference(function, &inst.src)
+                    || self.operand_is_reference(function, &inst.dst)
+                {
                     load_reference_operand(lines, frame, location, &inst.src, Register::RAX);
                     store_reference_operand(lines, frame, location, &inst.dst, Register::RAX);
                 } else {
@@ -363,9 +374,10 @@ impl<'a> CodeGeneratorX86<'a> {
     ) -> bool {
         let mut valid = true;
         for range in &self.cfg.functions {
+            let function = self.cfg[range.start].label.as_str();
             for node in self.cfg.function_nodes(range) {
                 for inst in &self.cfg[node].instructions {
-                    if let Some(message) = self.unsupported_message(&inst.instruction) {
+                    if let Some(message) = self.unsupported_message(function, &inst.instruction) {
                         valid = false;
                         let span = inst
                             .source_span
@@ -383,63 +395,63 @@ impl<'a> CodeGeneratorX86<'a> {
         valid
     }
 
-    fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
+    fn unsupported_message(&self, function: &str, instruction: &Instruction) -> Option<String> {
         match instruction {
             Instruction::Borrow(inst) => self
                 .unsupported_borrow_message(&inst.place)
-                .or_else(|| self.unsupported_operand_message(&inst.target)),
+                .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
                 .unsupported_load_message(&inst.place)
-                .or_else(|| self.unsupported_place_operand_message(&inst.place))
-                .or_else(|| self.unsupported_operand_message(&inst.target)),
+                .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
+                .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Store(inst) => self
                 .unsupported_store_message(&inst.place)
-                .or_else(|| self.unsupported_place_operand_message(&inst.place))
-                .or_else(|| self.unsupported_operand_message(&inst.value)),
+                .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
+                .or_else(|| self.unsupported_operand_message(function, &inst.value)),
             Instruction::Assignment(inst) => self
-                .unsupported_assignment_operator_message(inst)
-                .or_else(|| self.unsupported_reference_operation_message(&inst.target))
-                .or_else(|| self.unsupported_operand_message(&inst.target))
+                .unsupported_assignment_operator_message(function, inst)
+                .or_else(|| self.unsupported_reference_operation_message(function, &inst.target))
+                .or_else(|| self.unsupported_operand_message(function, &inst.target))
                 .or_else(|| {
-                    inst.left
-                        .as_ref()
-                        .and_then(|left| self.unsupported_reference_operation_message(left))
+                    inst.left.as_ref().and_then(|left| {
+                        self.unsupported_reference_operation_message(function, left)
+                    })
                 })
                 .or_else(|| {
                     inst.left
                         .as_ref()
-                        .and_then(|left| self.unsupported_operand_message(left))
+                        .and_then(|left| self.unsupported_operand_message(function, left))
                 })
-                .or_else(|| self.unsupported_reference_operation_message(&inst.right))
-                .or_else(|| self.unsupported_operand_message(&inst.right)),
+                .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
+                .or_else(|| self.unsupported_operand_message(function, &inst.right)),
             Instruction::FunctionCall(inst) => self
                 .unsupported_call_target_message(inst)
                 .or_else(|| self.unsupported_call_signature_message(inst))
                 .or_else(|| {
                     inst.return_target
                         .as_ref()
-                        .and_then(|target| self.unsupported_operand_message(target))
+                        .and_then(|target| self.unsupported_operand_message(function, target))
                 }),
             Instruction::Extern(_) => None,
             Instruction::Copy(inst) => self
-                .unsupported_operand_message(&inst.dst)
-                .or_else(|| self.unsupported_operand_message(&inst.src)),
+                .unsupported_operand_message(function, &inst.dst)
+                .or_else(|| self.unsupported_operand_message(function, &inst.src)),
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
-                .and_then(|left| self.unsupported_reference_operation_message(left))
+                .and_then(|left| self.unsupported_reference_operation_message(function, left))
                 .or_else(|| {
                     inst.left
                         .as_ref()
-                        .and_then(|left| self.unsupported_operand_message(left))
+                        .and_then(|left| self.unsupported_operand_message(function, left))
                 })
-                .or_else(|| self.unsupported_reference_operation_message(&inst.right))
-                .or_else(|| self.unsupported_operand_message(&inst.right)),
-            Instruction::Parameter(inst) => self.unsupported_operand_message(&inst.param),
+                .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
+                .or_else(|| self.unsupported_operand_message(function, &inst.right)),
+            Instruction::Parameter(inst) => self.unsupported_operand_message(function, &inst.param),
             Instruction::Return(inst) => inst
                 .value
                 .as_ref()
-                .and_then(|value| self.unsupported_operand_message(value)),
+                .and_then(|value| self.unsupported_operand_message(function, value)),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
@@ -516,8 +528,8 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn operand_is_reference(&self, operand: &Operand) -> bool {
-        self.operand_type(operand).is_some_and(|ty| {
+    fn operand_is_reference(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand).is_some_and(|ty| {
             matches!(
                 self.types.get(self.types.canonicalize(ty)),
                 Some(Type::RefType(_))
@@ -549,15 +561,15 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn unsupported_place_operand_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_place_operand_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Direct(value) | Place::Dereference(value) => {
-                self.unsupported_operand_message(value)
+                self.unsupported_operand_message(function, value)
             }
-            Place::Member { base, .. } => self.unsupported_place_operand_message(base),
+            Place::Member { base, .. } => self.unsupported_place_operand_message(function, base),
             Place::Index { base, index } => self
-                .unsupported_place_operand_message(base)
-                .or_else(|| self.unsupported_operand_message(index)),
+                .unsupported_place_operand_message(function, base)
+                .or_else(|| self.unsupported_operand_message(function, index)),
         }
     }
 
@@ -576,10 +588,11 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_assignment_operator_message(
         &self,
+        function: &str,
         inst: &AssignmentInstruction,
     ) -> Option<String> {
         if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
-            return self.unsupported_cast_message(inst);
+            return self.unsupported_cast_message(function, inst);
         }
         (!assignment_supported(inst)).then(|| {
             format!(
@@ -589,13 +602,17 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
-    fn unsupported_cast_message(&self, inst: &AssignmentInstruction) -> Option<String> {
-        let Some(source_ty) = self.operand_type(&inst.right) else {
+    fn unsupported_cast_message(
+        &self,
+        function: &str,
+        inst: &AssignmentInstruction,
+    ) -> Option<String> {
+        let Some(source_ty) = self.operand_type(function, &inst.right) else {
             return Some(String::from(
                 "x86 backend does not support casts from unknown values yet",
             ));
         };
-        let Some(target_ty) = self.operand_type(&inst.target) else {
+        let Some(target_ty) = self.operand_type(function, &inst.target) else {
             return Some(String::from(
                 "x86 backend does not support casts to unknown values yet",
             ));
@@ -613,7 +630,7 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn unsupported_operand_message(&self, operand: &Operand) -> Option<String> {
+    fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
             Operand::Literal(Lit::Float(_)) => Some(String::from(
                 "x86 backend does not support floating-point values yet: f32",
@@ -622,12 +639,12 @@ impl<'a> CodeGeneratorX86<'a> {
                 "x86 backend does not support string values yet: &str",
             )),
             Operand::Variable(name) => self
-                .symbol_entry(name)
+                .function_symbol_entry(function, name)
                 .and_then(|entry| entry.var_type)
                 .and_then(|ty| self.unsupported_type_message(ty)),
             Operand::Temporary(label) => {
                 let name = label.to_string();
-                self.symbol_entry(&name)
+                self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
                     .and_then(|ty| self.unsupported_type_message(ty))
             }
@@ -635,8 +652,12 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn unsupported_reference_operation_message(&self, operand: &Operand) -> Option<String> {
-        self.operand_is_reference(operand).then(|| {
+    fn unsupported_reference_operation_message(
+        &self,
+        function: &str,
+        operand: &Operand,
+    ) -> Option<String> {
+        self.operand_is_reference(function, operand).then(|| {
             format!("x86 backend does not support operations on reference values yet: {operand}")
         })
     }
@@ -743,7 +764,7 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn function_signature(&self, function: &str) -> Option<&FunctionType> {
-        self.symbol_entry(function)
+        self.global_symbol_entry(function)
             .and_then(|entry| entry.var_type)
             .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
             .and_then(|ty| match ty {
@@ -752,24 +773,24 @@ impl<'a> CodeGeneratorX86<'a> {
             })
     }
 
-    fn operand_primitive_type(&self, operand: &Operand) -> Option<PrimitiveType> {
+    fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
         let name = operand_name(operand)?;
-        let ty = self.symbol_entry(&name)?.var_type?;
+        let ty = self.function_symbol_entry(function, &name)?.var_type?;
         match self.types.get(self.types.canonicalize(ty))? {
             Type::PrimitiveType(primitive) => Some(*primitive),
             _ => None,
         }
     }
 
-    fn shift_mnemonic(&self, inst: &AssignmentInstruction) -> &'static str {
+    fn shift_mnemonic(&self, function: &str, inst: &AssignmentInstruction) -> &'static str {
         if inst.operator == operators::SHIFT_LEFT {
             return "shl";
         }
         let shifted_type = inst
             .left
             .as_ref()
-            .and_then(|left| self.operand_primitive_type(left))
-            .or_else(|| self.operand_primitive_type(&inst.target));
+            .and_then(|left| self.operand_primitive_type(function, left))
+            .or_else(|| self.operand_primitive_type(function, &inst.target));
         if shifted_type == Some(PrimitiveType::U32) {
             "shr"
         } else {
@@ -781,6 +802,7 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &AssignmentInstruction,
     ) {
@@ -803,7 +825,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 load_operand(lines, frame, location, &inst.right, target_register);
                 lines.push(format!("  not {}", register_name_32(target_register)));
             }
-            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => {
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(function, inst) => {
                 load_operand(lines, frame, location, &inst.right, Register::RAX);
                 lines.push(String::from("  cmp eax, 0"));
                 lines.push(String::from("  setne al"));
@@ -897,7 +919,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 ));
             }
             (Some(left), operators::SHIFT_LEFT | operators::SHIFT_RIGHT) => {
-                let mnemonic = self.shift_mnemonic(inst);
+                let mnemonic = self.shift_mnemonic(function, inst);
                 if target_register == Register::RCX {
                     emit_shift_to_rcx_target(lines, frame, location, left, &inst.right, mnemonic);
                     return;
@@ -922,14 +944,16 @@ impl<'a> CodeGeneratorX86<'a> {
             | (Some(_), operators::EQUALS | operators::NOT_EQUALS)
             | (Some(_), operators::LESS | operators::LESS_EQUALS)
             | (Some(_), operators::GREATER | operators::GREATER_EQUALS) => target_register,
-            (None, operators::TYPE_CAST) if self.cast_target_is_bool(inst) => Register::RAX,
+            (None, operators::TYPE_CAST) if self.cast_target_is_bool(function, inst) => {
+                Register::RAX
+            }
             _ => target_register,
         };
         store_operand(lines, frame, location, &inst.target, result_register);
     }
 
-    fn cast_target_is_bool(&self, inst: &AssignmentInstruction) -> bool {
-        self.operand_type(&inst.target)
+    fn cast_target_is_bool(&self, function: &str, inst: &AssignmentInstruction) -> bool {
+        self.operand_type(function, &inst.target)
             .is_some_and(|ty| is_bool_type(self.types, ty))
     }
 
@@ -1131,6 +1155,7 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn stack_slots(&self, range: FunctionRange) -> BTreeMap<String, usize> {
+        let function = self.cfg[range.start].label.as_str();
         let mut names = BTreeSet::new();
         for node in self.cfg.function_nodes(&range) {
             for inst in &self.cfg[node].instructions {
@@ -1141,7 +1166,7 @@ impl<'a> CodeGeneratorX86<'a> {
         names
             .into_iter()
             .map(|name| {
-                let size = if self.symbol_is_reference(&name) {
+                let size = if self.symbol_is_reference(function, &name) {
                     8
                 } else {
                     4
@@ -1154,6 +1179,7 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn home_slot_names(&self, range: FunctionRange) -> BTreeSet<String> {
+        let function = self.cfg[range.start].label.as_str();
         let mut names = BTreeSet::new();
         for node in self.cfg.function_nodes(&range) {
             for inst in &self.cfg[node].instructions {
@@ -1172,7 +1198,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     .into_iter()
                     .chain(inst.instruction.variables_written())
                 {
-                    if self.symbol_is_reference(&name) {
+                    if self.symbol_is_reference(function, &name) {
                         names.insert(name);
                     }
                 }
@@ -1181,8 +1207,8 @@ impl<'a> CodeGeneratorX86<'a> {
         names
     }
 
-    fn symbol_is_reference(&self, name: &str) -> bool {
-        self.symbol_entry(name)
+    fn symbol_is_reference(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
             .and_then(|entry| entry.var_type)
             .is_some_and(|ty| {
                 matches!(
