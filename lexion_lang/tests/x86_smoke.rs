@@ -109,6 +109,11 @@ fn x86_smoke_return_bool_comparison() {
 }
 
 #[test]
+fn x86_smoke_f32_arithmetic_and_comparisons() {
+    insta::assert_snapshot!(compile_x86("backend/x86_f32_operations.lex"));
+}
+
+#[test]
 fn x86_smoke_ternary_expression() {
     insta::assert_snapshot!(compile_x86("backend/ternary_expression.lex"));
 }

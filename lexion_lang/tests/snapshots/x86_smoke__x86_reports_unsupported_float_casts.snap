@@ -11,12 +11,3 @@ snapshot_kind: text
    :                     `-- here
  3 |     return 0;
    `----
-
-  x x86 backend does not support floating-point values yet: f32
-   ,-[tests/fixtures/backend/x86_unsupported_float_cast.lex:2:9]
- 1 | fn main() -> i32 {
- 2 |     let value = 1 as f32;
-   :         ^^|^^
-   :           `-- here
- 3 |     return 0;
-   `----

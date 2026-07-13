@@ -200,6 +200,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 {
                     load_reference_operand(assembler, slots, &inst.src, rax)?;
                     store_reference_operand(assembler, slots, &inst.dst, rax)?;
+                } else if self.operand_is_f32(context.name, &inst.src)
+                    || self.operand_is_f32(context.name, &inst.dst)
+                {
+                    load_float_operand(assembler, slots, &inst.src, xmm0)?;
+                    store_float_operand(assembler, slots, &inst.dst, xmm0)?;
                 } else {
                     load_operand(assembler, slots, &inst.src, eax)?;
                     store_operand(assembler, slots, &inst.dst, eax)?;
@@ -248,6 +253,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         function: &str,
         inst: &AssignmentInstruction,
     ) -> Result<(), IcedError> {
+        if self.assignment_uses_f32(function, inst) {
+            return self.emit_float_assignment(assembler, slots, inst);
+        }
         match (inst.left.as_ref(), inst.operator) {
             (None, operators::UNARY_MINUS) => {
                 load_operand(assembler, slots, &inst.right, eax)?;
@@ -330,6 +338,44 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         store_operand(assembler, slots, &inst.target, eax)
     }
 
+    fn emit_float_assignment(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        inst: &AssignmentInstruction,
+    ) -> Result<(), IcedError> {
+        match (inst.left.as_ref(), inst.operator) {
+            (None, operators::UNARY_MINUS) => {
+                load_float_operand(assembler, slots, &inst.right, xmm0)?;
+                assembler.mov(eax, i32::MIN)?;
+                assembler.movd(xmm1, eax)?;
+                assembler.xorps(xmm0, xmm1)?;
+                store_float_operand(assembler, slots, &inst.target, xmm0)
+            }
+            (None, _) => {
+                load_float_operand(assembler, slots, &inst.right, xmm0)?;
+                store_float_operand(assembler, slots, &inst.target, xmm0)
+            }
+            (
+                Some(left),
+                operators::PLUS | operators::MINUS | operators::MULTIPLY | operators::DIVIDE,
+            ) => {
+                load_float_operand(assembler, slots, left, xmm0)?;
+                emit_float_binary(assembler, slots, &inst.right, inst.operator)?;
+                store_float_operand(assembler, slots, &inst.target, xmm0)
+            }
+            (Some(left), operators::EQUALS | operators::NOT_EQUALS)
+            | (Some(left), operators::LESS | operators::LESS_EQUALS)
+            | (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
+                self.emit_float_compare(assembler, slots, left, &inst.right, inst.operator)?;
+                store_operand(assembler, slots, &inst.target, eax)
+            }
+            (Some(_), _) => {
+                unreachable!("unsupported f32 assignment operators are diagnosed before emission")
+            }
+        }
+    }
+
     fn cast_target_is_bool(&self, function: &str, inst: &AssignmentInstruction) -> bool {
         self.operand_type(function, &inst.target)
             .is_some_and(|ty| is_bool_type(self.types, ty))
@@ -352,6 +398,44 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             operators::LESS_EQUALS => assembler.setle(al)?,
             operators::GREATER => assembler.setg(al)?,
             operators::GREATER_EQUALS => assembler.setge(al)?,
+            _ => unreachable!(),
+        }
+        assembler.movzx(eax, al)
+    }
+
+    fn emit_float_compare(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        left: &Operand,
+        right: &Operand,
+        operator: &str,
+    ) -> Result<(), IcedError> {
+        load_float_operand(assembler, slots, left, xmm0)?;
+        emit_float_compare_operand(assembler, slots, right)?;
+        match operator {
+            operators::EQUALS => {
+                assembler.sete(al)?;
+                assembler.setnp(cl)?;
+                assembler.and(al, cl)?;
+            }
+            operators::NOT_EQUALS => {
+                assembler.setne(al)?;
+                assembler.setp(cl)?;
+                assembler.or(al, cl)?;
+            }
+            operators::LESS => {
+                assembler.setb(al)?;
+                assembler.setnp(cl)?;
+                assembler.and(al, cl)?;
+            }
+            operators::LESS_EQUALS => {
+                assembler.setbe(al)?;
+                assembler.setnp(cl)?;
+                assembler.and(al, cl)?;
+            }
+            operators::GREATER => assembler.seta(al)?,
+            operators::GREATER_EQUALS => assembler.setae(al)?,
             _ => unreachable!(),
         }
         assembler.movzx(eax, al)
@@ -766,6 +850,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
             return self.unsupported_cast_message(function, inst);
         }
+        if self.assignment_uses_f32(function, inst) && !float_assignment_supported(inst) {
+            return Some(format!(
+                "x86 machine-code backend does not support `{}` operations on f32 values yet",
+                inst.operator
+            ));
+        }
         (!assignment_supported(inst)).then(|| {
             format!(
                 "x86 machine-code backend does not support `{}` operations yet",
@@ -776,9 +866,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
-            Operand::Literal(Lit::Float(_)) => Some(String::from(
-                "x86 machine-code backend does not support floating-point values yet: f32",
-            )),
             Operand::Literal(Lit::String(_)) => Some(String::from(
                 "x86 machine-code backend does not support string values yet: &str",
             )),
@@ -820,10 +907,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .find_map(|ty| {
                 self.unsupported_type_message(*ty)
+                    .or_else(|| self.unsupported_float_abi_message(*ty))
                     .or_else(|| self.unsupported_reference_abi_message(*ty))
             })
             .or_else(|| {
                 self.unsupported_type_message(signature.return_type)
+                    .or_else(|| self.unsupported_float_abi_message(signature.return_type))
                     .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
             })
     }
@@ -839,8 +928,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
-            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+            .find_map(|ty| {
+                self.unsupported_float_abi_message(*ty)
+                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            })
+            .or_else(|| {
+                self.unsupported_float_abi_message(signature.return_type)
+                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+            })
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -876,9 +971,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let ty = self.types.canonicalize(ty);
         let name = self.types.to_string_index(ty);
         match self.types.get(ty)? {
-            Type::PrimitiveType(PrimitiveType::F32) => Some(format!(
-                "x86 machine-code backend does not support floating-point values yet: {name}"
-            )),
             Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
                 "x86 machine-code backend does not support string values yet: {name}"
             )),
@@ -918,6 +1010,29 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
             ))
         )
+    }
+
+    fn unsupported_float_abi_message(&self, ty: Index) -> Option<String> {
+        is_f32_type(self.types, ty).then(|| {
+            format!(
+                "x86 machine-code backend does not support f32 parameters, calls, or returns yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
+    }
+
+    fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| is_f32_type(self.types, ty))
+    }
+
+    fn assignment_uses_f32(&self, function: &str, inst: &AssignmentInstruction) -> bool {
+        self.operand_is_f32(function, &inst.target)
+            || inst
+                .left
+                .as_ref()
+                .is_some_and(|left| self.operand_is_f32(function, left))
+            || self.operand_is_f32(function, &inst.right)
     }
 
     fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
@@ -1124,6 +1239,27 @@ fn load_operand(
     }
 }
 
+fn load_float_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    register: AsmRegisterXmm,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Literal(Lit::Float(value)) => {
+            assembler.mov(eax, float_literal_bits(*value) as i32)?;
+            assembler.movd(register, eax)
+        }
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.movss(register, stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xorps(register, register),
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
+    }
+}
+
 fn store_operand(
     assembler: &mut CodeAssembler,
     slots: &BTreeMap<String, usize>,
@@ -1132,6 +1268,18 @@ fn store_operand(
 ) -> Result<(), IcedError> {
     if matches!(operand, Operand::Variable(_) | Operand::Temporary(_)) {
         assembler.mov(stack_value(slots, operand), register)?;
+    }
+    Ok(())
+}
+
+fn store_float_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    register: AsmRegisterXmm,
+) -> Result<(), IcedError> {
+    if matches!(operand, Operand::Variable(_) | Operand::Temporary(_)) {
+        assembler.movss(stack_value(slots, operand), register)?;
     }
     Ok(())
 }
@@ -1222,6 +1370,80 @@ fn cmp_operand(
         }
         Operand::Placeholder => assembler.cmp(eax, 0),
         Operand::Label(_) => unreachable!("labels are not valid i32 values"),
+    }
+}
+
+fn emit_float_binary(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    operator: &str,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Literal(Lit::Float(_)) => {
+            load_float_operand(assembler, slots, operand, xmm1)?;
+            emit_float_binary_register(assembler, operator)
+        }
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            emit_float_binary_memory(assembler, stack_value(slots, operand), operator)
+        }
+        Operand::Placeholder => {
+            assembler.xorps(xmm1, xmm1)?;
+            emit_float_binary_register(assembler, operator)
+        }
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
+    }
+}
+
+fn emit_float_binary_register(
+    assembler: &mut CodeAssembler,
+    operator: &str,
+) -> Result<(), IcedError> {
+    match operator {
+        operators::PLUS => assembler.addss(xmm0, xmm1),
+        operators::MINUS => assembler.subss(xmm0, xmm1),
+        operators::MULTIPLY => assembler.mulss(xmm0, xmm1),
+        operators::DIVIDE => assembler.divss(xmm0, xmm1),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_float_binary_memory(
+    assembler: &mut CodeAssembler,
+    operand: AsmMemoryOperand,
+    operator: &str,
+) -> Result<(), IcedError> {
+    match operator {
+        operators::PLUS => assembler.addss(xmm0, operand),
+        operators::MINUS => assembler.subss(xmm0, operand),
+        operators::MULTIPLY => assembler.mulss(xmm0, operand),
+        operators::DIVIDE => assembler.divss(xmm0, operand),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_float_compare_operand(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Literal(Lit::Float(_)) => {
+            load_float_operand(assembler, slots, operand, xmm1)?;
+            assembler.ucomiss(xmm0, xmm1)
+        }
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.ucomiss(xmm0, stack_value(slots, operand))
+        }
+        Operand::Placeholder => {
+            assembler.xorps(xmm1, xmm1)?;
+            assembler.ucomiss(xmm0, xmm1)
+        }
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
     }
 }
 
@@ -1408,6 +1630,10 @@ fn literal_value(operand: &Operand) -> i32 {
     }
 }
 
+fn float_literal_bits(value: f64) -> u32 {
+    (value as f32).to_bits()
+}
+
 fn assignment_supported(inst: &AssignmentInstruction) -> bool {
     matches!(
         (inst.left.as_ref(), inst.operator),
@@ -1439,10 +1665,34 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
     )
 }
 
+fn float_assignment_supported(inst: &AssignmentInstruction) -> bool {
+    matches!(
+        (inst.left.as_ref(), inst.operator),
+        (None, operators::UNARY_PLUS | operators::UNARY_MINUS)
+            | (Some(_), operators::PLUS)
+            | (Some(_), operators::MINUS)
+            | (Some(_), operators::MULTIPLY)
+            | (Some(_), operators::DIVIDE)
+            | (Some(_), operators::EQUALS)
+            | (Some(_), operators::NOT_EQUALS)
+            | (Some(_), operators::LESS)
+            | (Some(_), operators::LESS_EQUALS)
+            | (Some(_), operators::GREATER)
+            | (Some(_), operators::GREATER_EQUALS)
+    )
+}
+
 fn is_bool_type(types: &TypeCollection, ty: Index) -> bool {
     matches!(
         types.get(types.canonicalize(ty)),
         Some(Type::PrimitiveType(PrimitiveType::BOOL))
+    )
+}
+
+fn is_f32_type(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(PrimitiveType::F32))
     )
 }
 

@@ -139,6 +139,13 @@ fn x86_machine_code_return_bool_comparison() {
 }
 
 #[test]
+fn x86_machine_code_f32_arithmetic_and_comparisons() {
+    let code = compile_machine_code("backend/x86_f32_operations.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_ternary_expression() {
     let code = compile_machine_code("backend/ternary_expression.lex");
 

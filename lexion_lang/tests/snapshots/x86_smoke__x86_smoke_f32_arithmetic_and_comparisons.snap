@@ -1,0 +1,89 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_f32_operations.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 112
+#     let left: f32 = 3.0;
+  mov eax, 0x40400000
+  movd xmm0, eax
+  movss DWORD PTR [rbp-64], xmm0
+#     let right: f32 = 2.0;
+  mov eax, 0x40000000
+  movd xmm0, eax
+  movss DWORD PTR [rbp-96], xmm0
+#     let sum = left + right;
+  movss xmm0, DWORD PTR [rbp-64]
+  addss xmm0, DWORD PTR [rbp-96]
+  movss DWORD PTR [rbp-16], xmm0
+  movss xmm0, DWORD PTR [rbp-16]
+  movss DWORD PTR [rbp-104], xmm0
+#     let difference = sum - right;
+  movss xmm0, DWORD PTR [rbp-104]
+  subss xmm0, DWORD PTR [rbp-96]
+  movss DWORD PTR [rbp-24], xmm0
+  movss xmm0, DWORD PTR [rbp-24]
+  movss DWORD PTR [rbp-56], xmm0
+#     let product = difference * right;
+  movss xmm0, DWORD PTR [rbp-56]
+  mulss xmm0, DWORD PTR [rbp-96]
+  movss DWORD PTR [rbp-32], xmm0
+  movss xmm0, DWORD PTR [rbp-32]
+  movss DWORD PTR [rbp-80], xmm0
+#     let quotient = product / right;
+  movss xmm0, DWORD PTR [rbp-80]
+  divss xmm0, DWORD PTR [rbp-96]
+  movss DWORD PTR [rbp-40], xmm0
+  movss xmm0, DWORD PTR [rbp-40]
+  movss DWORD PTR [rbp-88], xmm0
+#     let negated = -quotient;
+  movss xmm0, DWORD PTR [rbp-88]
+  mov eax, 0x80000000
+  movd xmm1, eax
+  xorps xmm0, xmm1
+  movss DWORD PTR [rbp-48], xmm0
+  movss xmm0, DWORD PTR [rbp-48]
+  movss DWORD PTR [rbp-72], xmm0
+#     let less = negated < 0.0;
+  movss xmm0, DWORD PTR [rbp-72]
+  mov eax, 0x00000000
+  movd xmm1, eax
+  ucomiss xmm0, xmm1
+  setb al
+  setnp cl
+  and al, cl
+  movzx eax, al
+  mov edi, eax
+#     let greater = quotient >= 3.0;
+  movss xmm0, DWORD PTR [rbp-88]
+  mov eax, 0x40400000
+  movd xmm1, eax
+  ucomiss xmm0, xmm1
+  setae al
+  movzx eax, al
+  mov esi, eax
+#     let result = if less && greater { 0 } else { 1 };
+  mov eax, edi
+  and eax, esi
+  cmp eax, 0
+  je $celse_1
+$cthen_1:
+  mov eax, 0
+  mov DWORD PTR [rbp-4], eax
+  jmp $cend_1
+$celse_1:
+  mov eax, 1
+  mov DWORD PTR [rbp-4], eax
+$cend_1:
+  mov eax, DWORD PTR [rbp-4]
+#     return result;
+  add rsp, 112
+  pop rbp
+  ret

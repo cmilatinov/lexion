@@ -1,22 +1,12 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-assertion_line: 107
 expression: "compile_x86_error(\"backend/x86_unsupported_float.lex\").join(\"\\n\")"
 snapshot_kind: text
 ---
-  x x86 backend does not support floating-point values yet: f32
+  x x86 backend does not support f32 parameters, calls, or returns yet: f32
    ,-[tests/fixtures/backend/x86_unsupported_float.lex:1:4]
  1 | fn main() -> f32 {
    :    ^^|^
    :      `-- here
  2 |     return 1.0;
-   `----
-
-  x x86 backend does not support floating-point values yet: f32
-   ,-[tests/fixtures/backend/x86_unsupported_float.lex:2:5]
- 1 | fn main() -> f32 {
- 2 |     return 1.0;
-   :     ^^^^^|^^^^^
-   :          `-- here
- 3 | }
    `----
