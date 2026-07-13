@@ -186,19 +186,28 @@ impl SymbolTableGraph {
         None
     }
 
-    fn function_scope(&self, function: &str) -> Option<NodeIndex> {
+    /// Finds a function declaration in any lexical scope.
+    pub fn lookup_function_entry(
+        &self,
+        function: &str,
+    ) -> Option<(NodeIndex, usize, &SymbolTableEntry)> {
         let graph = Reversed(&self.graph);
         Bfs::new(&graph, self.root).iter(&graph).find_map(|scope| {
             self.graph.node_weight(scope).and_then(|table| {
                 table
                     .entries
                     .iter()
-                    .find(|entry| {
+                    .position(|entry| {
                         entry.ty == SymbolTableEntryType::Function && entry.name == function
                     })
-                    .and_then(|entry| entry.table)
+                    .map(|index| (scope, index, &table.entries[index]))
             })
         })
+    }
+
+    fn function_scope(&self, function: &str) -> Option<NodeIndex> {
+        self.lookup_function_entry(function)
+            .and_then(|(_, _, entry)| entry.table)
     }
 
     pub fn table(&self, node: NodeIndex, types: Option<&TypeCollection>) -> Option<Table> {
@@ -599,6 +608,12 @@ mod tests {
                 .lookup_function("inner", "inner_value")
                 .map(|(_, _, entry)| entry.name.as_str()),
             Some("inner_value")
+        );
+        assert_eq!(
+            symbols
+                .lookup_function_entry("inner")
+                .map(|(_, _, entry)| entry.name.as_str()),
+            Some("inner")
         );
         assert_eq!(
             symbols

@@ -764,7 +764,9 @@ impl<'a> CodeGeneratorX86<'a> {
     }
 
     fn function_signature(&self, function: &str) -> Option<&FunctionType> {
-        self.global_symbol_entry(function)
+        self.symbols
+            .lookup_function_entry(function)
+            .map(|(_, _, entry)| entry)
             .and_then(|entry| entry.var_type)
             .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
             .and_then(|ty| match ty {
