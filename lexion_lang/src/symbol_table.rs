@@ -167,21 +167,38 @@ impl SymbolTableGraph {
         function: &str,
         identifier: &str,
     ) -> Option<(NodeIndex, usize, &SymbolTableEntry)> {
-        let (_, _, function_entry) = self.lookup(self.root, function)?;
-        let function_scope = function_entry.table?;
+        let mut scopes = vec![self.function_scope(function)?];
+        while let Some(scope) = scopes.pop() {
+            let table = self.graph.node_weight(scope)?;
+            if let Ok(index) = table
+                .entries
+                .as_slice()
+                .binary_search_by(|probe| probe.name.as_str().cmp(identifier))
+            {
+                return Some((scope, index, &table.entries[index]));
+            }
+            scopes.extend(table.entries.iter().filter_map(|entry| {
+                (entry.ty == SymbolTableEntryType::Scope)
+                    .then_some(entry.table)
+                    .flatten()
+            }));
+        }
+        None
+    }
+
+    fn function_scope(&self, function: &str) -> Option<NodeIndex> {
         let graph = Reversed(&self.graph);
-        Bfs::new(&graph, function_scope)
-            .iter(&graph)
-            .find_map(|node| {
-                self.graph.node_weight(node).and_then(|table| {
-                    table
-                        .entries
-                        .as_slice()
-                        .binary_search_by(|probe| probe.name.as_str().cmp(identifier))
-                        .ok()
-                        .map(|index| (node, index, &table.entries[index]))
-                })
+        Bfs::new(&graph, self.root).iter(&graph).find_map(|scope| {
+            self.graph.node_weight(scope).and_then(|table| {
+                table
+                    .entries
+                    .iter()
+                    .find(|entry| {
+                        entry.ty == SymbolTableEntryType::Function && entry.name == function
+                    })
+                    .and_then(|entry| entry.table)
             })
+        })
     }
 
     pub fn table(&self, node: NodeIndex, types: Option<&TypeCollection>) -> Option<Table> {
@@ -506,5 +523,89 @@ impl<'a> PipelineStage for SymbolTableGenerator<'a> {
             AstVisitorAction::Continue
         });
         Some(self.table)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(ty: SymbolTableEntryType, name: &str, table: Option<NodeIndex>) -> SymbolTableEntry {
+        SymbolTableEntry {
+            ty,
+            name: String::from(name),
+            table,
+            span: 0.into(),
+            var_type: None,
+            layout: None,
+        }
+    }
+
+    #[test]
+    fn lookup_function_finds_nested_function_scopes() {
+        let mut symbols = SymbolTableGraph::default();
+        let root = symbols
+            .graph
+            .add_node(SymbolTable::from_name(String::from("root")));
+        symbols.root = root;
+
+        let outer = symbols
+            .graph
+            .add_node(SymbolTable::from_name(String::from("outer")));
+        symbols.graph.add_edge(outer, root, ());
+        symbols
+            .insert_entry(
+                root,
+                entry(SymbolTableEntryType::Function, "outer", Some(outer)),
+            )
+            .unwrap();
+
+        let block = symbols
+            .graph
+            .add_node(SymbolTable::from_name(String::from("outer.0")));
+        symbols.graph.add_edge(block, outer, ());
+        symbols
+            .insert_entry(
+                outer,
+                entry(SymbolTableEntryType::Scope, "outer.0", Some(block)),
+            )
+            .unwrap();
+        symbols
+            .insert_entry(
+                block,
+                entry(SymbolTableEntryType::LocalVar, "block_value", None),
+            )
+            .unwrap();
+
+        let inner = symbols
+            .graph
+            .add_node(SymbolTable::from_name(String::from("inner")));
+        symbols.graph.add_edge(inner, block, ());
+        symbols
+            .insert_entry(
+                block,
+                entry(SymbolTableEntryType::Function, "inner", Some(inner)),
+            )
+            .unwrap();
+        symbols
+            .insert_entry(
+                inner,
+                entry(SymbolTableEntryType::LocalVar, "inner_value", None),
+            )
+            .unwrap();
+
+        assert_eq!(
+            symbols
+                .lookup_function("inner", "inner_value")
+                .map(|(_, _, entry)| entry.name.as_str()),
+            Some("inner_value")
+        );
+        assert_eq!(
+            symbols
+                .lookup_function("outer", "block_value")
+                .map(|(_, _, entry)| entry.name.as_str()),
+            Some("block_value")
+        );
+        assert!(symbols.lookup_function("outer", "inner_value").is_none());
     }
 }
