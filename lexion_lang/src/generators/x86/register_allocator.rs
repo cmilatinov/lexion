@@ -602,7 +602,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
     }
 
     fn function_signature(&self, function: &str) -> Option<&FunctionType> {
-        let (_, _, entry) = self.symbols.lookup(self.symbols.root, function)?;
+        let (_, _, entry) = self.symbols.lookup_function_entry(function)?;
         let ty = entry.var_type?;
         match self.types.get(self.types.canonicalize(ty))? {
             Type::FunctionType(signature) => Some(signature),
