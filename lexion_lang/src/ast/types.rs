@@ -289,13 +289,15 @@ impl TypeCollection {
 
     pub fn canonicalize(&self, ty: Index) -> Index {
         let mut result = ty;
-        while let Some(next) = self.type_map.get(&result) {
-            result = *next;
+        loop {
+            if let Some(next) = self.type_map.get(&result) {
+                result = *next;
+            } else if let Type::TypeDefType(typedef_ty) = &self.arena[result] {
+                result = typedef_ty.ty;
+            } else {
+                return result;
+            }
         }
-        while let Type::TypeDefType(typedef_ty) = &self.arena[result] {
-            result = typedef_ty.ty;
-        }
-        result
     }
 
     pub fn eq(&self, mut a: Index, mut b: Index) -> bool {

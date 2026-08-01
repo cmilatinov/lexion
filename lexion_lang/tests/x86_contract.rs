@@ -302,12 +302,14 @@ fn backend_value_layouts_resolve_aggregate_alias_chains() {
     }));
     let pair_ref = types.reference(pair_alias_alias);
 
-    let mapped_pair = types.insert(&Type::TypeDefType(TypeDefType {
-        ident: String::from("MappedPair"),
-        ty: pair_alias_alias,
+    let mapped_pair = types.insert(&Type::TupleType(TupleType {
+        types: vec![types.bool(), i32_ty],
     }));
-    types.type_map.insert(mapped_pair, pair_alias_alias);
-    types.type_map.insert(pair_alias_alias, pair_alias);
+    let mapped_pair_alias = types.insert(&Type::TypeDefType(TypeDefType {
+        ident: String::from("MappedPair"),
+        ty: mapped_pair,
+    }));
+    types.type_map.insert(mapped_pair, pair);
 
     types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
@@ -317,7 +319,7 @@ fn backend_value_layouts_resolve_aggregate_alias_chains() {
     ));
     assert_size_align(&types, pair_alias_alias, 8, 4);
     assert_size_align(&types, pair_ref, 8, 8);
-    assert_eq!(types.canonicalize(mapped_pair), pair);
+    assert_eq!(types.canonicalize(mapped_pair_alias), pair);
 }
 
 fn assert_aggregate_layout(types: &TypeCollection, ty: Index) {
