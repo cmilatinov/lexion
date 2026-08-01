@@ -289,10 +289,15 @@ impl TypeCollection {
 
     pub fn canonicalize(&self, ty: Index) -> Index {
         let mut result = ty;
-        while let Some(next) = self.type_map.get(&ty) {
-            result = *next;
+        loop {
+            if let Some(next) = self.type_map.get(&result) {
+                result = *next;
+            } else if let Type::TypeDefType(typedef_ty) = &self.arena[result] {
+                result = typedef_ty.ty;
+            } else {
+                return result;
+            }
         }
-        result
     }
 
     pub fn eq(&self, mut a: Index, mut b: Index) -> bool {
@@ -402,7 +407,8 @@ impl TypeCollection {
             }
             Type::RefType(_) | Type::FunctionType(_) => SizeAlign::ptr(bitness),
             Type::PrimitiveType(primitive_ty) => primitive_ty.layout(bitness).size_align(),
-            Type::TypeDefType(_) | Type::Unknown => SizeAlign::none(),
+            Type::TypeDefType(_) => unreachable!("canonical types have no aliases"),
+            Type::Unknown => SizeAlign::none(),
         }
     }
 
@@ -411,7 +417,7 @@ impl TypeCollection {
         match &self.arena[ty] {
             Type::TupleType(_) | Type::StructType(_) => TypeKind::Memory,
             Type::RefType(_) | Type::FunctionType(_) => TypeKind::Integer,
-            Type::TypeDefType(_) => unreachable!(),
+            Type::TypeDefType(_) => unreachable!("canonical types have no aliases"),
             Type::PrimitiveType(primitive_ty) => match primitive_ty {
                 PrimitiveType::U32
                 | PrimitiveType::I32
