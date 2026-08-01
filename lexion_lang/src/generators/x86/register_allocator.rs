@@ -1,4 +1,4 @@
-use crate::ast::types::{FunctionType, Type, TypeCollection};
+use crate::ast::types::{FunctionType, Type, TypeCollection, TypeKind};
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::tac::instructions::{
     CodeLocation, ControlFlowGraph, FunctionCallInstruction, FunctionRange, Instruction,
@@ -247,6 +247,14 @@ impl<'a> PipelineStage for AbiRegisterAllocator<'a, SystemV64> {
                 .copied()
                 .filter(|reg| *reg != Register::RBP),
         );
+        registers.extend(
+            target
+                .calling_convention()
+                .call_clobbered()
+                .iter()
+                .copied()
+                .filter(is_xmm_register),
+        );
         Self {
             cfg,
             types,
@@ -299,7 +307,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
             let crosses_call = call_locations
                 .iter()
                 .any(|call| interval.span.start < *call && *call < interval.span.end);
-            let allowed = self.allowed_registers(crosses_call);
+            let allowed = self.allowed_registers(range, &interval, crosses_call);
 
             let location = self.allocate_location(&allowed, &interval_constraints, &mut assigned);
             let assigned_interval = AssignedLivenessInterval {
@@ -322,7 +330,30 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
         self.stack_offset = 0;
     }
 
-    fn allowed_registers(&self, crosses_call: bool) -> Vec<Register> {
+    fn allowed_registers(
+        &self,
+        range: FunctionRange,
+        interval: &LivenessInterval,
+        crosses_call: bool,
+    ) -> Vec<Register> {
+        self.registers_for_kind(self.interval_type(range, interval), crosses_call)
+    }
+
+    fn registers_for_kind(&self, kind: Option<TypeKind>, crosses_call: bool) -> Vec<Register> {
+        if matches!(
+            kind,
+            Some(TypeKind::Float | TypeKind::Double | TypeKind::Vector)
+        ) {
+            return if crosses_call {
+                Vec::new()
+            } else {
+                self.registers
+                    .iter()
+                    .copied()
+                    .filter(is_xmm_register)
+                    .collect()
+            };
+        }
         if crosses_call {
             self.target
                 .calling_convention()
@@ -332,8 +363,19 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                 .filter(|reg| *reg != Register::RBP)
                 .collect()
         } else {
-            self.registers.clone()
+            self.registers
+                .iter()
+                .copied()
+                .filter(|register| !is_xmm_register(register))
+                .collect()
         }
+    }
+
+    fn interval_type(&self, range: FunctionRange, interval: &LivenessInterval) -> Option<TypeKind> {
+        self.symbols
+            .lookup_function(&self.cfg[range.start].label, interval.variable.as_str())
+            .and_then(|(_, _, entry)| entry.var_type)
+            .map(|ty| self.types.kind(ty))
     }
 
     fn allocate_location(
@@ -653,6 +695,28 @@ fn operand_name(operand: &Operand) -> Option<String> {
     }
 }
 
+fn is_xmm_register(register: &Register) -> bool {
+    matches!(
+        register,
+        Register::XMM0
+            | Register::XMM1
+            | Register::XMM2
+            | Register::XMM3
+            | Register::XMM4
+            | Register::XMM5
+            | Register::XMM6
+            | Register::XMM7
+            | Register::XMM8
+            | Register::XMM9
+            | Register::XMM10
+            | Register::XMM11
+            | Register::XMM12
+            | Register::XMM13
+            | Register::XMM14
+            | Register::XMM15
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +786,38 @@ mod tests {
         );
 
         assert_stack(&location, 0);
+    }
+
+    #[test]
+    fn system_v_allocator_includes_xmm_registers() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+
+        assert!(allocator.registers.contains(&Register::XMM0));
+        assert!(allocator.registers.contains(&Register::XMM15));
+    }
+
+    #[test]
+    fn float_values_use_xmm_registers_and_spill_across_calls() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+
+        let registers = allocator.registers_for_kind(Some(TypeKind::Float), false);
+        assert!(registers.contains(&Register::XMM0));
+        assert!(registers.iter().all(is_xmm_register));
+        assert!(allocator
+            .registers_for_kind(Some(TypeKind::Float), true)
+            .is_empty());
+
+        let registers = allocator.registers_for_kind(Some(TypeKind::Integer), false);
+        assert!(registers.contains(&Register::RAX));
+        assert!(registers.iter().all(|register| !is_xmm_register(register)));
     }
 
     fn interval(name: &str, start: usize, end: usize) -> LivenessInterval {
