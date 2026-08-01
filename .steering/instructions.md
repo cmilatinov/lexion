@@ -19,7 +19,7 @@ These are the default operating instructions for work in `lexion`.
 
 1. Inspect `git status --short`.
 2. Read the relevant steering files:
-    - This file for branch, commit, and PR rules.
+   - This file for branch, commit, and PR rules.
    - `.steering/todoist.md` when selecting work or preparing PR references.
    - `.steering/architecture.md` for crate boundaries and pipeline ownership.
    - `.steering/conventions.md` for local Rust and test conventions.
