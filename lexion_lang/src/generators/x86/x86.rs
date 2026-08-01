@@ -1145,11 +1145,12 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
             .count();
+        let indexed_arguments = register_argument_follows_stack_argument(arg_locations);
+        let staged_arg_count = usize::from(indexed_arguments) * pending_param_count;
         let stack_padding = frame.call_stack_padding(
-            stack_arg_count,
+            stack_arg_count + staged_arg_count,
             self.target.calling_convention().stack_alignment(),
         );
-        let indexed_arguments = register_argument_follows_stack_argument(arg_locations);
         if indexed_arguments {
             emit_indexed_call_arguments(lines, arg_locations, stack_padding);
         } else {
@@ -1197,9 +1198,7 @@ impl<'a> CodeGeneratorX86<'a> {
         operand: &Operand,
     ) {
         if self.operand_is_f32(function, operand) {
-            load_float_operand(lines, frame, location, operand, Register::XMM0);
-            lines.push(String::from("  sub rsp, 8"));
-            lines.push(String::from("  movss DWORD PTR [rsp], xmm0"));
+            stage_float_parameter(lines, frame, location, operand);
             return;
         }
         load_operand(lines, frame, location, operand, Register::RAX);
@@ -1827,6 +1826,39 @@ fn load_float_operand(
         Operand::Placeholder => {
             lines.push(format!("  xorps {0}, {0}", register_name(register)));
         }
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
+    }
+}
+
+fn stage_float_parameter(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+) {
+    lines.push(String::from("  sub rsp, 8"));
+    match operand {
+        Operand::Literal(Lit::Float(value)) => lines.push(format!(
+            "  mov DWORD PTR [rsp], {}",
+            float_literal_bits(*value)
+        )),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            let Some(source) = frame.operand_location(location, operand) else {
+                return;
+            };
+            if let AssemblyLocation::Register(register) = source {
+                lines.push(format!(
+                    "  movss DWORD PTR [rsp], {}",
+                    register_name(register)
+                ));
+            } else {
+                lines.push(format!("  movss xmm15, {}", float_assembly_operand(source)));
+                lines.push(String::from("  movss DWORD PTR [rsp], xmm15"));
+            }
+        }
+        Operand::Placeholder => lines.push(String::from("  mov DWORD PTR [rsp], 0")),
         Operand::Literal(_) | Operand::Label(_) => {
             unreachable!("f32 values must be literals, variables, or temporaries")
         }

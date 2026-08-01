@@ -28,16 +28,17 @@ fn f32_tail(
     g: f32,
     h: f32,
     i: f32,
-    tail: i32
+    tail: i32,
+    tail2: i32
 ) -> i32 {
     let total = a + b + c + d + e + f + g + h + i;
-    return total == 45.0 ? tail : 0;
+    return total == 45.0 ? tail + tail2 : 0;
 }
 
 fn main() -> i32 {
     let scaled = scale(1.5, 2.0);
     let total = sum9(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
-    let mixed = f32_tail(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 7);
-    let correct = scaled == 3.0 && total == 45.0 && mixed == 7;
+    let mixed = f32_tail(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 7, 6);
+    let correct = scaled == 3.0 && total == 45.0 && mixed == 13;
     return correct ? 0 : 1;
 }

@@ -118,15 +118,18 @@ fn x86_smoke_f32_function_calls() {
     let assembly = compile_x86("backend/x86_f32_function_calls.lex");
 
     for instruction in [
+        "mov DWORD PTR [rsp], 0x3F800000",
         "movss DWORD PTR [rbp-",
         "movss xmm15, DWORD PTR [rbp+16]",
         "movss xmm0, DWORD PTR [rsp]",
         "movss xmm7, DWORD PTR [rsp+56]",
         "mov rdi, QWORD PTR [rsp+72]",
+        "sub rsp, 16",
         "mov QWORD PTR [rsp], rax",
         "call scale",
         "call sum9",
         "call f32_tail",
+        "add rsp, 96",
     ] {
         assert!(
             assembly.contains(instruction),

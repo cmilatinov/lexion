@@ -13,7 +13,7 @@ registers in instruction selection.
 - Integer comparisons and equality producing boolean results.
 - Boolean literals and simple boolean values.
 - `f32` literals, copies, unary negation, arithmetic, and comparisons lowered with scalar SSE instructions.
-- System V `f32` parameters, calls, stack arguments, and returns lowered through XMM registers.
+- System V `f32` parameters, register arguments, and returns lowered through XMM0-XMM7; later arguments use stack slots.
 - Function prologue, epilogue, return values, and local stack slots.
 
 ## Unsupported Until Later
