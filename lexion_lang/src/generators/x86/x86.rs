@@ -326,6 +326,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 {
                     load_reference_operand(lines, frame, location, &inst.src, Register::RAX);
                     store_reference_operand(lines, frame, location, &inst.dst, Register::RAX);
+                } else if self.operand_is_f32(function, &inst.src)
+                    || self.operand_is_f32(function, &inst.dst)
+                {
+                    load_float_operand(lines, frame, location, &inst.src, Register::XMM0);
+                    store_float_operand(lines, frame, location, &inst.dst, Register::XMM0);
                 } else {
                     let register = frame
                         .operand_location(location, &inst.dst)
@@ -594,6 +599,12 @@ impl<'a> CodeGeneratorX86<'a> {
         if inst.left.is_none() && inst.operator == operators::TYPE_CAST {
             return self.unsupported_cast_message(function, inst);
         }
+        if self.assignment_uses_f32(function, inst) && !float_assignment_supported(inst) {
+            return Some(format!(
+                "x86 backend does not support `{}` operations on f32 values yet",
+                inst.operator
+            ));
+        }
         (!assignment_supported(inst)).then(|| {
             format!(
                 "x86 backend does not support `{}` operations yet",
@@ -632,9 +643,6 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
-            Operand::Literal(Lit::Float(_)) => Some(String::from(
-                "x86 backend does not support floating-point values yet: f32",
-            )),
             Operand::Literal(Lit::String(_)) => Some(String::from(
                 "x86 backend does not support string values yet: &str",
             )),
@@ -674,10 +682,12 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .find_map(|ty| {
                 self.unsupported_type_message(*ty)
+                    .or_else(|| self.unsupported_float_abi_message(*ty))
                     .or_else(|| self.unsupported_reference_abi_message(*ty))
             })
             .or_else(|| {
                 self.unsupported_type_message(signature.return_type)
+                    .or_else(|| self.unsupported_float_abi_message(signature.return_type))
                     .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
             })
     }
@@ -693,8 +703,14 @@ impl<'a> CodeGeneratorX86<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| self.unsupported_reference_abi_message(*ty))
-            .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+            .find_map(|ty| {
+                self.unsupported_float_abi_message(*ty)
+                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            })
+            .or_else(|| {
+                self.unsupported_float_abi_message(signature.return_type)
+                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+            })
     }
 
     fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -710,9 +726,6 @@ impl<'a> CodeGeneratorX86<'a> {
         let ty = self.types.canonicalize(ty);
         let name = self.types.to_string_index(ty);
         match self.types.get(ty)? {
-            Type::PrimitiveType(PrimitiveType::F32) => Some(format!(
-                "x86 backend does not support floating-point values yet: {name}"
-            )),
             Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
                 "x86 backend does not support string values yet: {name}"
             )),
@@ -752,6 +765,29 @@ impl<'a> CodeGeneratorX86<'a> {
                 PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
             ))
         )
+    }
+
+    fn unsupported_float_abi_message(&self, ty: Index) -> Option<String> {
+        is_f32_type(self.types, ty).then(|| {
+            format!(
+                "x86 backend does not support f32 parameters, calls, or returns yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
+    }
+
+    fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| is_f32_type(self.types, ty))
+    }
+
+    fn assignment_uses_f32(&self, function: &str, inst: &AssignmentInstruction) -> bool {
+        self.operand_is_f32(function, &inst.target)
+            || inst
+                .left
+                .as_ref()
+                .is_some_and(|left| self.operand_is_f32(function, left))
+            || self.operand_is_f32(function, &inst.right)
     }
 
     fn function_call_signature(&self, inst: &FunctionCallInstruction) -> Option<&FunctionType> {
@@ -808,6 +844,10 @@ impl<'a> CodeGeneratorX86<'a> {
         location: CodeLocation,
         inst: &AssignmentInstruction,
     ) {
+        if self.assignment_uses_f32(function, inst) {
+            self.emit_float_assignment(lines, frame, location, inst);
+            return;
+        }
         let target_register = frame
             .operand_location(location, &inst.target)
             .and_then(|location| location.register())
@@ -952,6 +992,66 @@ impl<'a> CodeGeneratorX86<'a> {
             _ => target_register,
         };
         store_operand(lines, frame, location, &inst.target, result_register);
+    }
+
+    fn emit_float_assignment(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        inst: &AssignmentInstruction,
+    ) {
+        match (inst.left.as_ref(), inst.operator) {
+            (None, operators::UNARY_MINUS) => {
+                load_float_operand(lines, frame, location, &inst.right, Register::XMM0);
+                lines.push(String::from("  mov eax, 0x80000000"));
+                lines.push(String::from("  movd xmm1, eax"));
+                lines.push(String::from("  xorps xmm0, xmm1"));
+                store_float_operand(lines, frame, location, &inst.target, Register::XMM0);
+            }
+            (None, _) => {
+                load_float_operand(lines, frame, location, &inst.right, Register::XMM0);
+                store_float_operand(lines, frame, location, &inst.target, Register::XMM0);
+            }
+            (
+                Some(left),
+                operators::PLUS | operators::MINUS | operators::MULTIPLY | operators::DIVIDE,
+            ) => {
+                load_float_operand(lines, frame, location, left, Register::XMM0);
+                let right =
+                    float_operand_value(lines, frame, location, &inst.right, Register::XMM1);
+                let mnemonic = match inst.operator {
+                    operators::PLUS => "addss",
+                    operators::MINUS => "subss",
+                    operators::MULTIPLY => "mulss",
+                    operators::DIVIDE => "divss",
+                    _ => unreachable!(),
+                };
+                lines.push(format!("  {mnemonic} xmm0, {right}"));
+                store_float_operand(lines, frame, location, &inst.target, Register::XMM0);
+            }
+            (Some(left), operators::EQUALS | operators::NOT_EQUALS)
+            | (Some(left), operators::LESS | operators::LESS_EQUALS)
+            | (Some(left), operators::GREATER | operators::GREATER_EQUALS) => {
+                let result_register = frame
+                    .operand_location(location, &inst.target)
+                    .and_then(|location| location.register())
+                    .unwrap_or(Register::RAX);
+                emit_float_compare(
+                    lines,
+                    frame,
+                    location,
+                    left,
+                    &inst.right,
+                    inst.operator,
+                    result_register,
+                );
+                store_operand(lines, frame, location, &inst.target, result_register);
+            }
+            (Some(_), _) => {
+                unreachable!("unsupported f32 assignment operators are diagnosed before emission")
+            }
+        }
     }
 
     fn cast_target_is_bool(&self, function: &str, inst: &AssignmentInstruction) -> bool {
@@ -1200,7 +1300,9 @@ impl<'a> CodeGeneratorX86<'a> {
                     .into_iter()
                     .chain(inst.instruction.variables_written())
                 {
-                    if self.symbol_is_reference(function, &name) {
+                    if self.symbol_is_reference(function, &name)
+                        || self.symbol_is_f32(function, &name)
+                    {
                         names.insert(name);
                     }
                 }
@@ -1218,6 +1320,12 @@ impl<'a> CodeGeneratorX86<'a> {
                     Some(Type::RefType(_))
                 )
             })
+    }
+
+    fn symbol_is_f32(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| is_f32_type(self.types, ty))
     }
 }
 
@@ -1286,10 +1394,34 @@ fn assignment_supported(inst: &AssignmentInstruction) -> bool {
     )
 }
 
+fn float_assignment_supported(inst: &AssignmentInstruction) -> bool {
+    matches!(
+        (inst.left.as_ref(), inst.operator),
+        (None, operators::UNARY_PLUS | operators::UNARY_MINUS)
+            | (Some(_), operators::PLUS)
+            | (Some(_), operators::MINUS)
+            | (Some(_), operators::MULTIPLY)
+            | (Some(_), operators::DIVIDE)
+            | (Some(_), operators::EQUALS)
+            | (Some(_), operators::NOT_EQUALS)
+            | (Some(_), operators::LESS)
+            | (Some(_), operators::LESS_EQUALS)
+            | (Some(_), operators::GREATER)
+            | (Some(_), operators::GREATER_EQUALS)
+    )
+}
+
 fn is_bool_type(types: &TypeCollection, ty: Index) -> bool {
     matches!(
         types.get(types.canonicalize(ty)),
         Some(Type::PrimitiveType(PrimitiveType::BOOL))
+    )
+}
+
+fn is_f32_type(types: &TypeCollection, ty: Index) -> bool {
+    matches!(
+        types.get(types.canonicalize(ty)),
+        Some(Type::PrimitiveType(PrimitiveType::F32))
     )
 }
 
@@ -1619,6 +1751,40 @@ fn load_operand(
     }
 }
 
+fn load_float_operand(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    register: Register,
+) {
+    match operand {
+        Operand::Literal(Lit::Float(value)) => {
+            lines.push(format!("  mov eax, {}", float_literal_bits(*value)));
+            lines.push(format!("  movd {}, eax", register_name(register)));
+        }
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            let Some(source) = frame.operand_location(location, operand) else {
+                return;
+            };
+            if source == AssemblyLocation::Register(register) {
+                return;
+            }
+            lines.push(format!(
+                "  movss {}, {}",
+                register_name(register),
+                float_assembly_operand(source)
+            ));
+        }
+        Operand::Placeholder => {
+            lines.push(format!("  xorps {0}, {0}", register_name(register)));
+        }
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
+    }
+}
+
 fn store_operand(
     lines: &mut Vec<String>,
     frame: &FrameLayout<'_>,
@@ -1635,6 +1801,26 @@ fn store_operand(
         destination,
         Register::RAX,
     );
+}
+
+fn store_float_operand(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    register: Register,
+) {
+    let Some(destination) = frame.operand_location(location, operand) else {
+        return;
+    };
+    if destination == AssemblyLocation::Register(register) {
+        return;
+    }
+    lines.push(format!(
+        "  movss {}, {}",
+        float_assembly_operand(destination),
+        register_name(register)
+    ));
 }
 
 fn load_reference_operand(
@@ -1689,6 +1875,29 @@ fn operand_value(frame: &FrameLayout<'_>, location: CodeLocation, operand: &Oper
     }
 }
 
+fn float_operand_value(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    literal_register: Register,
+) -> String {
+    match operand {
+        Operand::Literal(Lit::Float(_)) => {
+            load_float_operand(lines, frame, location, operand, literal_register);
+            register_name(literal_register)
+        }
+        Operand::Variable(_) | Operand::Temporary(_) => frame
+            .operand_location(location, operand)
+            .map(float_assembly_operand)
+            .unwrap_or_else(|| String::from("xmm0")),
+        Operand::Placeholder => String::from("xmm0"),
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
+    }
+}
+
 fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stack_padding: usize) {
     if stack_padding == 0 {
         return;
@@ -1734,6 +1943,64 @@ fn emit_conditional_compare(
         operand_value(frame, location, right)
     ));
     operator
+}
+
+fn emit_float_compare(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    left: &Operand,
+    right: &Operand,
+    operator: &str,
+    result_register: Register,
+) {
+    load_float_operand(lines, frame, location, left, Register::XMM0);
+    let right = float_operand_value(lines, frame, location, right, Register::XMM1);
+    lines.push(format!("  ucomiss xmm0, {right}"));
+
+    let result = register_name_8(result_register);
+    let guard_register = if result_register == Register::RCX {
+        Register::RAX
+    } else {
+        Register::RCX
+    };
+    let guard = register_name_8(guard_register);
+    let preserve_guard = frame.register_occupied(location, guard_register);
+    if preserve_guard {
+        lines.push(format!("  push {}", register_name(guard_register)));
+    }
+    match operator {
+        operators::EQUALS => {
+            lines.push(format!("  sete {result}"));
+            lines.push(format!("  setnp {guard}"));
+            lines.push(format!("  and {result}, {guard}"));
+        }
+        operators::NOT_EQUALS => {
+            lines.push(format!("  setne {result}"));
+            lines.push(format!("  setp {guard}"));
+            lines.push(format!("  or {result}, {guard}"));
+        }
+        operators::LESS => {
+            lines.push(format!("  setb {result}"));
+            lines.push(format!("  setnp {guard}"));
+            lines.push(format!("  and {result}, {guard}"));
+        }
+        operators::LESS_EQUALS => {
+            lines.push(format!("  setbe {result}"));
+            lines.push(format!("  setnp {guard}"));
+            lines.push(format!("  and {result}, {guard}"));
+        }
+        operators::GREATER => lines.push(format!("  seta {result}")),
+        operators::GREATER_EQUALS => lines.push(format!("  setae {result}")),
+        _ => unreachable!(),
+    }
+    lines.push(format!(
+        "  movzx {}, {result}",
+        register_name_32(result_register)
+    ));
+    if preserve_guard {
+        lines.push(format!("  pop {}", register_name(guard_register)));
+    }
 }
 
 fn is_immediate_compare_operand(operand: &Operand) -> bool {
@@ -1809,6 +2076,14 @@ fn assembly_operand(location: AssemblyLocation) -> String {
     }
 }
 
+fn float_assembly_operand(location: AssemblyLocation) -> String {
+    match location {
+        AssemblyLocation::Register(register) => register_name(register),
+        AssemblyLocation::FrameStack { offset } => format!("DWORD PTR [rbp-{offset}]"),
+        AssemblyLocation::IncomingStack { offset } => format!("DWORD PTR [rbp+{offset}]"),
+    }
+}
+
 fn assembly_operand_64(location: AssemblyLocation) -> String {
     match location {
         AssemblyLocation::Register(register) => register_name(register),
@@ -1844,6 +2119,9 @@ fn operand_name(operand: &Operand) -> Option<String> {
 }
 
 fn register_name(register: Register) -> String {
+    if is_xmm_register(register) {
+        return format!("{register:?}").to_ascii_lowercase();
+    }
     format!("{:?}", register.full_register()).to_ascii_lowercase()
 }
 
@@ -1873,6 +2151,28 @@ fn register_name_8(register: Register) -> &'static str {
     }
 }
 
+fn is_xmm_register(register: Register) -> bool {
+    matches!(
+        register,
+        Register::XMM0
+            | Register::XMM1
+            | Register::XMM2
+            | Register::XMM3
+            | Register::XMM4
+            | Register::XMM5
+            | Register::XMM6
+            | Register::XMM7
+            | Register::XMM8
+            | Register::XMM9
+            | Register::XMM10
+            | Register::XMM11
+            | Register::XMM12
+            | Register::XMM13
+            | Register::XMM14
+            | Register::XMM15
+    )
+}
+
 fn literal_value(operand: &Operand) -> String {
     match operand {
         Operand::Literal(Lit::Integer(value)) => value.to_string(),
@@ -1886,6 +2186,10 @@ fn literal_value(operand: &Operand) -> String {
         Operand::Literal(_) => String::from("0"),
         _ => unreachable!(),
     }
+}
+
+fn float_literal_bits(value: f64) -> String {
+    format!("0x{:08X}", (value as f32).to_bits())
 }
 
 fn jump_for(operator: &str) -> &'static str {
