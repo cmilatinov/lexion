@@ -363,7 +363,11 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                 .filter(|reg| *reg != Register::RBP)
                 .collect()
         } else {
-            self.registers.clone()
+            self.registers
+                .iter()
+                .copied()
+                .filter(|register| !is_xmm_register(register))
+                .collect()
         }
     }
 
@@ -810,6 +814,10 @@ mod tests {
         assert!(allocator
             .registers_for_kind(Some(TypeKind::Float), true)
             .is_empty());
+
+        let registers = allocator.registers_for_kind(Some(TypeKind::Integer), false);
+        assert!(registers.contains(&Register::RAX));
+        assert!(registers.iter().all(|register| !is_xmm_register(register)));
     }
 
     fn interval(name: &str, start: usize, end: usize) -> LivenessInterval {
