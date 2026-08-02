@@ -1281,28 +1281,19 @@ impl<'a> CodeGeneratorX86<'a> {
                 };
                 if self.symbol_is_f32(&self.cfg[range.start].label, &assigned.interval().variable) {
                     move_float_location(lines, source, destination, Register::XMM15);
-                } else if self.symbol_is_reference(&self.cfg[range.start].label, &assigned.interval().variable) {
+                } else if self.symbol_is_reference(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) {
                     let Some(destination) = frame.variable_location(
                         assigned.interval().variable.as_str(),
                         assigned.location(),
                     ) else {
                         continue;
                     };
-                    move_location(
-                        lines,
-                        source,
-                        destination,
-                        Register::RAX,
-                        MoveWidth::Bits64,
-                    );
+                    move_location(lines, source, destination, Register::RAX, MoveWidth::Bits64);
                 } else {
-                    move_location(
-                        lines,
-                        source,
-                        destination,
-                        Register::RAX,
-                        MoveWidth::Bits32,
-                    );
+                    move_location(lines, source, destination, Register::RAX, MoveWidth::Bits32);
                 }
             }
         }
