@@ -1,0 +1,249 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+f32_tail=0x00FD
+main=0x020B
+scale=0x0000
+sum9=0x002B
+
+bytes:
+55 48 89 E5 48 83 EC 10 F3 0F 11 45 F4 F3 0F 11 4D F8 F3 0F 10 45 F4 F3 0F 59 45 F8 F3 0F 11 45 FC F3 0F 10 45 FC 48 89 EC 5D C3 55 48 89 E5 48 83 EC 50 F3 0F 11 45 DC F3 0F 11 4D D8 F3 0F 11 55 D4 F3 0F 11 5D D0 F3 0F 11 65 CC F3 0F 11 6D C8 F3 0F 11 75 C0 F3 0F 11 7D BC F3 44 0F 10 7D 10 F3 44 0F 11 7D B8 F3 0F 10 45 DC F3 0F 58 45 D8 F3 0F 11 45 FC F3 0F 10 45 FC F3 0F 58 45 D4 F3 0F 11 45 F8 F3 0F 10 45 F8 F3 0F 58 45 D0 F3 0F 11 45 F4 F3 0F 10 45 F4 F3 0F 11 45 C4 F3 0F 10 45 CC F3 0F 58 45 C8 F3 0F 11 45 F0 F3 0F 10 45 F0 F3 0F 58 45 C0 F3 0F 11 45 EC F3 0F 10 45 EC F3 0F 58 45 BC F3 0F 11 45 E8 F3 0F 10 45 E8 F3 0F 11 45 B4 F3 0F 10 45 C4 F3 0F 58 45 B4 F3 0F 11 45 E4 F3 0F 10 45 E4 F3 0F 58 45 B8 F3 0F 11 45 E0 F3 0F 10 45 E0 48 89 EC 5D C3 55 48 89 E5 48 83 EC 60 F3 0F 11 45 D0 F3 0F 11 4D CC F3 0F 11 55 C8 F3 0F 11 5D C4 F3 0F 11 65 C0 F3 0F 11 6D BC F3 0F 11 75 B8 F3 0F 11 7D B4 F3 44 0F 10 7D 10 F3 44 0F 11 7D B0 89 7D AC 89 75 A8 F3 0F 10 45 D0 F3 0F 58 45 CC F3 0F 11 45 FC F3 0F 10 45 FC F3 0F 58 45 C8 F3 0F 11 45 F0 F3 0F 10 45 F0 F3 0F 58 45 C4 F3 0F 11 45 EC F3 0F 10 45 EC F3 0F 58 45 C0 F3 0F 11 45 E8 F3 0F 10 45 E8 F3 0F 58 45 BC F3 0F 11 45 E4 F3 0F 10 45 E4 F3 0F 58 45 B8 F3 0F 11 45 E0 F3 0F 10 45 E0 F3 0F 58 45 B4 F3 0F 11 45 DC F3 0F 10 45 DC F3 0F 58 45 B0 F3 0F 11 45 D8 F3 0F 10 45 D8 F3 0F 11 45 A4 F3 0F 10 45 A4 B8 00 00 34 42 66 0F 6E C8 0F 2E C1 0F 94 C0 0F 9B C1 20 C8 0F B6 C0 89 45 F8 B8 00 00 00 00 3B 45 F8 74 11 8B 45 AC 03 45 A8 89 45 F4 8B 45 F4 89 45 D4 EB 08 B8 00 00 00 00 89 45 D4 8B 45 D4 48 89 EC 5D C3 55 48 89 E5 48 83 EC 40 B8 00 00 C0 3F 66 0F 6E C0 B8 00 00 00 40 66 0F 6E C8 E8 D6 FD FF FF F3 0F 11 45 FC F3 0F 10 45 FC F3 0F 11 45 D0 48 83 EC 08 B8 00 00 10 41 66 0F 6E C0 66 0F 7E C0 50 B8 00 00 80 3F 66 0F 6E C0 B8 00 00 00 40 66 0F 6E C8 B8 00 00 40 40 66 0F 6E D0 B8 00 00 80 40 66 0F 6E D8 B8 00 00 A0 40 66 0F 6E E0 B8 00 00 C0 40 66 0F 6E E8 B8 00 00 E0 40 66 0F 6E F0 B8 00 00 00 41 66 0F 6E F8 E8 93 FD FF FF 48 83 C4 10 F3 0F 11 45 F8 F3 0F 10 45 F8 F3 0F 11 45 CC 48 83 EC 08 B8 00 00 10 41 66 0F 6E C0 66 0F 7E C0 50 B8 00 00 80 3F 66 0F 6E C0 B8 00 00 00 40 66 0F 6E C8 B8 00 00 40 40 66 0F 6E D0 B8 00 00 80 40 66 0F 6E D8 B8 00 00 A0 40 66 0F 6E E0 B8 00 00 C0 40 66 0F 6E E8 B8 00 00 E0 40 66 0F 6E F0 B8 00 00 00 41 66 0F 6E F8 BF 07 00 00 00 BE 06 00 00 00 E8 E9 FD FF FF 48 83 C4 10 89 45 F4 8B 45 F4 89 45 D4 F3 0F 10 45 D0 B8 00 00 40 40 66 0F 6E C8 0F 2E C1 0F 94 C0 0F 9B C1 20 C8 0F B6 C0 89 45 F0 F3 0F 10 45 CC B8 00 00 34 42 66 0F 6E C8 0F 2E C1 0F 94 C0 0F 9B C1 20 C8 0F B6 C0 89 45 EC 8B 45 F0 23 45 EC 89 45 E8 8B 45 D4 3D 0D 00 00 00 0F 94 C0 0F B6 C0 89 45 E4 8B 45 E8 23 45 E4 89 45 E0 8B 45 E0 89 45 D8 B8 00 00 00 00 3B 45 D8 74 0A B8 00 00 00 00 89 45 DC EB 08 B8 01 00 00 00 89 45 DC 8B 45 DC 48 89 EC 5D C3
+
+disassembly:
+scale:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: movss [rbp-0Ch],xmm0
+000D: movss [rbp-8],xmm1
+0012: movss xmm0,[rbp-0Ch]
+0017: mulss xmm0,[rbp-8]
+001C: movss [rbp-4],xmm0
+0021: movss xmm0,[rbp-4]
+0026: mov rsp,rbp
+0029: pop rbp
+002A: ret
+sum9:
+002B: push rbp
+002C: mov rbp,rsp
+002F: sub rsp,50h
+0033: movss [rbp-24h],xmm0
+0038: movss [rbp-28h],xmm1
+003D: movss [rbp-2Ch],xmm2
+0042: movss [rbp-30h],xmm3
+0047: movss [rbp-34h],xmm4
+004C: movss [rbp-38h],xmm5
+0051: movss [rbp-40h],xmm6
+0056: movss [rbp-44h],xmm7
+005B: movss xmm15,[rbp+10h]
+0061: movss [rbp-48h],xmm15
+0067: movss xmm0,[rbp-24h]
+006C: addss xmm0,[rbp-28h]
+0071: movss [rbp-4],xmm0
+0076: movss xmm0,[rbp-4]
+007B: addss xmm0,[rbp-2Ch]
+0080: movss [rbp-8],xmm0
+0085: movss xmm0,[rbp-8]
+008A: addss xmm0,[rbp-30h]
+008F: movss [rbp-0Ch],xmm0
+0094: movss xmm0,[rbp-0Ch]
+0099: movss [rbp-3Ch],xmm0
+009E: movss xmm0,[rbp-34h]
+00A3: addss xmm0,[rbp-38h]
+00A8: movss [rbp-10h],xmm0
+00AD: movss xmm0,[rbp-10h]
+00B2: addss xmm0,[rbp-40h]
+00B7: movss [rbp-14h],xmm0
+00BC: movss xmm0,[rbp-14h]
+00C1: addss xmm0,[rbp-44h]
+00C6: movss [rbp-18h],xmm0
+00CB: movss xmm0,[rbp-18h]
+00D0: movss [rbp-4Ch],xmm0
+00D5: movss xmm0,[rbp-3Ch]
+00DA: addss xmm0,[rbp-4Ch]
+00DF: movss [rbp-1Ch],xmm0
+00E4: movss xmm0,[rbp-1Ch]
+00E9: addss xmm0,[rbp-48h]
+00EE: movss [rbp-20h],xmm0
+00F3: movss xmm0,[rbp-20h]
+00F8: mov rsp,rbp
+00FB: pop rbp
+00FC: ret
+f32_tail:
+00FD: push rbp
+00FE: mov rbp,rsp
+0101: sub rsp,60h
+0105: movss [rbp-30h],xmm0
+010A: movss [rbp-34h],xmm1
+010F: movss [rbp-38h],xmm2
+0114: movss [rbp-3Ch],xmm3
+0119: movss [rbp-40h],xmm4
+011E: movss [rbp-44h],xmm5
+0123: movss [rbp-48h],xmm6
+0128: movss [rbp-4Ch],xmm7
+012D: movss xmm15,[rbp+10h]
+0133: movss [rbp-50h],xmm15
+0139: mov [rbp-54h],edi
+013C: mov [rbp-58h],esi
+013F: movss xmm0,[rbp-30h]
+0144: addss xmm0,[rbp-34h]
+0149: movss [rbp-4],xmm0
+014E: movss xmm0,[rbp-4]
+0153: addss xmm0,[rbp-38h]
+0158: movss [rbp-10h],xmm0
+015D: movss xmm0,[rbp-10h]
+0162: addss xmm0,[rbp-3Ch]
+0167: movss [rbp-14h],xmm0
+016C: movss xmm0,[rbp-14h]
+0171: addss xmm0,[rbp-40h]
+0176: movss [rbp-18h],xmm0
+017B: movss xmm0,[rbp-18h]
+0180: addss xmm0,[rbp-44h]
+0185: movss [rbp-1Ch],xmm0
+018A: movss xmm0,[rbp-1Ch]
+018F: addss xmm0,[rbp-48h]
+0194: movss [rbp-20h],xmm0
+0199: movss xmm0,[rbp-20h]
+019E: addss xmm0,[rbp-4Ch]
+01A3: movss [rbp-24h],xmm0
+01A8: movss xmm0,[rbp-24h]
+01AD: addss xmm0,[rbp-50h]
+01B2: movss [rbp-28h],xmm0
+01B7: movss xmm0,[rbp-28h]
+01BC: movss [rbp-5Ch],xmm0
+01C1: movss xmm0,[rbp-5Ch]
+01C6: mov eax,42340000h
+01CB: movd xmm1,eax
+01CF: ucomiss xmm0,xmm1
+01D2: sete al
+01D5: setnp cl
+01D8: and al,cl
+01DA: movzx eax,al
+01DD: mov [rbp-8],eax
+01E0: mov eax,0
+01E5: cmp eax,[rbp-8]
+01E8: je short 00000000000001FBh
+01EA: mov eax,[rbp-54h]
+01ED: add eax,[rbp-58h]
+01F0: mov [rbp-0Ch],eax
+01F3: mov eax,[rbp-0Ch]
+01F6: mov [rbp-2Ch],eax
+01F9: jmp short 0000000000000203h
+01FB: mov eax,0
+0200: mov [rbp-2Ch],eax
+0203: mov eax,[rbp-2Ch]
+0206: mov rsp,rbp
+0209: pop rbp
+020A: ret
+main:
+020B: push rbp
+020C: mov rbp,rsp
+020F: sub rsp,40h
+0213: mov eax,3FC00000h
+0218: movd xmm0,eax
+021C: mov eax,40000000h
+0221: movd xmm1,eax
+0225: call 0 <scale>
+022A: movss [rbp-4],xmm0
+022F: movss xmm0,[rbp-4]
+0234: movss [rbp-30h],xmm0
+0239: sub rsp,8
+023D: mov eax,41100000h
+0242: movd xmm0,eax
+0246: movd eax,xmm0
+024A: push rax
+024B: mov eax,3F800000h
+0250: movd xmm0,eax
+0254: mov eax,40000000h
+0259: movd xmm1,eax
+025D: mov eax,40400000h
+0262: movd xmm2,eax
+0266: mov eax,40800000h
+026B: movd xmm3,eax
+026F: mov eax,40A00000h
+0274: movd xmm4,eax
+0278: mov eax,40C00000h
+027D: movd xmm5,eax
+0281: mov eax,40E00000h
+0286: movd xmm6,eax
+028A: mov eax,41000000h
+028F: movd xmm7,eax
+0293: call 000000000000002Bh <sum9>
+0298: add rsp,10h
+029C: movss [rbp-8],xmm0
+02A1: movss xmm0,[rbp-8]
+02A6: movss [rbp-34h],xmm0
+02AB: sub rsp,8
+02AF: mov eax,41100000h
+02B4: movd xmm0,eax
+02B8: movd eax,xmm0
+02BC: push rax
+02BD: mov eax,3F800000h
+02C2: movd xmm0,eax
+02C6: mov eax,40000000h
+02CB: movd xmm1,eax
+02CF: mov eax,40400000h
+02D4: movd xmm2,eax
+02D8: mov eax,40800000h
+02DD: movd xmm3,eax
+02E1: mov eax,40A00000h
+02E6: movd xmm4,eax
+02EA: mov eax,40C00000h
+02EF: movd xmm5,eax
+02F3: mov eax,40E00000h
+02F8: movd xmm6,eax
+02FC: mov eax,41000000h
+0301: movd xmm7,eax
+0305: mov edi,7
+030A: mov esi,6
+030F: call 00000000000000FDh <f32_tail>
+0314: add rsp,10h
+0318: mov [rbp-0Ch],eax
+031B: mov eax,[rbp-0Ch]
+031E: mov [rbp-2Ch],eax
+0321: movss xmm0,[rbp-30h]
+0326: mov eax,40400000h
+032B: movd xmm1,eax
+032F: ucomiss xmm0,xmm1
+0332: sete al
+0335: setnp cl
+0338: and al,cl
+033A: movzx eax,al
+033D: mov [rbp-10h],eax
+0340: movss xmm0,[rbp-34h]
+0345: mov eax,42340000h
+034A: movd xmm1,eax
+034E: ucomiss xmm0,xmm1
+0351: sete al
+0354: setnp cl
+0357: and al,cl
+0359: movzx eax,al
+035C: mov [rbp-14h],eax
+035F: mov eax,[rbp-10h]
+0362: and eax,[rbp-14h]
+0365: mov [rbp-18h],eax
+0368: mov eax,[rbp-2Ch]
+036B: cmp eax,0Dh
+0370: sete al
+0373: movzx eax,al
+0376: mov [rbp-1Ch],eax
+0379: mov eax,[rbp-18h]
+037C: and eax,[rbp-1Ch]
+037F: mov [rbp-20h],eax
+0382: mov eax,[rbp-20h]
+0385: mov [rbp-28h],eax
+0388: mov eax,0
+038D: cmp eax,[rbp-28h]
+0390: je short 000000000000039Ch
+0392: mov eax,0
+0397: mov [rbp-24h],eax
+039A: jmp short 00000000000003A4h
+039C: mov eax,1
+03A1: mov [rbp-24h],eax
+03A4: mov eax,[rbp-24h]
+03A7: mov rsp,rbp
+03AA: pop rbp
+03AB: ret

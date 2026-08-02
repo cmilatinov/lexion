@@ -114,6 +114,31 @@ fn x86_smoke_f32_arithmetic_and_comparisons() {
 }
 
 #[test]
+fn x86_smoke_f32_function_calls() {
+    let assembly = compile_x86("backend/x86_f32_function_calls.lex");
+
+    for instruction in [
+        "mov DWORD PTR [rsp], 0x3F800000",
+        "movss DWORD PTR [rbp-",
+        "movss xmm15, DWORD PTR [rbp+16]",
+        "movss xmm0, DWORD PTR [rsp]",
+        "movss xmm7, DWORD PTR [rsp+56]",
+        "mov rdi, QWORD PTR [rsp+72]",
+        "sub rsp, 16",
+        "mov QWORD PTR [rsp], rax",
+        "call scale",
+        "call sum9",
+        "call f32_tail",
+        "add rsp, 96",
+    ] {
+        assert!(
+            assembly.contains(instruction),
+            "missing expected f32 ABI instruction `{instruction}`:\n{assembly}"
+        );
+    }
+}
+
+#[test]
 fn x86_smoke_ternary_expression() {
     insta::assert_snapshot!(compile_x86("backend/ternary_expression.lex"));
 }
@@ -154,18 +179,8 @@ fn x86_smoke_char_values() {
 }
 
 #[test]
-fn x86_reports_unsupported_float_values() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float.lex").join("\n"));
-}
-
-#[test]
 fn x86_reports_unsupported_float_casts() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_cast.lex").join("\n"));
-}
-
-#[test]
-fn x86_reports_unsupported_float_operations() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_ops.lex").join("\n"));
 }
 
 #[test]
