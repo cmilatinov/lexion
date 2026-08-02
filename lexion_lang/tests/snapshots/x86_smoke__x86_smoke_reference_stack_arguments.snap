@@ -1,0 +1,115 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_reference_stack_arguments.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global select_last
+select_last:
+# fn select_last(
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov rax, QWORD PTR [rbp+16]
+  mov QWORD PTR [rbp-8], rax
+#     return g;
+  mov rax, QWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 144
+#     let first = 1;
+  mov eax, 1
+  mov DWORD PTR [rbp-88], eax
+#     let second = 2;
+  mov eax, 2
+  mov DWORD PTR [rbp-112], eax
+#     let third = 3;
+  mov eax, 3
+  mov DWORD PTR [rbp-136], eax
+#     let fourth = 4;
+  mov eax, 4
+  mov DWORD PTR [rbp-96], eax
+#     let fifth = 5;
+  mov eax, 5
+  mov DWORD PTR [rbp-80], eax
+#     let sixth = 6;
+  mov eax, 6
+  mov DWORD PTR [rbp-128], eax
+#     let seventh = 7;
+  mov eax, 7
+  mov DWORD PTR [rbp-120], eax
+#         &seventh
+  lea rax, [rbp-120]
+  mov QWORD PTR [rbp-24], rax
+#         &sixth,
+  lea rax, [rbp-128]
+  mov QWORD PTR [rbp-32], rax
+#         &fifth,
+  lea rax, [rbp-80]
+  mov QWORD PTR [rbp-40], rax
+#         &fourth,
+  lea rax, [rbp-96]
+  mov QWORD PTR [rbp-48], rax
+#         &third,
+  lea rax, [rbp-136]
+  mov QWORD PTR [rbp-56], rax
+#         &second,
+  lea rax, [rbp-112]
+  mov QWORD PTR [rbp-64], rax
+#         &first,
+  lea rax, [rbp-88]
+  mov QWORD PTR [rbp-72], rax
+#     let returned = select_last(
+#         &first,
+#         &second,
+#         &third,
+#         &fourth,
+#         &fifth,
+#         &sixth,
+#         &seventh
+#     );
+  mov rax, QWORD PTR [rbp-24]
+  push rax
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  mov rax, QWORD PTR [rbp-40]
+  push rax
+  mov rax, QWORD PTR [rbp-48]
+  push rax
+  mov rax, QWORD PTR [rbp-56]
+  push rax
+  mov rax, QWORD PTR [rbp-64]
+  push rax
+  mov rax, QWORD PTR [rbp-72]
+  push rax
+  pop rdi
+  pop rsi
+  pop rdx
+  pop rcx
+  pop r8
+  pop r9
+  sub rsp, 8
+  mov rax, QWORD PTR [rsp+8]
+  mov QWORD PTR [rsp], rax
+  call select_last
+  add rsp, 16
+  mov QWORD PTR [rbp-16], rax
+#     let returned = select_last(
+  mov rax, QWORD PTR [rbp-16]
+  mov QWORD PTR [rbp-104], rax
+#     *returned = 9;
+  mov ecx, 9
+  mov rax, QWORD PTR [rbp-104]
+  mov DWORD PTR [rax], ecx
+#     return seventh;
+  mov eax, DWORD PTR [rbp-120]
+  add rsp, 144
+  pop rbp
+  ret

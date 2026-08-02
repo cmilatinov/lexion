@@ -1,0 +1,50 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_reference_call.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global identity
+identity:
+# fn identity(input: &i32) -> &i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov QWORD PTR [rbp-16], rdi
+#     return input;
+  mov rax, QWORD PTR [rbp-16]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+#     let value = 1;
+  mov eax, 1
+  mov DWORD PTR [rbp-48], eax
+#     let reference = &value;
+  lea rax, [rbp-48]
+  mov QWORD PTR [rbp-16], rax
+  mov rax, QWORD PTR [rbp-16]
+  mov QWORD PTR [rbp-32], rax
+#     let returned = identity(reference);
+  mov rax, QWORD PTR [rbp-32]
+  push rax
+  pop rdi
+  call identity
+  mov QWORD PTR [rbp-24], rax
+  mov rax, QWORD PTR [rbp-24]
+  mov QWORD PTR [rbp-40], rax
+#     *returned = 5;
+  mov ecx, 5
+  mov rax, QWORD PTR [rbp-40]
+  mov DWORD PTR [rax], ecx
+#     return value;
+  mov eax, DWORD PTR [rbp-48]
+  add rsp, 48
+  pop rbp
+  ret

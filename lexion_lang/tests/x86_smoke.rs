@@ -230,10 +230,13 @@ fn x86_smoke_reference_borrow() {
 }
 
 #[test]
-fn x86_reports_unsupported_call_reference_arg() {
-    insta::assert_snapshot!(
-        compile_x86_error("backend/x86_unsupported_call_reference_arg.lex").join("\n")
-    );
+fn x86_smoke_reference_call() {
+    insta::assert_snapshot!(compile_x86("backend/x86_reference_call.lex"));
+}
+
+#[test]
+fn x86_smoke_reference_stack_arguments() {
+    insta::assert_snapshot!(compile_x86("backend/x86_reference_stack_arguments.lex"));
 }
 
 #[test]

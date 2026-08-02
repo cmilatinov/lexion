@@ -279,3 +279,21 @@ fn x86_elf_f32_function_call_executable_runs_on_linux_x86_64() {
         Some(0)
     );
 }
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_reference_call_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_reference_call.lex"),
+        Some(5)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_reference_stack_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_reference_stack_arguments.lex"),
+        Some(9)
+    );
+}
