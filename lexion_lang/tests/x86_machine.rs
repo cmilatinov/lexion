@@ -275,6 +275,13 @@ fn x86_machine_code_reference_dereference() {
 }
 
 #[test]
+fn x86_machine_code_narrow_reference_dereference() {
+    let code = compile_machine_code("backend/x86_narrow_reference_dereference.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_function_scoped_symbol_types() {
     let code = compile_machine_code("backend/x86_function_scoped_symbols.lex");
 

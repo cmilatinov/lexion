@@ -17,9 +17,9 @@ main:
   mov edi, 1
   add edi, eax
   mov eax, edi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 #     return value - 4;
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   sub eax, 4
   add rsp, 16
   pop rbp

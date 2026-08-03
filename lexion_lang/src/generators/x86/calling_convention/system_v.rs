@@ -20,13 +20,20 @@ impl CallingConvention for SystemV64 {
         const FLOAT_REGISTERS: [Register; 8] = [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7];
 
         let mut float_arg_idx = 0;
-        let mut int_arg_idx = 0;
+        let return_size = types.size_align(signature.return_type, Bitness::_64).size;
+        let mut int_arg_idx = usize::from(
+            matches!(types.kind(signature.return_type), TypeKind::Memory) && return_size > 16,
+        );
         let mut stack_offset = stack_start;
         let mut result = Vec::new();
 
         for &arg_ty in &signature.params {
             let kind = types.kind(arg_ty);
             let SizeAlign { size, .. } = types.size_align(arg_ty, Bitness::_64);
+            if size == 0 {
+                result.push(Location::NoStorage);
+                continue;
+            }
             match kind {
                 TypeKind::Float | TypeKind::Vector | TypeKind::Double => {
                     if float_arg_idx < FLOAT_REGISTERS.len() {
@@ -82,6 +89,9 @@ impl CallingConvention for SystemV64 {
     fn assign_ret(&self, types: &TypeCollection, signature: &FunctionType) -> Option<Location> {
         let kind = types.kind(signature.return_type);
         let SizeAlign { size, .. } = types.size_align(signature.return_type, Bitness::_64);
+        if size == 0 {
+            return None;
+        }
         match kind {
             TypeKind::Float | TypeKind::Vector | TypeKind::Double => {
                 Some(Location::Register(Register::XMM0))
@@ -96,6 +106,7 @@ impl CallingConvention for SystemV64 {
             } else {
                 Location::Indirect {
                     address_register: Register::RDI,
+                    result_register: Register::RAX,
                     size,
                 }
             }),

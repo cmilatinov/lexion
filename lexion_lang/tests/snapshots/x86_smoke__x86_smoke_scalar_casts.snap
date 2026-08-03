@@ -24,9 +24,9 @@ main:
   mov esi, eax
 #     let same = as_int as i32;
   mov eax, edi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 #     return same + bool_int;
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   add eax, esi
   add rsp, 16
   pop rbp

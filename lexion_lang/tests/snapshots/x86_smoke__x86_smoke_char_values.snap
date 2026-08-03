@@ -26,13 +26,13 @@ select:
   je $celse_1
 $cthen_1:
   mov eax, edi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
   jmp $cend_1
 $celse_1:
   mov eax, esi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 $cend_1:
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
 #     return selected;
   add rsp, 16
   pop rbp
@@ -55,11 +55,11 @@ main:
   push rbp
   mov rbp, rsp
   sub rsp, 16
-  mov DWORD PTR [rbp-4], esi
+  mov DWORD PTR [rbp-8], esi
 #     let selected: char = select(value, fallback, true);
   mov eax, 1
   push rax
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   push rax
   mov eax, edi
   push rax
@@ -67,11 +67,11 @@ main:
   pop rsi
   pop rdx
   call select
-  mov DWORD PTR [rbp-8], eax
+  mov DWORD PTR [rbp-16], eax
 #     let matched: bool = same(selected, fallback);
-  mov eax, DWORD PTR [rbp-4]
-  push rax
   mov eax, DWORD PTR [rbp-8]
+  push rax
+  mov eax, DWORD PTR [rbp-16]
   push rax
   pop rdi
   pop rsi
@@ -81,10 +81,10 @@ main:
   cmp edi, 0
   je $celse_2
 $cthen_2:
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   jmp $cend_2
 $celse_2:
-  mov eax, DWORD PTR [rbp-8]
+  mov eax, DWORD PTR [rbp-16]
 $cend_2:
   mov edi, eax
 #     return pass(final);

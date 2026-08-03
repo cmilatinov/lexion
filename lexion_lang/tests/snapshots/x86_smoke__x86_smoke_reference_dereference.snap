@@ -13,9 +13,9 @@ main:
   sub rsp, 32
 #     let value = 1;
   mov eax, 1
-  mov DWORD PTR [rbp-32], eax
+  mov DWORD PTR [rbp-28], eax
 #     let reference = &value;
-  lea rax, [rbp-32]
+  lea rax, [rbp-28]
   mov QWORD PTR [rbp-16], rax
   mov rax, QWORD PTR [rbp-16]
   mov QWORD PTR [rbp-24], rax

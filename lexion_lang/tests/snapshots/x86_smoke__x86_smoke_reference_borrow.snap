@@ -13,14 +13,14 @@ main:
   sub rsp, 32
 #     let value = 1;
   mov eax, 1
-  mov DWORD PTR [rbp-24], eax
+  mov DWORD PTR [rbp-20], eax
 #     let reference = &value;
-  lea rax, [rbp-24]
+  lea rax, [rbp-20]
   mov QWORD PTR [rbp-8], rax
   mov rax, QWORD PTR [rbp-8]
   mov QWORD PTR [rbp-16], rax
 #     return value;
-  mov eax, DWORD PTR [rbp-24]
+  mov eax, DWORD PTR [rbp-20]
   add rsp, 32
   pop rbp
   ret

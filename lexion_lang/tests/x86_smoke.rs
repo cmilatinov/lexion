@@ -124,7 +124,7 @@ fn x86_smoke_f32_function_calls() {
         "movss xmm0, DWORD PTR [rsp]",
         "movss xmm7, DWORD PTR [rsp+56]",
         "mov rdi, QWORD PTR [rsp+72]",
-        "sub rsp, 16",
+        "sub rsp, 8\n  mov rax, QWORD PTR [rsp+8]\n  mov QWORD PTR [rsp], rax\n  call sum9\n  add rsp, 16",
         "mov QWORD PTR [rsp], rax",
         "call scale",
         "call sum9",
@@ -242,6 +242,11 @@ fn x86_smoke_reference_stack_arguments() {
 #[test]
 fn x86_smoke_reference_dereference() {
     insta::assert_snapshot!(compile_x86("backend/x86_reference_dereference.lex"));
+}
+
+#[test]
+fn x86_smoke_narrow_reference_dereference() {
+    insta::assert_snapshot!(compile_x86("backend/x86_narrow_reference_dereference.lex"));
 }
 
 #[test]
