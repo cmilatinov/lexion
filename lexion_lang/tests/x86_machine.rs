@@ -216,6 +216,13 @@ fn x86_machine_code_stack_arguments() {
 }
 
 #[test]
+fn x86_machine_code_unit_arguments() {
+    let code = compile_machine_code("backend/x86_unit_arguments.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_reports_unsupported_string_values() {
     insta::assert_snapshot!(
         compile_machine_code_error("backend/x86_unsupported_string.lex").join("\n")

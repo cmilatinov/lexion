@@ -1143,7 +1143,7 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
             .count();
-        let indexed_arguments = register_argument_follows_stack_argument(arg_locations);
+        let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let staged_arg_count = usize::from(indexed_arguments) * pending_param_count;
         let stack_padding = frame.call_stack_padding(
             stack_arg_count + staged_arg_count,
@@ -1153,6 +1153,10 @@ impl<'a> CodeGeneratorX86<'a> {
             emit_indexed_call_arguments(lines, arg_locations, stack_padding);
         } else {
             for abi_location in arg_locations {
+                if matches!(abi_location, Location::NoStorage) {
+                    lines.push(format!("  add rsp, {STACK_ARG_SLOT_BYTES}"));
+                    continue;
+                }
                 let Some(register) = outgoing_register(abi_location) else {
                     continue;
                 };
@@ -2022,14 +2026,14 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
     }
 }
 
-fn register_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
+fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
     let mut saw_stack_argument = false;
     arg_locations.iter().any(|location| {
         if matches!(location, Location::Stack(_)) {
             saw_stack_argument = true;
             return false;
         }
-        saw_stack_argument && outgoing_register(location).is_some()
+        saw_stack_argument
     })
 }
 

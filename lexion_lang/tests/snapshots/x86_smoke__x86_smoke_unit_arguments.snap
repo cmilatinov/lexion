@@ -1,0 +1,94 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_unit_arguments.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global unit
+unit:
+# fn unit() {}
+  push rbp
+  mov rbp, rsp
+  pop rbp
+  ret
+.global select
+select:
+# fn select(head: (), value: i32, tail: ()) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov DWORD PTR [rbp-8], edi
+#     return value;
+  mov eax, DWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global stack_value
+stack_value:
+# fn stack_value(
+  push rbp
+  mov rbp, rsp
+  mov eax, DWORD PTR [rbp+16]
+#     return seventh;
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+#     let selected = select(unit(), 7, unit());
+  sub rsp, 8
+  call unit
+  add rsp, 8
+  mov ebx, eax
+  sub rsp, 8
+  call unit
+  add rsp, 8
+  mov eax, ebx
+  push rax
+  mov eax, 7
+  push rax
+  push rax
+  add rsp, 8
+  pop rdi
+  add rsp, 8
+  sub rsp, 8
+  call select
+  add rsp, 8
+  mov ebx, eax
+#     return stack_value(1, 2, 3, 4, 5, 6, selected, unit());
+  sub rsp, 8
+  call unit
+  add rsp, 8
+  push rax
+  mov eax, ebx
+  push rax
+  mov eax, 6
+  push rax
+  mov eax, 5
+  push rax
+  mov eax, 4
+  push rax
+  mov eax, 3
+  push rax
+  mov eax, 2
+  push rax
+  mov eax, 1
+  push rax
+  mov rdi, QWORD PTR [rsp]
+  mov rsi, QWORD PTR [rsp+8]
+  mov rdx, QWORD PTR [rsp+16]
+  mov rcx, QWORD PTR [rsp+24]
+  mov r8, QWORD PTR [rsp+32]
+  mov r9, QWORD PTR [rsp+40]
+  sub rsp, 8
+  mov rax, QWORD PTR [rsp+56]
+  mov QWORD PTR [rsp], rax
+  call stack_value
+  add rsp, 72
+  pop rbx
+  pop rbp
+  ret

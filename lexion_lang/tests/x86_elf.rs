@@ -282,6 +282,15 @@ fn x86_elf_narrow_reference_executable_runs_on_linux_x86_64() {
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
+fn x86_elf_unit_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_unit_arguments.lex"),
+        Some(7)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
 fn x86_elf_f32_function_call_executable_runs_on_linux_x86_64() {
     assert_eq!(
         run_executable_fixture("backend/x86_f32_function_calls.lex"),
