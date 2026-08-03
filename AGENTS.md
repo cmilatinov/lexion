@@ -3,7 +3,6 @@
 Use the steering files in this repository as standing project instructions:
 
 - [.steering/instructions.md](.steering/instructions.md) - general repository workflow, validation defaults, and task discipline.
-- [.steering/github-projects.md](.steering/github-projects.md) - GitHub Project planning, Engineering Task selection, progress tracking, and PR reference rules.
 - [.steering/code-review.md](.steering/code-review.md) - senior-developer review checklist, severity levels, and finding format.
 - [.steering/architecture.md](.steering/architecture.md) - workspace structure, compiler pipeline, design patterns, and testing strategy.
 - [.steering/conventions.md](.steering/conventions.md) - Rust coding conventions, diagnostics, parser grammar style, and validation tools.
@@ -16,7 +15,7 @@ When editing steering docs, keep every `.steering/*.md` file under 200 lines.
 
 After a branch has been pushed or a PR has been opened, make review updates as normal follow-up commits on the same branch. Only rewrite published history for an intentional base-sync rebase or when the user explicitly asks; use `--force-with-lease` for a rebase push.
 
-When asked what is or is not implemented, or asked to fetch or pick the next highest-priority task, consult the GitHub Project `Lexion` and its linked repository issues first. Use merged code and pull requests to verify implementation state.
+When asked what is or is not implemented, or asked to fetch or pick the next highest-priority task, consult the GitHub Project `Lexion` and its linked repository issues using the available `github-projects-workflow` and `github-issues-workflow` skills. Use merged code and pull requests to verify implementation state.
 
 Do not create Engineering Tasks for documentation- or process-only changes unless explicitly requested. Those pull requests should omit the `Engineering Tasks` section.
 

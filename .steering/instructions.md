@@ -20,7 +20,6 @@ These are the default operating instructions for work in `lexion`.
 1. Inspect `git status --short`.
 2. Read the relevant steering files:
    - This file for branch, commit, and PR rules.
-   - `.steering/github-projects.md` when selecting work or preparing PR references.
    - `.steering/architecture.md` for crate boundaries and pipeline ownership.
    - `.steering/conventions.md` for local Rust and test conventions.
 3. Locate the smallest relevant code surface.
@@ -62,7 +61,7 @@ The language compiler supports dump flags such as `parse_table`, `parse_trace`, 
 ## Task And PR Discipline
 
 - Use the GitHub Project `Lexion` as the planning source of truth and repository issues as the Engineering Task requirements.
-- Follow `.steering/github-projects.md` for task selection, status updates, issue creation, and PR references.
+- Use the available `github-projects-workflow` and `github-issues-workflow` skills for task selection, status updates, issue creation, and PR references.
 - Do not create Engineering Tasks for documentation- or process-only changes unless explicitly requested.
 - Keep one PR to one coherent parser, compiler, grammar, or documentation change.
 - Do not mix unrelated cleanup with behavior fixes.
