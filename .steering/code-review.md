@@ -66,6 +66,6 @@ If no issues are found, say that clearly and mention any residual test gaps or r
 
 ## Repo Workflow
 
-- When review fixes become a PR, follow `.steering/todoist.md`: reference at least one matching `Lexion` Todoist task, create one if none exists, and keep PR scope to at most three related Todoist items.
+- When review fixes become a PR, follow `.steering/github-projects.md`: reference at least one matching Engineering Task for non-documentation work, create one if none exists, and keep PR scope to at most three related issues.
 - Keep review-fix commits atomic when practical.
 - Do not mix unrelated cleanup into review fixes unless the user explicitly includes it.
