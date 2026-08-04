@@ -2,7 +2,8 @@ use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IndexExpr, Lit,
-    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TupleExpr, TypedExpr, VarDeclStmt,
+    WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -506,6 +507,14 @@ impl<'a> CodeGeneratorTac<'a> {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::TupleExpr(_),
+                        ..
+                    },
+                ..
+            } => self.tuple_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::IfExpr(_),
                         ..
                     },
@@ -753,6 +762,29 @@ impl<'a> CodeGeneratorTac<'a> {
         self.load_expr(expr)
     }
 
+    fn tuple_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let TypedExpr {
+            expr: Expr::TupleExpr(TupleExpr { values }),
+            ty,
+        } = &expr.value
+        else {
+            unreachable!()
+        };
+        let target = self.alloc_temp(*ty, expr.span);
+        for (index, value) in values.iter().enumerate() {
+            let value = self.expr(value);
+            self.store(
+                Place::Member {
+                    base: Box::new(Place::Direct(target.clone())),
+                    member: index.to_string(),
+                },
+                value,
+                Some(expr.span),
+            );
+        }
+        target
+    }
+
     fn call_expr(&mut self, expr: &SourcedExpr) -> Option<Operand> {
         let Sourced {
             value:
@@ -777,6 +809,34 @@ impl<'a> CodeGeneratorTac<'a> {
         else {
             return None;
         };
+        let is_struct_constructor = self
+            .symbols
+            .lookup(self.scope, ident.ident.as_str())
+            .and_then(|(_, _, entry)| entry.var_type)
+            .is_some_and(|ty| {
+                matches!(
+                    self.types.get(self.types.canonicalize(ty)),
+                    Some(crate::ast::types::Type::StructType(_))
+                )
+            });
+        if is_struct_constructor {
+            let crate::ast::types::Type::StructType(struct_) = &self.types[*ty] else {
+                unreachable!()
+            };
+            let target = self.alloc_temp(*ty, *span);
+            for (field, arg) in struct_.members.iter().zip(args) {
+                let value = self.expr(arg);
+                self.store(
+                    Place::Member {
+                        base: Box::new(Place::Direct(target.clone())),
+                        member: field.name.clone(),
+                    },
+                    value,
+                    Some(arg.span),
+                );
+            }
+            return Some(target);
+        }
         let return_value = if !self.types.eq(expr.ty, self.types.unit()) {
             Some(self.alloc_temp(*ty, *span))
         } else {

@@ -484,9 +484,28 @@ PrimaryExpr -> 'ident'
         }).into()
     ).into());
 }} ;
+PrimaryExpr -> TupleExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
 PrimaryExpr -> '(' Expr ')'
 [Box<SourcedExpr>] {{
     $$ = $2;
+}} ;
+
+TupleExpr -> '(' Expr ',' ')'
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $4.span),
+        Expr::TupleExpr(TupleExpr { values: vec![*$2] }).into()
+    ).into());
+}} ;
+TupleExpr -> '(' Expr ',' ArgList ')'
+[Box<SourcedExpr>] {{
+    let mut values = vec![*$2];
+    values.extend($4);
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $5.span),
+        Expr::TupleExpr(TupleExpr { values }).into()
+    ).into());
 }} ;
 
 ArgList -> ArgList ',' AssignExpr

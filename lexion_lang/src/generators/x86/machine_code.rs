@@ -195,7 +195,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::Copy(inst) => {
-                if self.operand_is_reference(context.name, &inst.src)
+                if self.operand_is_aggregate(context.name, &inst.src) {
+                    self.emit_aggregate_copy(assembler, slots, context.name, inst)?;
+                } else if self.operand_is_reference(context.name, &inst.src)
                     || self.operand_is_reference(context.name, &inst.dst)
                 {
                     load_reference_operand(assembler, slots, &inst.src, rax)?;
@@ -759,9 +761,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support extern declarations yet: {}",
                 inst.label
             )),
-            Instruction::Copy(inst) => self
-                .unsupported_operand_message(function, &inst.dst)
-                .or_else(|| self.unsupported_operand_message(function, &inst.src)),
+            Instruction::Copy(inst) => self.unsupported_copy_message(function, inst),
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
@@ -773,11 +773,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::Parameter(inst) => self.unsupported_operand_message(function, &inst.param),
-            Instruction::Return(inst) => inst
-                .value
-                .as_ref()
-                .and_then(|value| self.unsupported_operand_message(function, value)),
+            Instruction::Parameter(inst) => self
+                .unsupported_aggregate_operand_message(function, &inst.param)
+                .or_else(|| self.unsupported_operand_message(function, &inst.param)),
+            Instruction::Return(inst) => inst.value.as_ref().and_then(|value| {
+                self.unsupported_aggregate_operand_message(function, value)
+                    .or_else(|| self.unsupported_operand_message(function, value))
+            }),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => self
                 .unsupported_call_target_message(inst)
@@ -831,7 +833,23 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     assembler.mov(eax, dword_ptr(rax))?;
                 }
             }
-            Place::Member { .. } | Place::Index { .. } => {
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_stack_value(slots, &base, offset);
+                if is_f32_type(self.types, ty) {
+                    assembler.movss(xmm0, operand)?;
+                    return store_float_operand(assembler, slots, &inst.target, xmm0);
+                }
+                if self.types.size_align(ty, Bitness::_64).size == 1 {
+                    assembler.movzx(
+                        eax,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                    )?;
+                } else {
+                    assembler.mov(eax, operand)?;
+                }
+            }
+            Place::Index { .. } => {
                 unreachable!("unsupported load places are diagnosed before emission")
             }
         }
@@ -859,7 +877,25 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     assembler.mov(dword_ptr(rax), ecx)
                 }
             }
-            Place::Member { .. } | Place::Index { .. } => {
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_stack_value(slots, &base, offset);
+                if is_f32_type(self.types, ty) {
+                    load_float_operand(assembler, slots, &inst.value, xmm0)?;
+                    assembler.movss(operand, xmm0)
+                } else {
+                    load_operand(assembler, slots, &inst.value, eax)?;
+                    if self.types.size_align(ty, Bitness::_64).size == 1 {
+                        assembler.mov(
+                            byte_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                            al,
+                        )
+                    } else {
+                        assembler.mov(operand, eax)
+                    }
+                }
+            }
+            Place::Index { .. } => {
                 unreachable!("unsupported store places are diagnosed before emission")
             }
         }
@@ -868,6 +904,83 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn operand_is_reference(&self, function: &str, operand: &Operand) -> bool {
         self.operand_type(function, operand)
             .is_some_and(|ty| self.type_is_reference(ty))
+    }
+
+    fn operand_is_aggregate(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_aggregate(ty))
+    }
+
+    fn type_is_aggregate(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::TupleType(tuple)) if !tuple.types.is_empty()
+        ) || matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::StructType(_))
+        )
+    }
+
+    fn member_place(&self, function: &str, place: &Place) -> Option<(Operand, usize, Index)> {
+        let Place::Member { base, member } = place else {
+            return None;
+        };
+        let (base, offset, ty) = match base.as_ref() {
+            Place::Direct(base) => (base.clone(), 0, self.operand_type(function, base)?),
+            Place::Member { .. } => self.member_place(function, base)?,
+            Place::Index { .. } | Place::Dereference(_) => return None,
+        };
+        let ty = self.types.canonicalize(ty);
+        let member_index = match self.types.get(ty)? {
+            Type::TupleType(tuple) => member
+                .parse()
+                .ok()
+                .filter(|index| *index < tuple.types.len())?,
+            Type::StructType(struct_) => struct_
+                .members
+                .iter()
+                .position(|field| field.name == *member)?,
+            _ => return None,
+        };
+        let member_layout = self.types.memory_layout(ty)?.members().get(member_index)?;
+        let member_ty = match self.types.get(ty)? {
+            Type::TupleType(tuple) => tuple.types[member_index],
+            Type::StructType(struct_) => struct_.members[member_index].ty,
+            _ => return None,
+        };
+        Some((base, offset + member_layout.offset, member_ty))
+    }
+
+    fn emit_aggregate_copy(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) -> Result<(), IcedError> {
+        let Some(ty) = self.operand_type(function, &inst.src) else {
+            return Ok(());
+        };
+        let size = self.types.size_align(ty, Bitness::_64).size;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, aggregate_stack_value(slots, &inst.src, offset))?;
+                assembler.mov(aggregate_stack_value(slots, &inst.dst, offset), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(
+                        eax,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, &inst.src, offset + byte)),
+                    )?;
+                    assembler.mov(
+                        byte_ptr(rbp - aggregate_stack_offset(slots, &inst.dst, offset + byte)),
+                        al,
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
@@ -886,9 +999,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_load_message(&self, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 machine-code backend does not support member access yet",
-            )),
+            Place::Member { .. } => None,
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support indexed access yet",
             )),
@@ -898,9 +1009,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_store_message(&self, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 machine-code backend does not support stores through member access yet",
-            )),
+            Place::Member { .. } => None,
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support stores through indexed access yet",
             )),
@@ -983,7 +1092,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| self.unsupported_type_message(*ty))
+            .find_map(|ty| {
+                self.unsupported_aggregate_type_message(*ty)
+                    .or_else(|| self.unsupported_type_message(*ty))
+            })
+            .or_else(|| self.unsupported_aggregate_type_message(signature.return_type))
             .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
@@ -995,7 +1108,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 inst.function
             ));
         }
-        None
+        signature
+            .params
+            .iter()
+            .find_map(|ty| self.unsupported_aggregate_type_message(*ty))
+            .or_else(|| self.unsupported_aggregate_type_message(signature.return_type))
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -1034,12 +1151,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
                 "x86 machine-code backend does not support string values yet: {name}"
             )),
-            Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 machine-code backend does not support tuple values yet: {name}"
-            )),
-            Type::StructType(_) => Some(format!(
-                "x86 machine-code backend does not support struct values yet: {name}"
-            )),
             Type::RefType(ref_ty)
                 if matches!(
                     self.types.get(self.types.canonicalize(ref_ty.to)),
@@ -1057,9 +1168,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Type::FunctionType(_) => Some(format!(
                 "x86 machine-code backend does not support function values yet: {name}"
             )),
-            Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
-                None
-            }
+            Type::TupleType(_)
+            | Type::StructType(_)
+            | Type::TypeDefType(_)
+            | Type::PrimitiveType(_)
+            | Type::Unknown => None,
         }
     }
 
@@ -1070,6 +1183,45 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
             ))
         )
+    }
+
+    fn unsupported_aggregate_type_message(&self, ty: Index) -> Option<String> {
+        self.type_is_aggregate(ty).then(|| {
+            format!(
+                "x86 machine-code backend does not support aggregate ABI values yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
+    }
+
+    fn unsupported_aggregate_operand_message(
+        &self,
+        function: &str,
+        operand: &Operand,
+    ) -> Option<String> {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.unsupported_aggregate_type_message(ty))
+    }
+
+    fn unsupported_copy_message(
+        &self,
+        function: &str,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) -> Option<String> {
+        if self.operand_is_aggregate(function, &inst.src)
+            || self.operand_is_aggregate(function, &inst.dst)
+        {
+            let source = self.operand_type(function, &inst.src)?;
+            let destination = self.operand_type(function, &inst.dst)?;
+            if self.types.eq(source, destination) && self.type_is_aggregate(source) {
+                None
+            } else {
+                Some(String::from("x86 machine-code backend does not support aggregate copies with mismatched types"))
+            }
+        } else {
+            self.unsupported_operand_message(function, &inst.dst)
+                .or_else(|| self.unsupported_operand_message(function, &inst.src))
+        }
     }
 
     fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
@@ -1705,6 +1857,22 @@ fn asm_register64(register: Register) -> AsmRegister64 {
 
 fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {
     dword_ptr(rbp - stack_slot_offset(slots, operand))
+}
+
+fn aggregate_stack_value(
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    member_offset: usize,
+) -> AsmMemoryOperand {
+    dword_ptr(rbp - aggregate_stack_offset(slots, operand, member_offset))
+}
+
+fn aggregate_stack_offset(
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    member_offset: usize,
+) -> i32 {
+    stack_slot_offset(slots, operand) - member_offset as i32
 }
 
 fn reference_stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {

@@ -2,7 +2,7 @@ use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
 use lexion_lang::generators::x86::{
-    CodeGeneratorX86Machine, X86MachineCode, X86MachineCodeOptions,
+    Bitness, CMemoryLayoutBuilder, CodeGeneratorX86Machine, X86MachineCode, X86MachineCodeOptions,
 };
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
@@ -26,6 +26,7 @@ fn compile_machine_code(fixture: &str) -> X86MachineCode {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -50,6 +51,7 @@ fn compile_machine_code_error(fixture: &str) -> Vec<String> {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -190,6 +192,13 @@ fn x86_machine_code_scalar_casts() {
 #[test]
 fn x86_machine_code_char_values() {
     let code = compile_machine_code("backend/x86_char_values.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_local_aggregate_values() {
+    let code = compile_machine_code("backend/x86_local_aggregates.lex");
 
     insta::assert_snapshot!(machine_snapshot(&code));
 }

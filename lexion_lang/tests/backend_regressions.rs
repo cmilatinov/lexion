@@ -435,3 +435,10 @@ fn backend_place_expression_liveness_snapshot() {
 
     insta::assert_snapshot!(liveness_snapshot(&output));
 }
+
+#[test]
+fn backend_local_aggregate_values_tac_snapshot() {
+    let cfg = compile_cfg("backend/x86_local_aggregates.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}

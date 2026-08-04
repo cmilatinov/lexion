@@ -1,0 +1,23 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  store 3 -> $t1.0
+  store false -> $t1.1
+  pair = $t1
+  pair_copy = pair
+  store 7 -> pair_copy.0
+  $t3 = load pair_copy.0
+  store $t3 -> $t2.x
+  store 4 -> $t2.y
+  point = $t2
+  point_copy = point
+  store 9 -> point_copy.y
+  $t4 = load point_copy.x
+  $t5 = load point_copy.y
+  $t6 = $t4 + $t5
+  return $t6
+  endfn main

@@ -323,7 +323,9 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Copy(inst) => {
-                if self.operand_is_reference(function, &inst.src)
+                if self.operand_is_aggregate(function, &inst.src) {
+                    self.emit_aggregate_copy(lines, frame, function, location, inst);
+                } else if self.operand_is_reference(function, &inst.src)
                     || self.operand_is_reference(function, &inst.dst)
                 {
                     load_reference_operand(lines, frame, location, &inst.src, Register::RAX);
@@ -456,9 +458,7 @@ impl<'a> CodeGeneratorX86<'a> {
                         .and_then(|target| self.unsupported_operand_message(function, target))
                 }),
             Instruction::Extern(_) => None,
-            Instruction::Copy(inst) => self
-                .unsupported_operand_message(function, &inst.dst)
-                .or_else(|| self.unsupported_operand_message(function, &inst.src)),
+            Instruction::Copy(inst) => self.unsupported_copy_message(function, inst),
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
@@ -470,11 +470,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::Parameter(inst) => self.unsupported_operand_message(function, &inst.param),
-            Instruction::Return(inst) => inst
-                .value
-                .as_ref()
-                .and_then(|value| self.unsupported_operand_message(function, value)),
+            Instruction::Parameter(inst) => self
+                .unsupported_aggregate_operand_message(function, &inst.param)
+                .or_else(|| self.unsupported_operand_message(function, &inst.param)),
+            Instruction::Return(inst) => inst.value.as_ref().and_then(|value| {
+                self.unsupported_aggregate_operand_message(function, value)
+                    .or_else(|| self.unsupported_operand_message(function, value))
+            }),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
@@ -526,7 +528,21 @@ impl<'a> CodeGeneratorX86<'a> {
                     lines.push(String::from("  mov eax, DWORD PTR [rax]"));
                 }
             }
-            Place::Member { .. } | Place::Index { .. } => {
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_member_operand(frame, location, &base, offset).unwrap();
+                if is_f32_type(self.types, ty) {
+                    lines.push(format!("  movss xmm0, DWORD PTR {operand}"));
+                    store_float_operand(lines, frame, location, &inst.target, Register::XMM0);
+                    return;
+                }
+                if self.types.size_align(ty, Bitness::_64).size == 1 {
+                    lines.push(format!("  movzx eax, BYTE PTR {operand}"));
+                } else {
+                    lines.push(format!("  mov eax, DWORD PTR {operand}"));
+                }
+            }
+            Place::Index { .. } => {
                 unreachable!("unsupported load places are diagnosed before emission")
             }
         }
@@ -555,7 +571,22 @@ impl<'a> CodeGeneratorX86<'a> {
                     lines.push(String::from("  mov DWORD PTR [rax], ecx"));
                 }
             }
-            Place::Member { .. } | Place::Index { .. } => {
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_member_operand(frame, location, &base, offset).unwrap();
+                if is_f32_type(self.types, ty) {
+                    load_float_operand(lines, frame, location, &inst.value, Register::XMM0);
+                    lines.push(format!("  movss DWORD PTR {operand}, xmm0"));
+                } else {
+                    load_operand(lines, frame, location, &inst.value, Register::RAX);
+                    if self.types.size_align(ty, Bitness::_64).size == 1 {
+                        lines.push(format!("  mov BYTE PTR {operand}, al"));
+                    } else {
+                        lines.push(format!("  mov DWORD PTR {operand}, eax"));
+                    }
+                }
+            }
+            Place::Index { .. } => {
                 unreachable!("unsupported store places are diagnosed before emission")
             }
         }
@@ -570,6 +601,88 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
+    fn operand_is_aggregate(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_aggregate(ty))
+    }
+
+    fn type_is_aggregate(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::TupleType(tuple)) if !tuple.types.is_empty()
+        ) || matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::StructType(_))
+        )
+    }
+
+    fn member_place(&self, function: &str, place: &Place) -> Option<(Operand, usize, Index)> {
+        let Place::Member { base, member } = place else {
+            return None;
+        };
+        let (base, offset, ty) = match base.as_ref() {
+            Place::Direct(base) => (base.clone(), 0, self.operand_type(function, base)?),
+            Place::Member { .. } => self.member_place(function, base)?,
+            Place::Index { .. } | Place::Dereference(_) => return None,
+        };
+        let ty = self.types.canonicalize(ty);
+        let member_index = match self.types.get(ty)? {
+            Type::TupleType(tuple) => member
+                .parse()
+                .ok()
+                .filter(|index| *index < tuple.types.len())?,
+            Type::StructType(struct_) => struct_
+                .members
+                .iter()
+                .position(|field| field.name == *member)?,
+            _ => return None,
+        };
+        let layout = self.types.memory_layout(ty)?;
+        let member_layout = layout.members().get(member_index)?;
+        let member_ty = match self.types.get(ty)? {
+            Type::TupleType(tuple) => tuple.types[member_index],
+            Type::StructType(struct_) => struct_.members[member_index].ty,
+            _ => return None,
+        };
+        Some((base, offset + member_layout.offset, member_ty))
+    }
+
+    fn emit_aggregate_copy(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) {
+        let Some(ty) = self.operand_type(function, &inst.src) else {
+            return;
+        };
+        let size = self.types.size_align(ty, Bitness::_64).size;
+        let Some(src) = aggregate_member_operand(frame, location, &inst.src, 0) else {
+            return;
+        };
+        let Some(dst) = aggregate_member_operand(frame, location, &inst.dst, 0) else {
+            return;
+        };
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            let source = offset_assembly_operand(&src, offset);
+            let destination = offset_assembly_operand(&dst, offset);
+            if width == 4 {
+                lines.push(format!("  mov eax, DWORD PTR {source}"));
+                lines.push(format!("  mov DWORD PTR {destination}, eax"));
+            } else {
+                for byte in 0..width {
+                    let source = offset_assembly_operand(&source, byte);
+                    let destination = offset_assembly_operand(&destination, byte);
+                    lines.push(format!("  mov al, BYTE PTR {source}"));
+                    lines.push(format!("  mov BYTE PTR {destination}, al"));
+                }
+            }
+        }
+    }
+
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
         self.operand_type(function, operand)
             .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
@@ -579,9 +692,7 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_load_message(&self, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 backend does not support member access yet",
-            )),
+            Place::Member { .. } => None,
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support indexed access yet",
             )),
@@ -591,9 +702,7 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_store_message(&self, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 backend does not support stores through member access yet",
-            )),
+            Place::Member { .. } => None,
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support stores through indexed access yet",
             )),
@@ -702,7 +811,11 @@ impl<'a> CodeGeneratorX86<'a> {
         signature
             .params
             .iter()
-            .find_map(|ty| self.unsupported_type_message(*ty))
+            .find_map(|ty| {
+                self.unsupported_aggregate_type_message(*ty)
+                    .or_else(|| self.unsupported_type_message(*ty))
+            })
+            .or_else(|| self.unsupported_aggregate_type_message(signature.return_type))
             .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
@@ -714,7 +827,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 inst.function
             ));
         }
-        None
+        signature
+            .params
+            .iter()
+            .find_map(|ty| self.unsupported_aggregate_type_message(*ty))
+            .or_else(|| self.unsupported_aggregate_type_message(signature.return_type))
     }
 
     fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -733,12 +850,6 @@ impl<'a> CodeGeneratorX86<'a> {
             Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
                 "x86 backend does not support string values yet: {name}"
             )),
-            Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 backend does not support tuple values yet: {name}"
-            )),
-            Type::StructType(_) => Some(format!(
-                "x86 backend does not support struct values yet: {name}"
-            )),
             Type::RefType(ref_ty)
                 if matches!(
                     self.types.get(self.types.canonicalize(ref_ty.to)),
@@ -756,9 +867,11 @@ impl<'a> CodeGeneratorX86<'a> {
             Type::FunctionType(_) => Some(format!(
                 "x86 backend does not support function values yet: {name}"
             )),
-            Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
-                None
-            }
+            Type::TupleType(_)
+            | Type::StructType(_)
+            | Type::TypeDefType(_)
+            | Type::PrimitiveType(_)
+            | Type::Unknown => None,
         }
     }
 
@@ -769,6 +882,47 @@ impl<'a> CodeGeneratorX86<'a> {
                 PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
             ))
         )
+    }
+
+    fn unsupported_aggregate_type_message(&self, ty: Index) -> Option<String> {
+        self.type_is_aggregate(ty).then(|| {
+            format!(
+                "x86 backend does not support aggregate ABI values yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
+    }
+
+    fn unsupported_aggregate_operand_message(
+        &self,
+        function: &str,
+        operand: &Operand,
+    ) -> Option<String> {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.unsupported_aggregate_type_message(ty))
+    }
+
+    fn unsupported_copy_message(
+        &self,
+        function: &str,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) -> Option<String> {
+        if self.operand_is_aggregate(function, &inst.src)
+            || self.operand_is_aggregate(function, &inst.dst)
+        {
+            let source = self.operand_type(function, &inst.src)?;
+            let destination = self.operand_type(function, &inst.dst)?;
+            if self.types.eq(source, destination) && self.type_is_aggregate(source) {
+                None
+            } else {
+                Some(String::from(
+                    "x86 backend does not support aggregate copies with mismatched types",
+                ))
+            }
+        } else {
+            self.unsupported_operand_message(function, &inst.dst)
+                .or_else(|| self.unsupported_operand_message(function, &inst.src))
+        }
     }
 
     fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
@@ -1367,6 +1521,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 {
                     if self.symbol_is_reference(function, &name)
                         || self.symbol_is_f32(function, &name)
+                        || self.symbol_is_aggregate(function, &name)
                     {
                         names.insert(name);
                     }
@@ -1399,6 +1554,12 @@ impl<'a> CodeGeneratorX86<'a> {
         self.function_symbol_entry(function, name)
             .and_then(|entry| entry.var_type)
             .is_some_and(|ty| is_f32_type(self.types, ty))
+    }
+
+    fn symbol_is_aggregate(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_aggregate(ty))
     }
 }
 
@@ -1987,6 +2148,31 @@ fn operand_value(frame: &FrameLayout<'_>, location: CodeLocation, operand: &Oper
         Operand::Label(label) => label.clone(),
         Operand::Placeholder => String::from("0"),
     }
+}
+
+fn aggregate_member_operand(
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    member_offset: usize,
+) -> Option<String> {
+    let AssemblyLocation::FrameStack { offset } = frame.operand_location(location, operand)? else {
+        return None;
+    };
+    let displacement = offset.checked_sub(member_offset)?;
+    Some(if displacement == 0 {
+        String::from("[rbp]")
+    } else {
+        format!("[rbp-{displacement}]")
+    })
+}
+
+fn offset_assembly_operand(operand: &str, offset: usize) -> String {
+    if offset == 0 {
+        return operand.to_string();
+    }
+    let inner = operand.trim_start_matches('[').trim_end_matches(']');
+    format!("[{inner}+{offset}]")
 }
 
 fn float_operand_value(

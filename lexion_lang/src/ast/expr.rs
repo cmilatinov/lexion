@@ -30,6 +30,7 @@ pub enum Expr {
     MemberExpr(MemberExpr),
     IndexExpr(IndexExpr),
     CallExpr(CallExpr),
+    TupleExpr(TupleExpr),
     IdentExpr(IdentExpr),
     LitExpr(LitExpr),
 }
@@ -75,6 +76,11 @@ pub struct IndexExpr {
 pub struct CallExpr {
     pub expr: Box<SourcedExpr>,
     pub args: Vec<SourcedExpr>,
+}
+
+#[derive(Debug)]
+pub struct TupleExpr {
+    pub values: Vec<SourcedExpr>,
 }
 
 #[derive(Debug)]

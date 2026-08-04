@@ -5,12 +5,12 @@ use generational_arena::Index;
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 
-use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
+use crate::ast::types::{FunctionType, PrimitiveType, TupleType, Type, TypeCollection};
 use crate::ast::visitor::{AstNodeMut, AstVisitor, AstVisitorAction, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr,
     Lit, LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
-    TypedExpr, VarDecl, VarDeclStmt, WhileStmt,
+    TupleExpr, TypedExpr, VarDecl, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::operators;
@@ -121,6 +121,14 @@ impl<'a> TypeChecker<'a> {
                     },
                 span,
             } => self.call(diag, expr, *span),
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::TupleExpr(expr),
+                        ..
+                    },
+                ..
+            } => self.tuple(diag, expr),
             Sourced {
                 value:
                     TypedExpr {
@@ -367,6 +375,26 @@ impl<'a> TypeChecker<'a> {
             });
             return None;
         };
+        if let Some(Type::StructType(struct_)) = self.types.get(self.types.canonicalize(fty_idx)) {
+            let members = struct_.members.clone();
+            if members.len() != expr.args.len() {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span,
+                    message: format!(
+                        "struct '{}' expects {} constructor argument(s), but got {}",
+                        self.types.to_string_index(fty_idx),
+                        members.len(),
+                        expr.args.len()
+                    ),
+                });
+                return None;
+            }
+            for (arg, member) in expr.args.iter_mut().zip(members) {
+                self.tc(diag, arg, Some(member.ty))?;
+            }
+            return Some(fty_idx);
+        }
         let Some(fty) = self.types.get(fty_idx).and_then(|ty| match ty {
             Type::FunctionType(ty) => Some(ty.clone()),
             _ => None,
@@ -416,6 +444,15 @@ impl<'a> TypeChecker<'a> {
             self.tc(diag, arg, ty)?;
         }
         Some(fty.return_type)
+    }
+
+    fn tuple(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &mut TupleExpr) -> Option<Index> {
+        let types = expr
+            .values
+            .iter_mut()
+            .map(|value| self.tc(diag, value, None))
+            .collect::<Option<Vec<_>>>()?;
+        Some(self.types.insert(&Type::TupleType(TupleType { types })))
     }
 
     fn ident(
