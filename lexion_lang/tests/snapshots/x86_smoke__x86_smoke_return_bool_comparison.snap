@@ -22,8 +22,8 @@ main:
   cmp eax, 1
   sete al
   movzx eax, al
-  mov DWORD PTR [rbp-4], eax
-  mov eax, DWORD PTR [rbp-4]
+  mov DWORD PTR [rbp-8], eax
+  mov eax, DWORD PTR [rbp-8]
 #     return same;
   add rsp, 16
   pop rbp

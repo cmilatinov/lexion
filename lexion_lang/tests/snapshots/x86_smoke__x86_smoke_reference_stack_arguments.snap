@@ -23,49 +23,49 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-  sub rsp, 144
+  sub rsp, 128
 #     let first = 1;
   mov eax, 1
   mov DWORD PTR [rbp-88], eax
 #     let second = 2;
   mov eax, 2
-  mov DWORD PTR [rbp-112], eax
+  mov DWORD PTR [rbp-108], eax
 #     let third = 3;
   mov eax, 3
-  mov DWORD PTR [rbp-136], eax
+  mov DWORD PTR [rbp-120], eax
 #     let fourth = 4;
   mov eax, 4
-  mov DWORD PTR [rbp-96], eax
+  mov DWORD PTR [rbp-92], eax
 #     let fifth = 5;
   mov eax, 5
-  mov DWORD PTR [rbp-80], eax
+  mov DWORD PTR [rbp-84], eax
 #     let sixth = 6;
   mov eax, 6
-  mov DWORD PTR [rbp-128], eax
+  mov DWORD PTR [rbp-116], eax
 #     let seventh = 7;
   mov eax, 7
-  mov DWORD PTR [rbp-120], eax
+  mov DWORD PTR [rbp-112], eax
 #         &seventh
-  lea rax, [rbp-120]
-  mov QWORD PTR [rbp-24], rax
-#         &sixth,
-  lea rax, [rbp-128]
-  mov QWORD PTR [rbp-32], rax
-#         &fifth,
-  lea rax, [rbp-80]
-  mov QWORD PTR [rbp-40], rax
-#         &fourth,
-  lea rax, [rbp-96]
-  mov QWORD PTR [rbp-48], rax
-#         &third,
-  lea rax, [rbp-136]
-  mov QWORD PTR [rbp-56], rax
-#         &second,
   lea rax, [rbp-112]
+  mov QWORD PTR [rbp-32], rax
+#         &sixth,
+  lea rax, [rbp-116]
+  mov QWORD PTR [rbp-40], rax
+#         &fifth,
+  lea rax, [rbp-84]
+  mov QWORD PTR [rbp-48], rax
+#         &fourth,
+  lea rax, [rbp-92]
+  mov QWORD PTR [rbp-56], rax
+#         &third,
+  lea rax, [rbp-120]
   mov QWORD PTR [rbp-64], rax
+#         &second,
+  lea rax, [rbp-108]
+  mov QWORD PTR [rbp-72], rax
 #         &first,
   lea rax, [rbp-88]
-  mov QWORD PTR [rbp-72], rax
+  mov QWORD PTR [rbp-80], rax
 #     let returned = select_last(
 #         &first,
 #         &second,
@@ -75,8 +75,6 @@ main:
 #         &sixth,
 #         &seventh
 #     );
-  mov rax, QWORD PTR [rbp-24]
-  push rax
   mov rax, QWORD PTR [rbp-32]
   push rax
   mov rax, QWORD PTR [rbp-40]
@@ -89,6 +87,8 @@ main:
   push rax
   mov rax, QWORD PTR [rbp-72]
   push rax
+  mov rax, QWORD PTR [rbp-80]
+  push rax
   pop rdi
   pop rsi
   pop rdx
@@ -100,16 +100,16 @@ main:
   mov QWORD PTR [rsp], rax
   call select_last
   add rsp, 16
-  mov QWORD PTR [rbp-16], rax
+  mov QWORD PTR [rbp-24], rax
 #     let returned = select_last(
-  mov rax, QWORD PTR [rbp-16]
+  mov rax, QWORD PTR [rbp-24]
   mov QWORD PTR [rbp-104], rax
 #     *returned = 9;
   mov ecx, 9
   mov rax, QWORD PTR [rbp-104]
   mov DWORD PTR [rax], ecx
 #     return seventh;
-  mov eax, DWORD PTR [rbp-120]
-  add rsp, 144
+  mov eax, DWORD PTR [rbp-112]
+  add rsp, 128
   pop rbp
   ret

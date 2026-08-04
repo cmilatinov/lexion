@@ -25,11 +25,11 @@ main:
   mov ecx, 1
   sar edi, cl
   mov eax, edi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 #     return shifted ^ ~2;
   mov edi, 2
   not edi
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   xor eax, edi
   add rsp, 16
   pop rbp

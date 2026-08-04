@@ -288,11 +288,19 @@ impl TypeCollection {
     }
 
     pub fn canonicalize(&self, ty: Index) -> Index {
+        Self::canonicalize_type(&self.arena, &self.type_map, ty)
+    }
+
+    fn canonicalize_type(
+        arena: &Arena<Type>,
+        type_map: &HashMap<Index, Index>,
+        ty: Index,
+    ) -> Index {
         let mut result = ty;
         loop {
-            if let Some(next) = self.type_map.get(&result) {
+            if let Some(next) = type_map.get(&result) {
                 result = *next;
-            } else if let Type::TypeDefType(typedef_ty) = &self.arena[result] {
+            } else if let Type::TypeDefType(typedef_ty) = &arena[result] {
                 result = typedef_ty.ty;
             } else {
                 return result;
@@ -313,6 +321,7 @@ impl TypeCollection {
 
     fn aggregate_layout<I, F, Builder>(
         arena: &Arena<Type>,
+        type_map: &HashMap<Index, Index>,
         layouts: &mut HashMap<Index, MemoryLayout>,
         bitness: Bitness,
         ty: Index,
@@ -328,7 +337,7 @@ impl TypeCollection {
         layouts.insert(ty, MemoryLayout::incomplete());
         for member in members {
             let SizeAlign { size, align } =
-                Self::layout::<Builder>(arena, layouts, bitness, get_type(&member));
+                Self::layout::<Builder>(arena, type_map, layouts, bitness, get_type(&member));
             builder.member(size, align);
         }
 
@@ -340,13 +349,19 @@ impl TypeCollection {
 
     fn layout<Builder: MemoryLayoutBuilder>(
         arena: &Arena<Type>,
+        type_map: &HashMap<Index, Index>,
         layouts: &mut HashMap<Index, MemoryLayout>,
         bitness: Bitness,
         ty: Index,
     ) -> SizeAlign {
+        let ty = Self::canonicalize_type(arena, type_map, ty);
+        if let Some(layout) = layouts.get(&ty) {
+            return layout.size_align();
+        }
         match &arena[ty] {
             Type::TupleType(tuple_ty) => Self::aggregate_layout::<_, _, Builder>(
                 arena,
+                type_map,
                 layouts,
                 bitness,
                 ty,
@@ -355,6 +370,7 @@ impl TypeCollection {
             ),
             Type::StructType(struct_ty) => Self::aggregate_layout::<_, _, Builder>(
                 arena,
+                type_map,
                 layouts,
                 bitness,
                 ty,
@@ -362,39 +378,46 @@ impl TypeCollection {
                 |m| m.ty,
             ),
             Type::RefType(ref_ty) => {
-                if arena[ref_ty.to] == Type::PrimitiveType(PrimitiveType::STR) {
+                let to = Self::canonicalize_type(arena, type_map, ref_ty.to);
+                if arena[to] == Type::PrimitiveType(PrimitiveType::STR) {
                     SizeAlign::slice(bitness)
                 } else {
                     SizeAlign::ptr(bitness)
                 }
             }
             Type::FunctionType(_) => SizeAlign::ptr(bitness),
-            Type::TypeDefType(typedef_ty) => {
-                Self::layout::<Builder>(arena, layouts, bitness, typedef_ty.ty)
-            }
+            Type::TypeDefType(_) => unreachable!("canonical types have no aliases"),
             Type::PrimitiveType(primitive_ty) => primitive_ty.layout(bitness).size_align(),
             Type::Unknown => panic!("cannot layout unknown type"),
         }
     }
 
     pub fn compute_memory_layouts<Builder: MemoryLayoutBuilder>(&mut self, bitness: Bitness) {
+        self.memory_layouts.clear();
         for (ty, value) in self.arena.iter() {
             if matches!(value, Type::Unknown) {
                 continue;
             }
-            if self.memory_layouts.contains_key(&ty) {
-                continue;
-            }
-            Self::layout::<Builder>(&self.arena, &mut self.memory_layouts, bitness, ty);
+            Self::layout::<Builder>(
+                &self.arena,
+                &self.type_map,
+                &mut self.memory_layouts,
+                bitness,
+                ty,
+            );
         }
+    }
+
+    /// Returns the canonical aggregate layout prepared by `compute_memory_layouts`.
+    pub fn memory_layout(&self, ty: Index) -> Option<&MemoryLayout> {
+        self.memory_layouts.get(&self.canonicalize(ty))
     }
 
     pub fn size_align(&self, ty: Index, bitness: Bitness) -> SizeAlign {
         let ty = self.canonicalize(ty);
         match &self.arena[ty] {
             Type::TupleType(_) | Type::StructType(_) => self
-                .memory_layouts
-                .get(&ty)
+                .memory_layout(ty)
                 .map(|l| l.size_align())
                 .unwrap_or(SizeAlign::none()),
             Type::RefType(ref_ty)
@@ -410,6 +433,29 @@ impl TypeCollection {
             Type::TypeDefType(_) => unreachable!("canonical types have no aliases"),
             Type::Unknown => SizeAlign::none(),
         }
+    }
+
+    /// Returns storage reserved for a standalone frame value.
+    ///
+    /// Boolean and character values use full execution words in frame homes,
+    /// while aggregate members retain their natural one-byte representation.
+    pub fn frame_size_align(&self, ty: Index, bitness: Bitness) -> SizeAlign {
+        let ty = self.canonicalize(ty);
+        match &self.arena[ty] {
+            Type::PrimitiveType(PrimitiveType::BOOL | PrimitiveType::CHAR) => {
+                SizeAlign::from_size(4)
+            }
+            _ => self.size_align(ty, bitness),
+        }
+    }
+
+    /// Returns the natural memory representation of a reference's pointee.
+    pub fn pointee_size_align(&self, ty: Index, bitness: Bitness) -> Option<SizeAlign> {
+        let ty = self.canonicalize(ty);
+        let Type::RefType(ref_ty) = &self.arena[ty] else {
+            return None;
+        };
+        Some(self.size_align(ref_ty.to, bitness))
     }
 
     pub fn kind(&self, ty: Index) -> TypeKind {

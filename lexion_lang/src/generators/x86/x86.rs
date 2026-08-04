@@ -7,7 +7,9 @@ use crate::generators::tac::instructions::{
     Instruction, InstructionInstance, LoadInstruction, Operand, Place, StoreInstruction,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
-use crate::generators::x86::{AbiLocationRole, AssignedLivenessInterval, StackOffset, X86Target};
+use crate::generators::x86::{
+    AbiLocationRole, AssignedLivenessInterval, Bitness, SizeAlign, StackOffset, X86Target,
+};
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
@@ -309,11 +311,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Load(inst) => {
-                self.emit_load(lines, frame, location, inst);
+                self.emit_load(lines, frame, function, location, inst);
                 false
             }
             Instruction::Store(inst) => {
-                self.emit_store(lines, frame, location, inst);
+                self.emit_store(lines, frame, function, location, inst);
                 false
             }
             Instruction::Assignment(inst) => {
@@ -510,6 +512,7 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &LoadInstruction,
     ) {
@@ -517,7 +520,11 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Direct(value) => load_operand(lines, frame, location, value, Register::RAX),
             Place::Dereference(reference) => {
                 load_reference_operand(lines, frame, location, reference, Register::RAX);
-                lines.push(String::from("  mov eax, DWORD PTR [rax]"));
+                if self.reference_pointee_size(function, reference) == 1 {
+                    lines.push(String::from("  movzx eax, BYTE PTR [rax]"));
+                } else {
+                    lines.push(String::from("  mov eax, DWORD PTR [rax]"));
+                }
             }
             Place::Member { .. } | Place::Index { .. } => {
                 unreachable!("unsupported load places are diagnosed before emission")
@@ -530,6 +537,7 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &StoreInstruction,
     ) {
@@ -541,7 +549,11 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Dereference(reference) => {
                 load_operand(lines, frame, location, &inst.value, Register::RCX);
                 load_reference_operand(lines, frame, location, reference, Register::RAX);
-                lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                if self.reference_pointee_size(function, reference) == 1 {
+                    lines.push(String::from("  mov BYTE PTR [rax], cl"));
+                } else {
+                    lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                }
             }
             Place::Member { .. } | Place::Index { .. } => {
                 unreachable!("unsupported store places are diagnosed before emission")
@@ -556,6 +568,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 Some(Type::RefType(_))
             )
         })
+    }
+
+    fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
+            .map(|layout| layout.size)
+            .unwrap_or(4)
     }
 
     fn unsupported_load_message(&self, place: &Place) -> Option<String> {
@@ -1124,7 +1143,7 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
             .count();
-        let indexed_arguments = register_argument_follows_stack_argument(arg_locations);
+        let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let staged_arg_count = usize::from(indexed_arguments) * pending_param_count;
         let stack_padding = frame.call_stack_padding(
             stack_arg_count + staged_arg_count,
@@ -1134,6 +1153,10 @@ impl<'a> CodeGeneratorX86<'a> {
             emit_indexed_call_arguments(lines, arg_locations, stack_padding);
         } else {
             for abi_location in arg_locations {
+                if matches!(abi_location, Location::NoStorage) {
+                    lines.push(format!("  add rsp, {STACK_ARG_SLOT_BYTES}"));
+                    continue;
+                }
                 let Some(register) = outgoing_register(abi_location) else {
                     continue;
                 };
@@ -1202,13 +1225,16 @@ impl<'a> CodeGeneratorX86<'a> {
                 .map(|offset| offset.0 + 1)
                 .max()
                 .unwrap_or(0);
-            let spill_bytes = spill_count * 4;
+            let spill_bytes = spill_count * STACK_ARG_SLOT_BYTES;
             let mut home_bytes = align_to(spill_bytes, 8);
+            let function = self.cfg[range.start].label.as_str();
             let home_slots = self
                 .home_slot_names(range)
                 .into_iter()
                 .map(|name| {
-                    home_bytes += 8;
+                    let layout = self.symbol_frame_size_align(function, &name);
+                    home_bytes = layout.align.align(home_bytes);
+                    home_bytes += layout.size;
                     (
                         name,
                         saved_registers.len() * STACK_ARG_SLOT_BYTES + home_bytes,
@@ -1311,13 +1337,9 @@ impl<'a> CodeGeneratorX86<'a> {
         names
             .into_iter()
             .map(|name| {
-                let size = if self.symbol_is_reference(function, &name) {
-                    8
-                } else {
-                    4
-                };
-                offset = align_to(offset, size);
-                offset += size;
+                let layout = self.symbol_frame_size_align(function, &name);
+                offset = layout.align.align(offset);
+                offset += layout.size;
                 (name, offset)
             })
             .collect()
@@ -1363,6 +1385,14 @@ impl<'a> CodeGeneratorX86<'a> {
                     Some(Type::RefType(_))
                 )
             })
+    }
+
+    fn symbol_frame_size_align(&self, function: &str, name: &str) -> SizeAlign {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .map(|ty| self.types.frame_size_align(ty, Bitness::_64))
+            .filter(|layout| layout.size > 0)
+            .unwrap_or_else(|| SizeAlign::from_size(4))
     }
 
     fn symbol_is_f32(&self, function: &str, name: &str) -> bool {
@@ -1680,12 +1710,12 @@ impl<'a> FrameLayout<'a> {
                 offset: self.frame_stack_offset(*offset),
             }),
             Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
-            Location::Indirect { .. } | Location::Pair { .. } => None,
+            Location::NoStorage | Location::Indirect { .. } | Location::Pair { .. } => None,
         }
     }
 
     fn frame_stack_offset(&self, offset: StackOffset) -> usize {
-        self.saved_registers.len() * 8 + (offset.0 + 1) * 4
+        self.saved_registers.len() * STACK_ARG_SLOT_BYTES + (offset.0 + 1) * STACK_ARG_SLOT_BYTES
     }
 
     fn register_occupied(&self, location: CodeLocation, register: Register) -> bool {
@@ -1996,14 +2026,14 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
     }
 }
 
-fn register_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
+fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
     let mut saw_stack_argument = false;
     arg_locations.iter().any(|location| {
         if matches!(location, Location::Stack(_)) {
             saw_stack_argument = true;
             return false;
         }
-        saw_stack_argument && outgoing_register(location).is_some()
+        saw_stack_argument
     })
 }
 
@@ -2306,14 +2336,17 @@ fn incoming_location(location: &Location) -> Option<AssemblyLocation> {
             offset: 16 + offset.0 * 8,
         }),
         Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
-        Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage | Location::Indirect { .. } | Location::Pair { .. } => None,
     }
 }
 
 fn outgoing_register(location: &Location) -> Option<Register> {
     match location {
         Location::Register(register) | Location::RegisterAndStack(register, _) => Some(*register),
-        Location::Stack(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage
+        | Location::Stack(_)
+        | Location::Indirect { .. }
+        | Location::Pair { .. } => None,
     }
 }
 

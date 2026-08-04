@@ -6,7 +6,7 @@ use crate::generators::tac::instructions::{
     FunctionRange, Instruction, Operand, Place,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
-use crate::generators::x86::X86Target;
+use crate::generators::x86::{Bitness, SizeAlign, X86Target};
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
@@ -183,11 +183,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::Load(inst) => {
-                self.emit_load(assembler, slots, inst)?;
+                self.emit_load(assembler, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Store(inst) => {
-                self.emit_store(assembler, slots, inst)?;
+                self.emit_store(assembler, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Assignment(inst) => {
@@ -818,13 +818,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         &self,
         assembler: &mut CodeAssembler,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &crate::generators::tac::instructions::LoadInstruction,
     ) -> Result<(), IcedError> {
         match &inst.place {
             Place::Direct(value) => load_operand(assembler, slots, value, eax)?,
             Place::Dereference(reference) => {
                 load_reference_operand(assembler, slots, reference, rax)?;
-                assembler.mov(eax, dword_ptr(rax))?;
+                if self.reference_pointee_size(function, reference) == 1 {
+                    assembler.movzx(eax, byte_ptr(rax))?;
+                } else {
+                    assembler.mov(eax, dword_ptr(rax))?;
+                }
             }
             Place::Member { .. } | Place::Index { .. } => {
                 unreachable!("unsupported load places are diagnosed before emission")
@@ -837,6 +842,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         &self,
         assembler: &mut CodeAssembler,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &crate::generators::tac::instructions::StoreInstruction,
     ) -> Result<(), IcedError> {
         match &inst.place {
@@ -847,7 +853,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Dereference(reference) => {
                 load_reference_operand(assembler, slots, reference, rax)?;
                 load_operand(assembler, slots, &inst.value, ecx)?;
-                assembler.mov(dword_ptr(rax), ecx)
+                if self.reference_pointee_size(function, reference) == 1 {
+                    assembler.mov(byte_ptr(rax), cl)
+                } else {
+                    assembler.mov(dword_ptr(rax), ecx)
+                }
             }
             Place::Member { .. } | Place::Index { .. } => {
                 unreachable!("unsupported store places are diagnosed before emission")
@@ -858,6 +868,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn operand_is_reference(&self, function: &str, operand: &Operand) -> bool {
         self.operand_type(function, operand)
             .is_some_and(|ty| self.type_is_reference(ty))
+    }
+
+    fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
+            .map(|layout| layout.size)
+            .unwrap_or(4)
     }
 
     fn type_is_reference(&self, ty: Index) -> bool {
@@ -1107,27 +1124,20 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         names
             .into_iter()
             .map(|name| {
-                let size = if self.symbol_is_reference(function, &name) {
-                    8
-                } else {
-                    4
-                };
-                offset = align_to(offset, size);
-                offset += size;
+                let layout = self.symbol_frame_size_align(function, &name);
+                offset = layout.align.align(offset);
+                offset += layout.size;
                 (name, offset)
             })
             .collect()
     }
 
-    fn symbol_is_reference(&self, function: &str, name: &str) -> bool {
+    fn symbol_frame_size_align(&self, function: &str, name: &str) -> SizeAlign {
         self.function_symbol_entry(function, name)
             .and_then(|entry| entry.var_type)
-            .is_some_and(|ty| {
-                matches!(
-                    self.types.get(self.types.canonicalize(ty)),
-                    Some(Type::RefType(_))
-                )
-            })
+            .map(|ty| self.types.frame_size_align(ty, Bitness::_64))
+            .filter(|layout| layout.size > 0)
+            .unwrap_or_else(|| SizeAlign::from_size(4))
     }
 
     fn unsupported_cast_message(
@@ -1569,7 +1579,10 @@ fn label_name(labels: &HashMap<String, CodeLabel>, label: &str) -> CodeLabel {
 fn outgoing_register(location: &Location) -> Option<Register> {
     match location {
         Location::Register(register) | Location::RegisterAndStack(register, _) => Some(*register),
-        Location::Stack(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage
+        | Location::Stack(_)
+        | Location::Indirect { .. }
+        | Location::Pair { .. } => None,
     }
 }
 
@@ -1577,7 +1590,10 @@ fn stack_offset(location: &Location) -> Option<usize> {
     match location {
         Location::Stack(offset) => Some(offset.0),
         Location::RegisterAndStack(_, offset) => Some(offset.0),
-        Location::Register(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage
+        | Location::Register(_)
+        | Location::Indirect { .. }
+        | Location::Pair { .. } => None,
     }
 }
 

@@ -14,10 +14,10 @@ combine:
 #     let first = a + b;
   mov eax, edi
   add eax, esi
-  mov DWORD PTR [rbp-4], eax
-  mov eax, DWORD PTR [rbp-4]
+  mov DWORD PTR [rbp-8], eax
+  mov eax, DWORD PTR [rbp-8]
 #     return first + c;
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   add eax, edx
   add rsp, 16
   pop rbp

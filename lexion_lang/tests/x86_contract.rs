@@ -48,6 +48,35 @@ fn system_v64_assigns_integer_args_and_return_registers() {
 }
 
 #[test]
+fn system_v64_assigns_no_storage_for_unit_returns() {
+    let types = TypeCollection::default();
+    let signature = FunctionType {
+        params: vec![],
+        return_type: types.unit(),
+        is_vararg: false,
+    };
+
+    assert!(SystemV64.assign_ret(&types, &signature).is_none());
+}
+
+#[test]
+fn system_v64_unit_arguments_do_not_consume_registers() {
+    let types = TypeCollection::default();
+    let signature = FunctionType {
+        params: vec![types.unit(), types.i32(), types.unit(), types.i32()],
+        return_type: types.unit(),
+        is_vararg: false,
+    };
+
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+
+    assert!(matches!(locations[0], Location::NoStorage));
+    assert_eq!(locations[1].register(), Some(Register::RDI));
+    assert!(matches!(locations[2], Location::NoStorage));
+    assert_eq!(locations[3].register(), Some(Register::RSI));
+}
+
+#[test]
 fn aggregate_layout_records_member_offsets_and_padding() {
     let mut types = TypeCollection::default();
     let bool_ty = types.bool();
@@ -149,7 +178,11 @@ fn system_v64_classifies_stack_and_indirect_aggregate_locations() {
         is_vararg: false,
     };
 
-    assert_stack(&SystemV64.assign_args(&types, 0, &signature)[6], 0);
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+
+    assert_eq!(locations[0].register(), Some(Register::RSI));
+    assert_stack(&locations[5], 0);
+    assert_stack(&locations[6], 1);
     assert_indirect_return(&SystemV64.assign_ret(&types, &signature).unwrap(), 20);
 }
 
@@ -174,6 +207,47 @@ fn system_v64_classifies_large_aggregate_args_as_stack_values() {
     assert_eq!(locations.len(), signature.params.len());
     assert_stack(&locations[6], 0);
     assert_stack(&locations[7], 3);
+}
+
+#[test]
+fn system_v64_classifies_thin_and_fat_references() {
+    let mut types = TypeCollection::default();
+    let thin_ref = types.reference(types.i32());
+    let str_ref = types.str_ref();
+    let signature = FunctionType {
+        params: vec![thin_ref, str_ref],
+        return_type: str_ref,
+        is_vararg: false,
+    };
+
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+
+    assert_eq!(locations[0].register(), Some(Register::RDI));
+    assert_register_pair(&locations[1], Register::RSI, Register::RDX);
+    assert_register_pair(
+        &SystemV64.assign_ret(&types, &signature).unwrap(),
+        Register::RAX,
+        Register::RDX,
+    );
+}
+
+#[test]
+fn system_v64_spills_fat_references_as_two_eightbytes() {
+    let mut types = TypeCollection::default();
+    let i32_ty = types.i32();
+    let str_ref = types.str_ref();
+    let signature = FunctionType {
+        params: vec![
+            i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, i32_ty, str_ref, i32_ty,
+        ],
+        return_type: types.unit(),
+        is_vararg: false,
+    };
+
+    let locations = SystemV64.assign_args(&types, 0, &signature);
+
+    assert_stack_pair(&locations[6], 0, 1);
+    assert_stack(&locations[7], 2);
 }
 
 #[test]
@@ -274,6 +348,9 @@ fn backend_value_layouts_define_scalar_and_reference_storage() {
     assert_size_align(&types, types.char(), 1, 1);
     assert_size_align(&types, i32_ref, 8, 8);
     assert_size_align(&types, function, 8, 8);
+    assert_frame_size_align(&types, types.bool(), 4, 4);
+    assert_frame_size_align(&types, types.char(), 4, 4);
+    assert_frame_size_align(&types, i32_ref, 8, 8);
 }
 
 #[test]
@@ -322,8 +399,89 @@ fn backend_value_layouts_resolve_aggregate_alias_chains() {
     assert_eq!(types.canonicalize(mapped_pair_alias), pair);
 }
 
+#[test]
+fn aggregate_layout_resolves_member_aliases_and_fat_references() {
+    let mut types = TypeCollection::default();
+    let str_alias = types.insert(&Type::TypeDefType(TypeDefType {
+        ident: String::from("Text"),
+        ty: types.str(),
+    }));
+    let str_ref = types.reference(str_alias);
+    let i32_ty = types.i32();
+    let pair = types.insert(&Type::TupleType(TupleType {
+        types: vec![i32_ty, i32_ty],
+    }));
+    let mapped_source = types.insert(&Type::TupleType(TupleType {
+        types: vec![types.bool()],
+    }));
+    let mapped_alias = types.insert(&Type::TypeDefType(TypeDefType {
+        ident: String::from("MappedMember"),
+        ty: mapped_source,
+    }));
+    types.type_map.insert(mapped_source, pair);
+    let outer = types.insert(&Type::StructType(StructType {
+        ident: String::from("Outer"),
+        members: vec![
+            StructMember {
+                name: String::from("flag"),
+                ty: types.bool(),
+            },
+            StructMember {
+                name: String::from("text"),
+                ty: str_ref,
+            },
+            StructMember {
+                name: String::from("mapped"),
+                ty: mapped_alias,
+            },
+            StructMember {
+                name: String::from("tag"),
+                ty: types.char(),
+            },
+        ],
+    }));
+
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+
+    let layout = types.memory_layout(outer).expect("missing outer layout");
+    let offsets = layout
+        .members()
+        .iter()
+        .map(|member| member.offset)
+        .collect::<Vec<_>>();
+    let sizes = layout
+        .members()
+        .iter()
+        .map(|member| member.size_align.size)
+        .collect::<Vec<_>>();
+
+    assert_eq!(offsets, vec![0, 8, 24, 32]);
+    assert_eq!(sizes, vec![1, 16, 8, 1]);
+    assert_size_align(&types, outer, 40, 8);
+    assert_frame_size_align(&types, outer, 40, 8);
+    assert_size_align(&types, mapped_alias, 8, 4);
+}
+
+#[test]
+fn aggregate_layouts_recompute_after_type_changes() {
+    let mut types = TypeCollection::default();
+    let aggregate = types.insert(&Type::TupleType(TupleType {
+        types: vec![types.bool()],
+    }));
+
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+    assert_size_align(&types, aggregate, 1, 1);
+
+    types[aggregate] = Type::TupleType(TupleType {
+        types: vec![types.i32(), types.i32()],
+    });
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
+
+    assert_size_align(&types, aggregate, 8, 4);
+}
+
 fn assert_aggregate_layout(types: &TypeCollection, ty: Index) {
-    let layout = types.memory_layouts.get(&ty).expect("missing layout");
+    let layout = types.memory_layout(ty).expect("missing layout");
     let offsets = layout
         .members()
         .iter()
@@ -359,13 +517,25 @@ fn assert_stack(location: &Location, offset: usize) {
     }
 }
 
+fn assert_stack_pair(location: &Location, low: usize, high: usize) {
+    match location {
+        Location::Pair { low: l, high: h } => {
+            assert_stack(l, low);
+            assert_stack(h, high);
+        }
+        other => panic!("expected stack pair, got {other:?}"),
+    }
+}
+
 fn assert_indirect_return(location: &Location, size: usize) {
     match location {
         Location::Indirect {
             address_register,
+            result_register,
             size: actual_size,
         } => {
             assert_eq!(*address_register, Register::RDI);
+            assert_eq!(*result_register, Register::RAX);
             assert_eq!(*actual_size, size);
         }
         other => panic!("expected indirect return, got {other:?}"),
@@ -380,6 +550,17 @@ fn assert_size_align(
 ) {
     let size_align = types.size_align(ty, Bitness::_64);
 
+    assert_eq!(size_align.size, expected_size);
+    assert_eq!(size_align.align.value(), expected_align);
+}
+
+fn assert_frame_size_align(
+    types: &TypeCollection,
+    ty: Index,
+    expected_size: usize,
+    expected_align: usize,
+) {
+    let size_align = types.frame_size_align(ty, Bitness::_64);
     assert_eq!(size_align.size, expected_size);
     assert_eq!(size_align.align.value(), expected_align);
 }

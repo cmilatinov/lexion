@@ -12,7 +12,7 @@ sum7:
   mov rbp, rsp
   sub rsp, 16
   mov eax, DWORD PTR [rbp+16]
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 #     return a + b + c + d + e + f + g;
   mov r10d, edi
   add r10d, esi
@@ -25,7 +25,7 @@ sum7:
   mov esi, edi
   add esi, r9d
   mov eax, esi
-  add eax, DWORD PTR [rbp-4]
+  add eax, DWORD PTR [rbp-8]
   add rsp, 16
   pop rbp
   ret
