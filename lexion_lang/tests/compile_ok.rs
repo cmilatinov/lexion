@@ -110,6 +110,11 @@ fn test_aggregate_expression_syntax_parses() {
 }
 
 #[test]
+fn test_ternary_false_arm_named_struct_literal() {
+    common::assert_compiles("backend/ternary_struct_literal.lex");
+}
+
+#[test]
 fn test_if_else_expr_statement_semicolon_optional() {
     use lexion_lang::parser::ParserLexion;
     use lexion_lib::Parser;

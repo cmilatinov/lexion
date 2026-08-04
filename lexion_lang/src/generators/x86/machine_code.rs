@@ -836,6 +836,23 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Member { .. } => {
                 let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
                 let operand = aggregate_stack_value(slots, &base, offset);
+                if self.type_is_aggregate(ty) {
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    return emit_aggregate_region_copy(
+                        assembler,
+                        slots,
+                        (&base, offset),
+                        (&inst.target, 0),
+                        size,
+                    );
+                }
+                if self.type_is_reference(ty) {
+                    assembler.mov(
+                        rax,
+                        qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                    )?;
+                    return store_reference_operand(assembler, slots, &inst.target, rax);
+                }
                 if is_f32_type(self.types, ty) {
                     assembler.movss(xmm0, operand)?;
                     return store_float_operand(assembler, slots, &inst.target, xmm0);
@@ -880,7 +897,22 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Member { .. } => {
                 let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
                 let operand = aggregate_stack_value(slots, &base, offset);
-                if is_f32_type(self.types, ty) {
+                if self.type_is_aggregate(ty) {
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    emit_aggregate_region_copy(
+                        assembler,
+                        slots,
+                        (&inst.value, 0),
+                        (&base, offset),
+                        size,
+                    )
+                } else if self.type_is_reference(ty) {
+                    load_reference_operand(assembler, slots, &inst.value, rax)?;
+                    assembler.mov(
+                        qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                        rax,
+                    )
+                } else if is_f32_type(self.types, ty) {
                     load_float_operand(assembler, slots, &inst.value, xmm0)?;
                     assembler.movss(operand, xmm0)
                 } else {
@@ -962,25 +994,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             return Ok(());
         };
         let size = self.types.size_align(ty, Bitness::_64).size;
-        for offset in (0..size).step_by(4) {
-            let width = (size - offset).min(4);
-            if width == 4 {
-                assembler.mov(eax, aggregate_stack_value(slots, &inst.src, offset))?;
-                assembler.mov(aggregate_stack_value(slots, &inst.dst, offset), eax)?;
-            } else {
-                for byte in 0..width {
-                    assembler.movzx(
-                        eax,
-                        byte_ptr(rbp - aggregate_stack_offset(slots, &inst.src, offset + byte)),
-                    )?;
-                    assembler.mov(
-                        byte_ptr(rbp - aggregate_stack_offset(slots, &inst.dst, offset + byte)),
-                        al,
-                    )?;
-                }
-            }
-        }
-        Ok(())
+        emit_aggregate_region_copy(assembler, slots, (&inst.src, 0), (&inst.dst, 0), size)
     }
 
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
@@ -1024,7 +1038,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             ));
         };
         let ty = self.types.canonicalize(ty);
-        (!matches!(
+        (!(matches!(
             self.types.get(ty),
             Some(Type::PrimitiveType(
                 PrimitiveType::U32
@@ -1033,7 +1047,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     | PrimitiveType::BOOL
                     | PrimitiveType::CHAR
             ))
-        ))
+        ) || (self.type_is_reference(ty) && self.types.size_align(ty, Bitness::_64).size == 8)
+            || self.type_is_aggregate(ty)))
         .then(|| {
             format!(
                 "x86 machine-code backend does not support non-scalar aggregate members yet: {}",
@@ -1898,6 +1913,48 @@ fn aggregate_stack_offset(
     member_offset: usize,
 ) -> i32 {
     stack_slot_offset(slots, operand) - member_offset as i32
+}
+
+fn emit_aggregate_region_copy(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    (source, source_offset): (&Operand, usize),
+    (destination, destination_offset): (&Operand, usize),
+    size: usize,
+) -> Result<(), IcedError> {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        if width == 4 {
+            assembler.mov(
+                eax,
+                aggregate_stack_value(slots, source, source_offset + offset),
+            )?;
+            assembler.mov(
+                aggregate_stack_value(slots, destination, destination_offset + offset),
+                eax,
+            )?;
+        } else {
+            for byte in 0..width {
+                assembler.movzx(
+                    eax,
+                    byte_ptr(
+                        rbp - aggregate_stack_offset(slots, source, source_offset + offset + byte),
+                    ),
+                )?;
+                assembler.mov(
+                    byte_ptr(
+                        rbp - aggregate_stack_offset(
+                            slots,
+                            destination,
+                            destination_offset + offset + byte,
+                        ),
+                    ),
+                    al,
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn reference_stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {

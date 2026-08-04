@@ -212,10 +212,10 @@ ConditionAssignExpr -> UnaryExpr '=' ConditionAssignExpr
         }).into()
     ).into());
 }} ;
-ConditionAssignExpr -> CondExpr
+ConditionAssignExpr -> ConditionCondExpr
 [Box<SourcedExpr>] {{ $$ = $1; }} ;
 
-CondExpr -> LogicOrExpr '?' Expr ':' CondExpr
+CondExpr -> LogicOrExpr '?' Expr ':' CondFalseExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $5.span),
@@ -229,6 +229,24 @@ CondExpr -> LogicOrExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
 }} ;
+
+CondFalseExpr -> CondExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
+CondFalseExpr -> StructExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
+
+ConditionCondExpr -> LogicOrExpr '?' Expr ':' ConditionCondExpr
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $5.span),
+        Expr::OperatorExpr(OperatorExpr {
+            operator: "?:",
+            args: vec![*$1, *$3, *$5]
+        }).into()
+    ).into());
+}} ;
+ConditionCondExpr -> LogicOrExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
 
 LogicOrExpr -> LogicOrExpr '||' LogicAndExpr
 [Box<SourcedExpr>] {{

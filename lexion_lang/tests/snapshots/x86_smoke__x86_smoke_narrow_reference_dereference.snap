@@ -46,9 +46,8 @@ main:
   mov rax, QWORD PTR [rbp-24]
   mov BYTE PTR [rax], cl
 #     let result = if *reference { 1 } else { 0 };
-  mov rax, QWORD PTR [rbp-24]
-  movzx eax, BYTE PTR [rax]
-  mov edi, eax
+  mov rdi, QWORD PTR [rbp-24]
+  movzx edi, BYTE PTR [rdi]
   cmp edi, 0
   je $celse_1
 $cthen_1:

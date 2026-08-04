@@ -323,6 +323,9 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Copy(inst) => {
+                let Some(destination) = frame.operand_location(location, &inst.dst) else {
+                    return false;
+                };
                 if self.operand_is_aggregate(function, &inst.src) {
                     self.emit_aggregate_copy(lines, frame, function, location, inst);
                 } else if self.operand_is_reference(function, &inst.src)
@@ -336,10 +339,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     load_float_operand(lines, frame, location, &inst.src, Register::XMM0);
                     store_float_operand(lines, frame, location, &inst.dst, Register::XMM0);
                 } else {
-                    let register = frame
-                        .operand_location(location, &inst.dst)
-                        .and_then(|location| location.register())
-                        .unwrap_or(Register::RAX);
+                    let register = destination.register().unwrap_or(Register::RAX);
                     load_operand(lines, frame, location, &inst.src, register);
                     store_operand(lines, frame, location, &inst.dst, register);
                 }
@@ -518,35 +518,83 @@ impl<'a> CodeGeneratorX86<'a> {
         location: CodeLocation,
         inst: &LoadInstruction,
     ) {
+        let allocated_target_register = operand_register(frame, location, &inst.target);
+        let target_register = allocated_target_register.unwrap_or(Register::RAX);
+        let mut preserved_target_register = false;
         match &inst.place {
-            Place::Direct(value) => load_operand(lines, frame, location, value, Register::RAX),
+            Place::Direct(value) => {
+                if allocated_target_register.is_none() {
+                    preserved_target_register =
+                        preserve_register(lines, frame, location, target_register);
+                }
+                load_operand(lines, frame, location, value, target_register);
+            }
             Place::Dereference(reference) => {
-                load_reference_operand(lines, frame, location, reference, Register::RAX);
+                if allocated_target_register.is_none() {
+                    preserved_target_register =
+                        preserve_register(lines, frame, location, target_register);
+                }
+                load_reference_operand(lines, frame, location, reference, target_register);
                 if self.reference_pointee_size(function, reference) == 1 {
-                    lines.push(String::from("  movzx eax, BYTE PTR [rax]"));
+                    lines.push(format!(
+                        "  movzx {}, BYTE PTR [{}]",
+                        register_name_32(target_register),
+                        register_name(target_register)
+                    ));
                 } else {
-                    lines.push(String::from("  mov eax, DWORD PTR [rax]"));
+                    lines.push(format!(
+                        "  mov {}, DWORD PTR [{}]",
+                        register_name_32(target_register),
+                        register_name(target_register)
+                    ));
                 }
             }
             Place::Member { .. } => {
                 let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
                 let operand = aggregate_member_operand(frame, location, &base, offset).unwrap();
+                if self.type_is_aggregate(ty) {
+                    let target =
+                        aggregate_member_operand(frame, location, &inst.target, 0).unwrap();
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    emit_memory_copy(lines, &operand, &target, size);
+                    restore_register(lines, Register::RAX, preserved);
+                    return;
+                }
+                if self.type_is_reference(ty) {
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    lines.push(format!("  mov rax, QWORD PTR {operand}"));
+                    store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
+                    restore_register(lines, Register::RAX, preserved);
+                    return;
+                }
                 if is_f32_type(self.types, ty) {
                     lines.push(format!("  movss xmm0, DWORD PTR {operand}"));
                     store_float_operand(lines, frame, location, &inst.target, Register::XMM0);
                     return;
                 }
+                if allocated_target_register.is_none() {
+                    preserved_target_register =
+                        preserve_register(lines, frame, location, target_register);
+                }
                 if self.types.size_align(ty, Bitness::_64).size == 1 {
-                    lines.push(format!("  movzx eax, BYTE PTR {operand}"));
+                    lines.push(format!(
+                        "  movzx {}, BYTE PTR {operand}",
+                        register_name_32(target_register)
+                    ));
                 } else {
-                    lines.push(format!("  mov eax, DWORD PTR {operand}"));
+                    lines.push(format!(
+                        "  mov {}, DWORD PTR {operand}",
+                        register_name_32(target_register)
+                    ));
                 }
             }
             Place::Index { .. } => {
                 unreachable!("unsupported load places are diagnosed before emission")
             }
         }
-        store_operand(lines, frame, location, &inst.target, Register::RAX);
+        store_operand(lines, frame, location, &inst.target, target_register);
+        restore_register(lines, target_register, preserved_target_register);
     }
 
     fn emit_store(
@@ -574,16 +622,41 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Member { .. } => {
                 let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
                 let operand = aggregate_member_operand(frame, location, &base, offset).unwrap();
-                if is_f32_type(self.types, ty) {
+                if self.type_is_aggregate(ty) {
+                    let source = aggregate_member_operand(frame, location, &inst.value, 0).unwrap();
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    emit_memory_copy(lines, &source, &operand, size);
+                    restore_register(lines, Register::RAX, preserved);
+                } else if self.type_is_reference(ty) {
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    load_reference_operand(lines, frame, location, &inst.value, Register::RAX);
+                    lines.push(format!("  mov QWORD PTR {operand}, rax"));
+                    restore_register(lines, Register::RAX, preserved);
+                } else if is_f32_type(self.types, ty) {
                     load_float_operand(lines, frame, location, &inst.value, Register::XMM0);
                     lines.push(format!("  movss DWORD PTR {operand}, xmm0"));
                 } else {
-                    load_operand(lines, frame, location, &inst.value, Register::RAX);
-                    if self.types.size_align(ty, Bitness::_64).size == 1 {
-                        lines.push(format!("  mov BYTE PTR {operand}, al"));
+                    let allocated_value_register = operand_register(frame, location, &inst.value);
+                    let value_register = allocated_value_register.unwrap_or(Register::RAX);
+                    let preserved = if allocated_value_register.is_none() {
+                        preserve_register(lines, frame, location, Register::RAX)
                     } else {
-                        lines.push(format!("  mov DWORD PTR {operand}, eax"));
+                        false
+                    };
+                    load_operand(lines, frame, location, &inst.value, value_register);
+                    if self.types.size_align(ty, Bitness::_64).size == 1 {
+                        lines.push(format!(
+                            "  mov BYTE PTR {operand}, {}",
+                            register_name_8(value_register)
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "  mov DWORD PTR {operand}, {}",
+                            register_name_32(value_register)
+                        ));
                     }
+                    restore_register(lines, Register::RAX, preserved);
                 }
             }
             Place::Index { .. } => {
@@ -613,6 +686,13 @@ impl<'a> CodeGeneratorX86<'a> {
         ) || matches!(
             self.types.get(self.types.canonicalize(ty)),
             Some(Type::StructType(_))
+        )
+    }
+
+    fn type_is_reference(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::RefType(_))
         )
     }
 
@@ -659,28 +739,15 @@ impl<'a> CodeGeneratorX86<'a> {
             return;
         };
         let size = self.types.size_align(ty, Bitness::_64).size;
-        let Some(src) = aggregate_member_operand(frame, location, &inst.src, 0) else {
+        let Some(source) = aggregate_member_operand(frame, location, &inst.src, 0) else {
             return;
         };
-        let Some(dst) = aggregate_member_operand(frame, location, &inst.dst, 0) else {
+        let Some(destination) = aggregate_member_operand(frame, location, &inst.dst, 0) else {
             return;
         };
-        for offset in (0..size).step_by(4) {
-            let width = (size - offset).min(4);
-            let source = offset_assembly_operand(&src, offset);
-            let destination = offset_assembly_operand(&dst, offset);
-            if width == 4 {
-                lines.push(format!("  mov eax, DWORD PTR {source}"));
-                lines.push(format!("  mov DWORD PTR {destination}, eax"));
-            } else {
-                for byte in 0..width {
-                    let source = offset_assembly_operand(&source, byte);
-                    let destination = offset_assembly_operand(&destination, byte);
-                    lines.push(format!("  mov al, BYTE PTR {source}"));
-                    lines.push(format!("  mov BYTE PTR {destination}, al"));
-                }
-            }
-        }
+        let preserved = preserve_register(lines, frame, location, Register::RAX);
+        emit_memory_copy(lines, &source, &destination, size);
+        restore_register(lines, Register::RAX, preserved);
     }
 
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
@@ -717,7 +784,7 @@ impl<'a> CodeGeneratorX86<'a> {
             ));
         };
         let ty = self.types.canonicalize(ty);
-        (!matches!(
+        (!(matches!(
             self.types.get(ty),
             Some(Type::PrimitiveType(
                 PrimitiveType::U32
@@ -726,7 +793,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     | PrimitiveType::BOOL
                     | PrimitiveType::CHAR
             ))
-        ))
+        ) || (self.type_is_reference(ty) && self.types.size_align(ty, Bitness::_64).size == 8)
+            || self.type_is_aggregate(ty)))
         .then(|| {
             format!(
                 "x86 backend does not support non-scalar aggregate members yet: {}",
@@ -1907,7 +1975,10 @@ impl<'a> FrameLayout<'a> {
     fn register_occupied(&self, location: CodeLocation, register: Register) -> bool {
         self.allocations.is_some_and(|allocations| {
             allocations.iter().any(|assigned| {
-                assigned.interval().span.start <= location
+                !self
+                    .home_slots
+                    .contains_key(assigned.interval().variable.as_str())
+                    && assigned.interval().span.start <= location
                     && location < assigned.interval().span.end
                     && self.frame_location(assigned.location())
                         == Some(AssemblyLocation::Register(register))
@@ -1980,6 +2051,25 @@ fn operand_register(
     frame
         .operand_location(location, operand)
         .and_then(|location| location.register())
+}
+
+fn preserve_register(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    register: Register,
+) -> bool {
+    let preserve = frame.register_occupied(location, register);
+    if preserve {
+        lines.push(format!("  push {}", register_name(register)));
+    }
+    preserve
+}
+
+fn restore_register(lines: &mut Vec<String>, register: Register, restore: bool) {
+    if restore {
+        lines.push(format!("  pop {}", register_name(register)));
+    }
 }
 
 fn load_operand(
@@ -2198,6 +2288,25 @@ fn offset_assembly_operand(operand: &str, offset: usize) -> String {
     }
     let inner = operand.trim_start_matches('[').trim_end_matches(']');
     format!("[{inner}+{offset}]")
+}
+
+fn emit_memory_copy(lines: &mut Vec<String>, source: &str, destination: &str, size: usize) {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        let source = offset_assembly_operand(source, offset);
+        let destination = offset_assembly_operand(destination, offset);
+        if width == 4 {
+            lines.push(format!("  mov eax, DWORD PTR {source}"));
+            lines.push(format!("  mov DWORD PTR {destination}, eax"));
+        } else {
+            for byte in 0..width {
+                let source = offset_assembly_operand(&source, byte);
+                let destination = offset_assembly_operand(&destination, byte);
+                lines.push(format!("  mov al, BYTE PTR {source}"));
+                lines.push(format!("  mov BYTE PTR {destination}, al"));
+            }
+        }
+    }
 }
 
 fn float_operand_value(

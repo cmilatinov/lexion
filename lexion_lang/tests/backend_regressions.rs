@@ -442,3 +442,17 @@ fn backend_local_aggregate_values_tac_snapshot() {
 
     insta::assert_snapshot!(tac_snapshot(&cfg));
 }
+
+#[test]
+fn backend_aggregate_member_values_tac_snapshot() {
+    let cfg = compile_cfg("backend/x86_aggregate_members.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}
+
+#[test]
+fn backend_ternary_struct_literal_tac_snapshot() {
+    let cfg = compile_cfg("backend/ternary_struct_literal.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}

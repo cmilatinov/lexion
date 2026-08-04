@@ -204,6 +204,13 @@ fn x86_machine_code_local_aggregate_values() {
 }
 
 #[test]
+fn x86_machine_code_aggregate_member_values() {
+    let code = compile_machine_code("backend/x86_aggregate_members.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 

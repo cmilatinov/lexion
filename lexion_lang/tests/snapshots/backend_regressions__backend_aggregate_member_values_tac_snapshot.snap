@@ -1,0 +1,70 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  first = 11
+  second = 23
+  $t2 = borrow first
+  store $t2 -> $t1.0
+  store 3 -> $t3.0
+  store 4 -> $t3.1
+  store $t3 -> $t1.1
+  tuple = $t1
+  tuple_copy = tuple
+  $t4 = borrow second
+  store $t4 -> tuple_copy.0
+  store 7 -> $t5.0
+  store 8 -> $t5.1
+  store $t5 -> tuple_copy.1
+  $t6 = load tuple_copy.0
+  tuple_reference = $t6
+  $t7 = load tuple_copy.1
+  tuple_copy_inner = $t7
+  $t8 = load tuple_copy.1
+  tuple_inner = $t8
+  store 9 -> tuple_inner.0
+  $t10 = borrow first
+  store $t10 -> $t9.reference
+  store 5 -> $t11.first
+  store 6 -> $t11.second
+  store $t11 -> $t9.inner
+  values = $t9
+  values_copy = values
+  $t12 = borrow second
+  store $t12 -> values_copy.reference
+  store 10 -> $t13.first
+  store 12 -> $t13.second
+  store $t13 -> values_copy.inner
+  $t14 = load values_copy.inner
+  values_inner = $t14
+  store 14 -> values_inner.first
+  $t15 = load tuple.0
+  $t16 = load *$t15
+  original_tuple_value = $t16
+  $t17 = load *tuple_reference
+  copied_reference_value = $t17
+  $t18 = load tuple_copy_inner.0
+  copied_tuple_value = $t18
+  $t19 = load tuple_inner.0
+  independent_tuple_value = $t19
+  $t20 = load values.inner.first
+  original_struct_value = $t20
+  $t21 = load values_copy.reference
+  $t22 = load *$t21
+  copied_struct_reference_value = $t22
+  $t23 = load values_copy.inner.first
+  copied_struct_value = $t23
+  $t24 = load values_inner.first
+  independent_struct_value = $t24
+  $t25 = original_tuple_value + copied_reference_value
+  $t26 = $t25 + copied_tuple_value
+  $t27 = $t26 + independent_tuple_value
+  $t28 = $t27 + original_struct_value
+  $t29 = $t28 + copied_struct_reference_value
+  $t30 = $t29 + copied_struct_value
+  $t31 = $t30 + independent_struct_value
+  return $t31
+  endfn main

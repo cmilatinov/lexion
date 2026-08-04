@@ -48,8 +48,7 @@ main:
 #     return point_copy.x + point_copy.y;
   mov eax, DWORD PTR [rbp-56]
   mov DWORD PTR [rbp-8], eax
-  mov eax, DWORD PTR [rbp-52]
-  mov esi, eax
+  mov esi, DWORD PTR [rbp-52]
   mov eax, DWORD PTR [rbp-8]
   add eax, esi
   add rsp, 64

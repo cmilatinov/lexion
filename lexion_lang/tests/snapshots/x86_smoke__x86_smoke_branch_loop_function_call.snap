@@ -52,7 +52,6 @@ $lstart_1:
   jmp $lstart_1
 $lend_1:
 #     let selected: i32 = 0;
-  mov eax, 0
 #     if total > 3 {
   mov eax, ebx
   cmp eax, 3

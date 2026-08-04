@@ -187,6 +187,11 @@ fn x86_smoke_local_aggregate_values() {
 }
 
 #[test]
+fn x86_smoke_aggregate_member_values() {
+    insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
+}
+
+#[test]
 fn x86_reports_unsupported_float_casts() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_cast.lex").join("\n"));
 }
