@@ -10,14 +10,13 @@ main:
   pair = $t1
   pair_copy = pair
   store 7 -> pair_copy.0
-  $t3 = load pair_copy.0
-  store $t3 -> $t2.x
   store 4 -> $t2.y
+  store 7 -> $t2.x
   point = $t2
   point_copy = point
   store 9 -> point_copy.y
-  $t4 = load point_copy.x
-  $t5 = load point_copy.y
-  $t6 = $t4 + $t5
-  return $t6
+  $t3 = load point_copy.x
+  $t4 = load point_copy.y
+  $t5 = $t3 + $t4
+  return $t5
   endfn main

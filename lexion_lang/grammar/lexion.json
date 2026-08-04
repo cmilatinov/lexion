@@ -199,7 +199,7 @@
       "left": "WhileStmt",
       "right": [
         "'while'",
-        "Expr",
+        "ConditionExpr",
         "'{'",
         "StmtList",
         "'}'"
@@ -284,6 +284,36 @@
       }
     },
     {
+      "left": "ConditionExpr",
+      "right": [
+        "IfExpr"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "ConditionExpr",
+      "right": [
+        "ConditionAssignExpr"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "ConditionExpr",
+      "right": [
+        "BlockExpr"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new($1);"
+      }
+    },
+    {
       "left": "OptExpr",
       "right": [
         "Expr"
@@ -340,7 +370,7 @@
       "left": "IfThenExpr",
       "right": [
         "'if'",
-        "Expr",
+        "ConditionExpr",
         "BlockExpr"
       ],
       "reduction": {
@@ -352,7 +382,7 @@
       "left": "IfElseExpr",
       "right": [
         "'if'",
-        "Expr",
+        "ConditionExpr",
         "BlockExpr",
         "'else'",
         "BlockOrIfExpr"
@@ -396,6 +426,38 @@
     },
     {
       "left": "AssignExpr",
+      "right": [
+        "CondExpr"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "AssignExpr",
+      "right": [
+        "StructExpr"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "ConditionAssignExpr",
+      "right": [
+        "UnaryExpr",
+        "'='",
+        "ConditionAssignExpr"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $3.span),\n        Expr::OperatorExpr(OperatorExpr {\n            operator: \"=\",\n            args: vec![*$1, *$3]\n        }).into()\n    ).into());"
+      }
+    },
+    {
+      "left": "ConditionAssignExpr",
       "right": [
         "CondExpr"
       ],
@@ -894,6 +956,74 @@
       "reduction": {
         "ty": "Box<SourcedExpr>",
         "code": "$$ = $2;"
+      }
+    },
+    {
+      "left": "StructExpr",
+      "right": [
+        "'ident'",
+        "'{'",
+        "StructExprFields",
+        "'}'"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $4.span),\n        Expr::StructExpr(StructExpr {\n            name: ($1.span, $1.value).into(),\n            fields: $3\n        }).into()\n    ).into());"
+      }
+    },
+    {
+      "left": "StructExprFields",
+      "right": [
+        "StructExprFieldList",
+        "OptComma"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<StructExprField>>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
+      "left": "StructExprFields",
+      "right": [
+        "ε"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<StructExprField>>",
+        "code": "$$ = vec![];"
+      }
+    },
+    {
+      "left": "StructExprFieldList",
+      "right": [
+        "StructExprFieldList",
+        "','",
+        "StructExprField"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<StructExprField>>",
+        "code": "$1.push($3);\n    $$ = $1;"
+      }
+    },
+    {
+      "left": "StructExprFieldList",
+      "right": [
+        "StructExprField"
+      ],
+      "reduction": {
+        "ty": "Vec<Sourced<StructExprField>>",
+        "code": "$$ = vec![$1];"
+      }
+    },
+    {
+      "left": "StructExprField",
+      "right": [
+        "'ident'",
+        "':'",
+        "Expr"
+      ],
+      "reduction": {
+        "ty": "Sourced<StructExprField>",
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $3.span),\n        StructExprField {\n            name: ($1.span, $1.value).into(),\n            expr: *$3\n        }\n    ).into();"
       }
     },
     {

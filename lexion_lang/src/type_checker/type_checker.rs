@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use generational_arena::Index;
@@ -10,12 +11,12 @@ use crate::ast::visitor::{AstNodeMut, AstVisitor, AstVisitorAction, TraversalTyp
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr,
     Lit, LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
-    TupleExpr, TypedExpr, VarDecl, VarDeclStmt, WhileStmt,
+    StructExpr, TupleExpr, TypedExpr, VarDecl, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::operators;
 use crate::pipeline::PipelineStage;
-use crate::symbol_table::SymbolTableGraph;
+use crate::symbol_table::{SymbolTableEntryType, SymbolTableGraph};
 use crate::type_checker::operator_table::OperatorTable;
 
 pub struct TypeChecker<'a> {
@@ -121,6 +122,14 @@ impl<'a> TypeChecker<'a> {
                     },
                 span,
             } => self.call(diag, expr, *span),
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::StructExpr(expr),
+                        ..
+                    },
+                span,
+            } => self.struct_(diag, expr, *span),
             Sourced {
                 value:
                     TypedExpr {
@@ -367,34 +376,7 @@ impl<'a> TypeChecker<'a> {
         expr: &mut CallExpr,
         span: SourceSpan,
     ) -> Option<Index> {
-        let Some(fty_idx) = self.tc(diag, &mut expr.expr, None) else {
-            diag.error(LexionDiagnosticError {
-                src: self.src.clone(),
-                span: expr.expr.span,
-                message: String::from("unknown expression type"),
-            });
-            return None;
-        };
-        if let Some(Type::StructType(struct_)) = self.types.get(self.types.canonicalize(fty_idx)) {
-            let members = struct_.members.clone();
-            if members.len() != expr.args.len() {
-                diag.error(LexionDiagnosticError {
-                    src: self.src.clone(),
-                    span,
-                    message: format!(
-                        "struct '{}' expects {} constructor argument(s), but got {}",
-                        self.types.to_string_index(fty_idx),
-                        members.len(),
-                        expr.args.len()
-                    ),
-                });
-                return None;
-            }
-            for (arg, member) in expr.args.iter_mut().zip(members) {
-                self.tc(diag, arg, Some(member.ty))?;
-            }
-            return Some(fty_idx);
-        }
+        let fty_idx = self.tc(diag, &mut expr.expr, None)?;
         let Some(fty) = self.types.get(fty_idx).and_then(|ty| match ty {
             Type::FunctionType(ty) => Some(ty.clone()),
             _ => None,
@@ -446,6 +428,100 @@ impl<'a> TypeChecker<'a> {
         Some(fty.return_type)
     }
 
+    fn struct_(
+        &mut self,
+        diag: &mut dyn DiagnosticConsumer,
+        expr: &mut StructExpr,
+        span: SourceSpan,
+    ) -> Option<Index> {
+        let struct_ty = self
+            .table
+            .lookup(self.current_scope, expr.name.value.as_str())
+            .and_then(|(_, _, entry)| {
+                (entry.ty == SymbolTableEntryType::Struct)
+                    .then_some(entry.var_type)
+                    .flatten()
+            });
+        let struct_ = struct_ty.and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+            Some(Type::StructType(struct_)) => Some(struct_.clone()),
+            _ => None,
+        });
+        let Some((struct_ty, struct_)) = struct_ty.zip(struct_) else {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: expr.name.span,
+                message: format!("unknown struct '{}'", expr.name.value),
+            });
+            for field in &mut expr.fields {
+                self.tc(diag, &mut field.value.expr, None);
+            }
+            return None;
+        };
+
+        let mut valid = true;
+        let mut seen = HashSet::new();
+        for field in &mut expr.fields {
+            let name = field.value.name.value.as_str();
+            if !seen.insert(name.to_owned()) {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span: field.value.name.span,
+                    message: format!(
+                        "duplicate field '{}' in struct literal '{}'",
+                        name, expr.name.value
+                    ),
+                });
+                valid = false;
+            }
+
+            let Some(member) = struct_.members.iter().find(|member| member.name == name) else {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span: field.value.name.span,
+                    message: format!("struct '{}' has no field '{}'", expr.name.value, name),
+                });
+                self.tc(diag, &mut field.value.expr, None);
+                valid = false;
+                continue;
+            };
+
+            match self.expr(diag, &mut field.value.expr) {
+                Some(ty) if !self.types.eq(ty, member.ty) => {
+                    diag.error(LexionDiagnosticError {
+                        src: self.src.clone(),
+                        span: field.value.expr.span,
+                        message: format!(
+                            "field '{}' of struct '{}' expects type '{}', instead got '{}'",
+                            name,
+                            expr.name.value,
+                            self.types.to_string_index(member.ty),
+                            self.types.to_string_index(ty)
+                        ),
+                    });
+                    valid = false;
+                }
+                None => valid = false,
+                Some(_) => {}
+            }
+        }
+
+        for member in &struct_.members {
+            if !seen.contains(member.name.as_str()) {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span,
+                    message: format!(
+                        "missing field '{}' in struct literal '{}'",
+                        member.name, expr.name.value
+                    ),
+                });
+                valid = false;
+            }
+        }
+
+        valid.then_some(struct_ty)
+    }
+
     fn tuple(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &mut TupleExpr) -> Option<Index> {
         let types = expr
             .values
@@ -462,7 +538,19 @@ impl<'a> TypeChecker<'a> {
         span: SourceSpan,
     ) -> Option<Index> {
         if let Some((_, _, entry)) = self.table.lookup(self.current_scope, expr.ident.as_str()) {
-            entry.var_type
+            if entry.ty == SymbolTableEntryType::Struct {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span,
+                    message: format!(
+                        "struct declaration '{}' is not a value; use a named struct literal",
+                        expr.ident
+                    ),
+                });
+                None
+            } else {
+                entry.var_type
+            }
         } else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),

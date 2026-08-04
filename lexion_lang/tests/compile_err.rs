@@ -37,6 +37,24 @@ fn test_call_argument_type_mismatch() {
 }
 
 #[test]
+fn test_struct_literal_field_validation() {
+    let errors = common::assert_fails("errors/semantics/invalid_struct_literal_fields.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_positional_struct_call_is_not_construction() {
+    let errors = common::assert_fails("errors/semantics/positional_struct_call.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_struct_declaration_is_not_a_value() {
+    let errors = common::assert_fails("errors/semantics/struct_declaration_value.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn test_invalid_cast() {
     let errors = common::assert_fails("errors/semantics/invalid_cast.lex");
     insta::assert_snapshot!(errors.join("\n"));

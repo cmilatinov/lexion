@@ -116,7 +116,7 @@ impl<'a> LinearRegisterAllocator<'a> {
         &mut self,
         mut intervals: Vec<LivenessInterval>,
     ) -> Vec<AssignedLivenessInterval> {
-        intervals.sort_by_key(|i| i.span.start);
+        sort_intervals(&mut intervals);
 
         let mut assigned = Vec::new();
 
@@ -291,7 +291,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
         range: FunctionRange,
         mut intervals: Vec<LivenessInterval>,
     ) -> Vec<AssignedLivenessInterval> {
-        intervals.sort_by_key(|interval| interval.span.start);
+        sort_intervals(&mut intervals);
         let call_locations = self.call_locations(range);
         let constraints = self.location_constraints(range);
         let mut assigned = Vec::new();
@@ -659,6 +659,16 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
             _ => None,
         }
     }
+}
+
+fn sort_intervals(intervals: &mut [LivenessInterval]) {
+    intervals.sort_by(|left, right| {
+        left.span
+            .start
+            .cmp(&right.span.start)
+            .then_with(|| left.variable.cmp(&right.variable))
+            .then_with(|| left.span.end.cmp(&right.span.end))
+    });
 }
 
 fn active_requires_register(assigned: &AssignedLivenessInterval, register: Register) -> bool {

@@ -263,6 +263,14 @@ fn x86_machine_reports_unsupported_call_struct_arg() {
 }
 
 #[test]
+fn x86_machine_reports_unsupported_aggregate_members() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_aggregate_members.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
 fn x86_machine_code_reference_call() {
     let code = compile_machine_code("backend/x86_reference_call.lex");
 

@@ -1,7 +1,7 @@
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IfExpr, IndexExpr,
     MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, SourcedStmt, Stmt, StructDeclStmt,
-    TupleExpr, TypedExpr, VarDeclStmt, WhileStmt,
+    StructExpr, TupleExpr, TypedExpr, VarDeclStmt, WhileStmt,
 };
 
 pub struct AstVisitor {
@@ -450,6 +450,19 @@ impl AstVisitor {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::StructExpr(StructExpr { fields, .. }),
+                        ..
+                    },
+                ..
+            } => {
+                let mut iter = fields.iter().peekable();
+                while let Some(field) = iter.next() {
+                    self.visit_expr(&field.value.expr, iter.peek().into(), visitor);
+                }
+            }
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::TupleExpr(TupleExpr { values }),
                         ..
                     },
@@ -577,6 +590,19 @@ impl AstVisitor {
                     .peekable();
                 while let Some(expr) = iter.next() {
                     self.visit_expr_mut(expr, iter.peek().into(), visitor);
+                }
+            }
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::StructExpr(StructExpr { fields, .. }),
+                        ..
+                    },
+                ..
+            } => {
+                let mut iter = fields.iter_mut().peekable();
+                while let Some(field) = iter.next() {
+                    self.visit_expr_mut(&mut field.value.expr, iter.peek().into(), visitor);
                 }
             }
             Sourced {

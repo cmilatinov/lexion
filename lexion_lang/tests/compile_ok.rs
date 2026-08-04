@@ -89,6 +89,27 @@ fn test_empty_tuple_expression_parses() {
 }
 
 #[test]
+fn test_aggregate_expression_syntax_parses() {
+    use lexion_lang::parser::ParserLexion;
+    use lexion_lib::Parser;
+    use std::sync::Arc;
+
+    let mut parser = ParserLexion::new();
+    assert!(parser
+        .parse_from_string(Arc::new(
+            "struct Point { x: i32, y: i32 }
+             fn main() {
+                 let empty = ();
+                 let single = (1,);
+                 let pair = (1, 2);
+                 let point = Point { y: 2, x: 1 };
+             }"
+            .into()
+        ))
+        .is_ok());
+}
+
+#[test]
 fn test_if_else_expr_statement_semicolon_optional() {
     use lexion_lang::parser::ParserLexion;
     use lexion_lib::Parser;

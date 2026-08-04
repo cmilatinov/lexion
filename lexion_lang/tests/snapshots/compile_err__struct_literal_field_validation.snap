@@ -1,0 +1,52 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x unknown struct 'Missing'
+   ,-[tests/fixtures/errors/semantics/invalid_struct_literal_fields.lex:7:19]
+ 6 | fn main() {
+ 7 |     let unknown = Missing { x: 1 };
+   :                   ^^^|^^^
+   :                      `-- here
+ 8 |     let invalid = Point {
+   `----
+
+  x field 'x' of struct 'Point' expects type 'i32', instead got 'bool'
+    ,-[tests/fixtures/errors/semantics/invalid_struct_literal_fields.lex:9:12]
+  8 |     let invalid = Point {
+  9 |         x: false,
+    :            ^^|^^
+    :              `-- here
+ 10 |         x: 2,
+    `----
+
+  x duplicate field 'x' in struct literal 'Point'
+    ,-[tests/fixtures/errors/semantics/invalid_struct_literal_fields.lex:10:9]
+  9 |         x: false,
+ 10 |         x: 2,
+    :         |
+    :         `-- here
+ 11 |         z: 3,
+    `----
+
+  x struct 'Point' has no field 'z'
+    ,-[tests/fixtures/errors/semantics/invalid_struct_literal_fields.lex:11:9]
+ 10 |         x: 2,
+ 11 |         z: 3,
+    :         |
+    :         `-- here
+ 12 |     };
+    `----
+
+  x missing field 'y' in struct literal 'Point'
+    ,-[tests/fixtures/errors/semantics/invalid_struct_literal_fields.lex:8:19]
+  7 |         let unknown = Missing { x: 1 };
+  8 | ,->     let invalid = Point {
+  9 | |           x: false,
+ 10 | |           x: 2,
+ 11 | |           z: 3,
+ 12 | |->     };
+    : `---- here
+ 13 |     }
+    `----

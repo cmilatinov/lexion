@@ -426,11 +426,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 .unsupported_borrow_message(&inst.place)
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
-                .unsupported_load_message(&inst.place)
+                .unsupported_load_message(function, &inst.place)
                 .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Store(inst) => self
-                .unsupported_store_message(&inst.place)
+                .unsupported_store_message(function, &inst.place)
                 .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
                 .or_else(|| self.unsupported_operand_message(function, &inst.value)),
             Instruction::Assignment(inst) => self
@@ -690,9 +690,9 @@ impl<'a> CodeGeneratorX86<'a> {
             .unwrap_or(4)
     }
 
-    fn unsupported_load_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => None,
+            Place::Member { .. } => self.unsupported_member_message(function, place),
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support indexed access yet",
             )),
@@ -700,14 +700,39 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn unsupported_store_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_store_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => None,
+            Place::Member { .. } => self.unsupported_member_message(function, place),
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support stores through indexed access yet",
             )),
             Place::Dereference(_) | Place::Direct(_) => None,
         }
+    }
+
+    fn unsupported_member_message(&self, function: &str, place: &Place) -> Option<String> {
+        let Some((_, _, ty)) = self.member_place(function, place) else {
+            return Some(String::from(
+                "x86 backend does not support member access through projected references yet",
+            ));
+        };
+        let ty = self.types.canonicalize(ty);
+        (!matches!(
+            self.types.get(ty),
+            Some(Type::PrimitiveType(
+                PrimitiveType::U32
+                    | PrimitiveType::I32
+                    | PrimitiveType::F32
+                    | PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+            ))
+        ))
+        .then(|| {
+            format!(
+                "x86 backend does not support non-scalar aggregate members yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
     }
 
     fn unsupported_place_operand_message(&self, function: &str, place: &Place) -> Option<String> {

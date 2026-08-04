@@ -228,6 +228,13 @@ fn x86_reports_unsupported_call_struct_arg() {
 }
 
 #[test]
+fn x86_reports_unsupported_aggregate_members() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_aggregate_members.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_reports_unsupported_indexed_access() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_index.lex").join("\n"));
 }
