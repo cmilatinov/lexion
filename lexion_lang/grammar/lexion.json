@@ -900,6 +900,17 @@
       "left": "TupleExpr",
       "right": [
         "'('",
+        "')'"
+      ],
+      "reduction": {
+        "ty": "Box<SourcedExpr>",
+        "code": "$$ = Box::new((\n        SpanBuilder::merge($1.span, $2.span),\n        Expr::TupleExpr(TupleExpr { values: vec![] }).into()\n    ).into());"
+      }
+    },
+    {
+      "left": "TupleExpr",
+      "right": [
+        "'('",
         "Expr",
         "','",
         "')'"

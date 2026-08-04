@@ -491,6 +491,13 @@ PrimaryExpr -> '(' Expr ')'
     $$ = $2;
 }} ;
 
+TupleExpr -> '(' ')'
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $2.span),
+        Expr::TupleExpr(TupleExpr { values: vec![] }).into()
+    ).into());
+}} ;
 TupleExpr -> '(' Expr ',' ')'
 [Box<SourcedExpr>] {{
     $$ = Box::new((

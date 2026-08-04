@@ -77,6 +77,18 @@ fn test_cast_expression_parses() {
 }
 
 #[test]
+fn test_empty_tuple_expression_parses() {
+    use lexion_lang::parser::ParserLexion;
+    use lexion_lib::Parser;
+    use std::sync::Arc;
+
+    let mut parser = ParserLexion::new();
+    assert!(parser
+        .parse_from_string(Arc::new("fn main() { let value = (); }".into()))
+        .is_ok());
+}
+
+#[test]
 fn test_if_else_expr_statement_semicolon_optional() {
     use lexion_lang::parser::ParserLexion;
     use lexion_lib::Parser;
