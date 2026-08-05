@@ -598,6 +598,18 @@ impl<'a> CodeGeneratorX86<'a> {
                 load_operand(lines, frame, location, value, target_register);
             }
             Place::Dereference(reference) => {
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    let Some(destination) =
+                        aggregate_member_operand(frame, location, &inst.target, 0)
+                    else {
+                        return;
+                    };
+                    let preserved = preserve_register(lines, frame, location, Register::RDX);
+                    load_reference_operand(lines, frame, location, reference, Register::RDX);
+                    emit_memory_copy(lines, "[rdx]", &destination, size);
+                    restore_register(lines, Register::RDX, preserved);
+                    return;
+                }
                 if allocated_target_register.is_none() {
                     preserved_target_register =
                         preserve_register(lines, frame, location, target_register);
@@ -693,6 +705,17 @@ impl<'a> CodeGeneratorX86<'a> {
                 store_operand(lines, frame, location, target, Register::RAX);
             }
             Place::Dereference(reference) => {
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    let Some(source) = aggregate_member_operand(frame, location, &inst.value, 0)
+                    else {
+                        return;
+                    };
+                    let preserved = preserve_register(lines, frame, location, Register::RDX);
+                    load_reference_operand(lines, frame, location, reference, Register::RDX);
+                    emit_memory_copy(lines, &source, "[rdx]", size);
+                    restore_register(lines, Register::RDX, preserved);
+                    return;
+                }
                 if self.reference_pointee_is_function(function, reference) {
                     let reference_register = operand_register(frame, location, reference);
                     let value_register = operand_register(frame, location, &inst.value);
@@ -933,6 +956,15 @@ impl<'a> CodeGeneratorX86<'a> {
             .is_some_and(|ty| self.type_is_function(ty))
     }
 
+    fn reference_pointee_aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        let ty = self.operand_type(function, operand)?;
+        let Type::RefType(reference) = self.types.get(self.types.canonicalize(ty))? else {
+            return None;
+        };
+        self.type_is_aggregate(reference.to)
+            .then(|| self.types.size_align(reference.to, Bitness::_64).size)
+    }
+
     fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Member { .. } => self.unsupported_member_message(function, place),
@@ -1167,15 +1199,10 @@ impl<'a> CodeGeneratorX86<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(
-                Type::PrimitiveType(
-                    PrimitiveType::BOOL
-                        | PrimitiveType::CHAR
-                        | PrimitiveType::I32
-                        | PrimitiveType::U32,
-                ) | Type::FunctionType(_),
-            )
-        )
+            Some(Type::PrimitiveType(
+                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
+            ) | Type::FunctionType(_))
+        ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
     fn unsupported_aggregate_type_message(

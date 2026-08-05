@@ -994,7 +994,17 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 if self.reference_pointee_is_function(function, reference) {
                     assembler.mov(rax, qword_ptr(rax))?;
                     return store_reference_operand(assembler, slots, &inst.target, rax);
-                } else if self.reference_pointee_size(function, reference) == 1 {
+                }
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    return emit_aggregate_load_from_pointer(
+                        assembler,
+                        slots,
+                        rax,
+                        &inst.target,
+                        size,
+                    );
+                }
+                if self.reference_pointee_size(function, reference) == 1 {
                     assembler.movzx(eax, byte_ptr(rax))?;
                 } else {
                     assembler.mov(eax, dword_ptr(rax))?;
@@ -1054,12 +1064,21 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 store_operand(assembler, slots, target, eax)
             }
             Place::Dereference(reference) => {
+                load_reference_operand(assembler, slots, reference, rax)?;
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    return emit_aggregate_store_to_pointer(
+                        assembler,
+                        slots,
+                        rax,
+                        &inst.value,
+                        size,
+                    );
+                }
                 if self.reference_pointee_is_function(function, reference) {
                     load_function_operand(assembler, labels, slots, &inst.value, rcx)?;
                     load_reference_operand(assembler, slots, reference, rax)?;
                     assembler.mov(qword_ptr(rax), rcx)
                 } else {
-                    load_reference_operand(assembler, slots, reference, rax)?;
                     load_operand(assembler, slots, &inst.value, ecx)?;
                     if self.reference_pointee_size(function, reference) == 1 {
                         assembler.mov(byte_ptr(rax), cl)
@@ -1553,6 +1572,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .is_some_and(|ty| self.type_is_function(ty))
     }
 
+    fn reference_pointee_aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        let ty = self.operand_type(function, operand)?;
+        let Type::RefType(reference) = self.types.get(self.types.canonicalize(ty))? else {
+            return None;
+        };
+        self.type_is_aggregate(reference.to)
+            .then(|| self.types.size_align(reference.to, Bitness::_64).size)
+    }
+
     fn type_is_reference(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
@@ -1798,15 +1826,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(
-                Type::PrimitiveType(
-                    PrimitiveType::BOOL
-                        | PrimitiveType::CHAR
-                        | PrimitiveType::I32
-                        | PrimitiveType::U32,
-                ) | Type::FunctionType(_),
-            )
-        )
+            Some(Type::PrimitiveType(
+                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
+            ) | Type::FunctionType(_))
+        ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
     fn unsupported_aggregate_type_message(
@@ -2630,6 +2653,56 @@ fn emit_aggregate_region_copy(
                     ),
                     al,
                 )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn emit_aggregate_load_from_pointer(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    source: AsmRegister64,
+    destination: &Operand,
+    size: usize,
+) -> Result<(), IcedError> {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        if width == 4 {
+            assembler.mov(ecx, dword_ptr(source + offset as i32))?;
+            assembler.mov(aggregate_stack_value(slots, destination, offset), ecx)?;
+        } else {
+            for byte in 0..width {
+                assembler.movzx(ecx, byte_ptr(source + (offset + byte) as i32))?;
+                assembler.mov(
+                    byte_ptr(rbp - aggregate_stack_offset(slots, destination, offset + byte)),
+                    cl,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn emit_aggregate_store_to_pointer(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    destination: AsmRegister64,
+    source: &Operand,
+    size: usize,
+) -> Result<(), IcedError> {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        if width == 4 {
+            assembler.mov(ecx, aggregate_stack_value(slots, source, offset))?;
+            assembler.mov(dword_ptr(destination + offset as i32), ecx)?;
+        } else {
+            for byte in 0..width {
+                assembler.movzx(
+                    ecx,
+                    byte_ptr(rbp - aggregate_stack_offset(slots, source, offset + byte)),
+                )?;
+                assembler.mov(byte_ptr(destination + (offset + byte) as i32), cl)?;
             }
         }
     }

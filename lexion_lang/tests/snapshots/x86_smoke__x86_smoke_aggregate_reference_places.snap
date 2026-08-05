@@ -1,0 +1,85 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_aggregate_reference_places.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 128
+#     let value = Triple { first: 1, second: 2, third: 3 };
+  mov eax, 1
+  mov DWORD PTR [rbp-20], eax
+  mov eax, 2
+  mov DWORD PTR [rbp-16], eax
+  mov eax, 3
+  mov DWORD PTR [rbp-12], eax
+  mov eax, DWORD PTR [rbp-20]
+  mov DWORD PTR [rbp-116], eax
+  mov eax, DWORD PTR [rbp-20+4]
+  mov DWORD PTR [rbp-116+4], eax
+  mov eax, DWORD PTR [rbp-20+8]
+  mov DWORD PTR [rbp-116+8], eax
+#     let reference = &value;
+  lea rax, [rbp-116]
+  mov QWORD PTR [rbp-32], rax
+  mov rax, QWORD PTR [rbp-32]
+  mov QWORD PTR [rbp-104], rax
+#     let copy = *reference;
+  mov rdx, QWORD PTR [rbp-104]
+  mov eax, DWORD PTR [rdx]
+  mov DWORD PTR [rbp-44], eax
+  mov eax, DWORD PTR [rdx+4]
+  mov DWORD PTR [rbp-44+4], eax
+  mov eax, DWORD PTR [rdx+8]
+  mov DWORD PTR [rbp-44+8], eax
+  mov eax, DWORD PTR [rbp-44]
+  mov DWORD PTR [rbp-80], eax
+  mov eax, DWORD PTR [rbp-44+4]
+  mov DWORD PTR [rbp-80+4], eax
+  mov eax, DWORD PTR [rbp-44+8]
+  mov DWORD PTR [rbp-80+8], eax
+#     *reference = Triple { first: 4, second: 5, third: 6 };
+  mov eax, 4
+  mov DWORD PTR [rbp-56], eax
+  mov eax, 5
+  mov DWORD PTR [rbp-52], eax
+  mov eax, 6
+  mov DWORD PTR [rbp-48], eax
+  mov rdx, QWORD PTR [rbp-104]
+  mov eax, DWORD PTR [rbp-56]
+  mov DWORD PTR [rdx], eax
+  mov eax, DWORD PTR [rbp-56+4]
+  mov DWORD PTR [rdx+4], eax
+  mov eax, DWORD PTR [rbp-56+8]
+  mov DWORD PTR [rdx+8], eax
+#     let loaded = *reference;
+  mov rdx, QWORD PTR [rbp-104]
+  mov eax, DWORD PTR [rdx]
+  mov DWORD PTR [rbp-68], eax
+  mov eax, DWORD PTR [rdx+4]
+  mov DWORD PTR [rbp-68+4], eax
+  mov eax, DWORD PTR [rdx+8]
+  mov DWORD PTR [rbp-68+8], eax
+  mov eax, DWORD PTR [rbp-68]
+  mov DWORD PTR [rbp-92], eax
+  mov eax, DWORD PTR [rbp-68+4]
+  mov DWORD PTR [rbp-92+4], eax
+  mov eax, DWORD PTR [rbp-68+8]
+  mov DWORD PTR [rbp-92+8], eax
+#     return copy.first + loaded.second + loaded.third;
+  mov eax, DWORD PTR [rbp-80]
+  mov esi, DWORD PTR [rbp-88]
+  mov edx, eax
+  add edx, esi
+  mov eax, DWORD PTR [rbp-84]
+  mov DWORD PTR [rbp-8], eax
+  mov eax, edx
+  add eax, DWORD PTR [rbp-8]
+  add rsp, 128
+  pop rbp
+  ret

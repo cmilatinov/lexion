@@ -1,0 +1,28 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  store 1 -> $t1.first
+  store 2 -> $t1.second
+  store 3 -> $t1.third
+  value = $t1
+  $t2 = borrow value
+  reference = $t2
+  $t3 = load *reference
+  copy = $t3
+  store 4 -> $t4.first
+  store 5 -> $t4.second
+  store 6 -> $t4.third
+  store $t4 -> *reference
+  $t5 = load *reference
+  loaded = $t5
+  $t6 = load copy.first
+  $t7 = load loaded.second
+  $t8 = $t6 + $t7
+  $t9 = load loaded.third
+  $t10 = $t8 + $t9
+  return $t10
+  endfn main
