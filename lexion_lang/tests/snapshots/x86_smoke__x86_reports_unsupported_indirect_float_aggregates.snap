@@ -1,0 +1,22 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_indirect_float_aggregate.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support indirect aggregate ABI values yet: Mixed
+    ,-[tests/fixtures/backend/x86_unsupported_indirect_float_aggregate.lex:9:4]
+  8 | 
+  9 | fn unsupported() -> Mixed {
+    :    ^^^^^|^^^^^
+    :         `-- here
+ 10 |     return Mixed { first: 1, second: 2.0, third: 3, fourth: 4, fifth: 5 };
+    `----
+
+  x x86 backend does not support non-integer aggregate ABI values yet: Mixed
+    ,-[tests/fixtures/backend/x86_unsupported_indirect_float_aggregate.lex:10:5]
+  9 | fn unsupported() -> Mixed {
+ 10 |     return Mixed { first: 1, second: 2.0, third: 3, fourth: 4, fifth: 5 };
+    :     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    :                                        `-- here
+ 11 | }
+    `----

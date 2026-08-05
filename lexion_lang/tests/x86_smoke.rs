@@ -244,6 +244,11 @@ fn x86_smoke_indexed_register_pair_call_arguments() {
 }
 
 #[test]
+fn x86_smoke_indirect_aggregate_returns() {
+    insta::assert_snapshot!(compile_x86("backend/x86_indirect_aggregate_returns.lex"));
+}
+
+#[test]
 fn x86_smoke_aggregate_member_values() {
     insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
 }
@@ -278,9 +283,9 @@ fn x86_reports_unsupported_call_tuple_arg() {
 }
 
 #[test]
-fn x86_reports_unsupported_stack_and_indirect_aggregates() {
+fn x86_reports_unsupported_indirect_float_aggregates() {
     insta::assert_snapshot!(compile_x86_error(
-        "backend/x86_unsupported_stack_and_indirect_aggregates.lex"
+        "backend/x86_unsupported_indirect_float_aggregate.lex"
     )
     .join("\n"));
 }

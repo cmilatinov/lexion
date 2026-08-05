@@ -258,6 +258,13 @@ fn x86_machine_code_indexed_register_pair_call_arguments() {
 }
 
 #[test]
+fn x86_machine_code_indirect_aggregate_returns() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_indirect_aggregate_returns.lex"
+    )));
+}
+
+#[test]
 fn x86_machine_code_stack_aggregate_arguments() {
     insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
         "backend/x86_stack_aggregate_arguments.lex"
@@ -323,9 +330,9 @@ fn x86_machine_reports_unsupported_call_tuple_arg() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_stack_and_indirect_aggregates() {
+fn x86_machine_reports_unsupported_indirect_float_aggregates() {
     insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_stack_and_indirect_aggregates.lex"
+        "backend/x86_unsupported_indirect_float_aggregate.lex"
     )
     .join("\n"));
 }

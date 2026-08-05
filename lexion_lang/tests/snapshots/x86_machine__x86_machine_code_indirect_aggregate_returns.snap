@@ -1,0 +1,149 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "machine_snapshot(&compile_machine_code(\"backend/x86_indirect_aggregate_returns.lex\"))"
+snapshot_kind: text
+---
+symbols:
+main=0x00F6
+make_large=0x0000
+make_tuple=0x007B
+
+bytes:
+55 48 89 E5 48 83 EC 30 48 89 7D D0 89 75 DC 89 55 D8 8B 45 DC 89 45 EC 8B 45 DC 05 01 00 00 00 89 45 E8 8B 45 E8 89 45 F0 8B 45 DC 05 02 00 00 00 89 45 E4 8B 45 E4 89 45 F4 8B 45 DC 05 03 00 00 00 89 45 E0 8B 45 E0 89 45 F8 8B 45 D8 89 45 FC 48 8B 45 D0 8B 4D EC 89 08 8B 4D F0 89 48 04 8B 4D F4 89 48 08 8B 4D F8 89 48 0C 8B 4D FC 89 48 10 48 8B 45 D0 48 89 EC 5D C3 55 48 89 E5 48 83 EC 30 48 89 7D D0 89 75 DC 89 55 D8 8B 45 DC 89 45 EC 8B 45 DC 05 01 00 00 00 89 45 E8 8B 45 E8 89 45 F0 8B 45 DC 05 02 00 00 00 89 45 E4 8B 45 E4 89 45 F4 8B 45 DC 05 03 00 00 00 89 45 E0 8B 45 E0 89 45 F8 8B 45 D8 89 45 FC 48 8B 45 D0 8B 4D EC 89 08 8B 4D F0 89 48 04 8B 4D F4 89 48 08 8B 4D F8 89 48 0C 8B 4D FC 89 48 10 48 8B 45 D0 48 89 EC 5D C3 55 48 89 E5 48 83 EC 70 48 8D 7D EC BE 0A 00 00 00 BA 14 00 00 00 E8 EF FE FF FF 8B 45 EC 89 45 A8 8B 45 F0 89 45 AC 8B 45 F4 89 45 B0 8B 45 F8 89 45 B4 8B 45 FC 89 45 B8 48 8D 7D D8 BE 1E 00 00 00 BA 28 00 00 00 E8 39 FF FF FF 8B 45 D8 89 45 94 8B 45 DC 89 45 98 8B 45 E0 89 45 9C 8B 45 E4 89 45 A0 8B 45 E8 89 45 A4 8B 45 A8 89 45 D4 8B 45 B8 89 45 D0 8B 45 D4 03 45 D0 89 45 CC 8B 45 94 89 45 C8 8B 45 CC 03 45 C8 89 45 C4 8B 45 A4 89 45 C0 8B 45 C4 03 45 C0 89 45 BC 8B 45 BC 48 89 EC 5D C3
+
+disassembly:
+make_large:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,30h
+0008: mov [rbp-30h],rdi
+000C: mov [rbp-24h],esi
+000F: mov [rbp-28h],edx
+0012: mov eax,[rbp-24h]
+0015: mov [rbp-14h],eax
+0018: mov eax,[rbp-24h]
+001B: add eax,1
+0020: mov [rbp-18h],eax
+0023: mov eax,[rbp-18h]
+0026: mov [rbp-10h],eax
+0029: mov eax,[rbp-24h]
+002C: add eax,2
+0031: mov [rbp-1Ch],eax
+0034: mov eax,[rbp-1Ch]
+0037: mov [rbp-0Ch],eax
+003A: mov eax,[rbp-24h]
+003D: add eax,3
+0042: mov [rbp-20h],eax
+0045: mov eax,[rbp-20h]
+0048: mov [rbp-8],eax
+004B: mov eax,[rbp-28h]
+004E: mov [rbp-4],eax
+0051: mov rax,[rbp-30h]
+0055: mov ecx,[rbp-14h]
+0058: mov [rax],ecx
+005A: mov ecx,[rbp-10h]
+005D: mov [rax+4],ecx
+0060: mov ecx,[rbp-0Ch]
+0063: mov [rax+8],ecx
+0066: mov ecx,[rbp-8]
+0069: mov [rax+0Ch],ecx
+006C: mov ecx,[rbp-4]
+006F: mov [rax+10h],ecx
+0072: mov rax,[rbp-30h]
+0076: mov rsp,rbp
+0079: pop rbp
+007A: ret
+make_tuple:
+007B: push rbp
+007C: mov rbp,rsp
+007F: sub rsp,30h
+0083: mov [rbp-30h],rdi
+0087: mov [rbp-24h],esi
+008A: mov [rbp-28h],edx
+008D: mov eax,[rbp-24h]
+0090: mov [rbp-14h],eax
+0093: mov eax,[rbp-24h]
+0096: add eax,1
+009B: mov [rbp-18h],eax
+009E: mov eax,[rbp-18h]
+00A1: mov [rbp-10h],eax
+00A4: mov eax,[rbp-24h]
+00A7: add eax,2
+00AC: mov [rbp-1Ch],eax
+00AF: mov eax,[rbp-1Ch]
+00B2: mov [rbp-0Ch],eax
+00B5: mov eax,[rbp-24h]
+00B8: add eax,3
+00BD: mov [rbp-20h],eax
+00C0: mov eax,[rbp-20h]
+00C3: mov [rbp-8],eax
+00C6: mov eax,[rbp-28h]
+00C9: mov [rbp-4],eax
+00CC: mov rax,[rbp-30h]
+00D0: mov ecx,[rbp-14h]
+00D3: mov [rax],ecx
+00D5: mov ecx,[rbp-10h]
+00D8: mov [rax+4],ecx
+00DB: mov ecx,[rbp-0Ch]
+00DE: mov [rax+8],ecx
+00E1: mov ecx,[rbp-8]
+00E4: mov [rax+0Ch],ecx
+00E7: mov ecx,[rbp-4]
+00EA: mov [rax+10h],ecx
+00ED: mov rax,[rbp-30h]
+00F1: mov rsp,rbp
+00F4: pop rbp
+00F5: ret
+main:
+00F6: push rbp
+00F7: mov rbp,rsp
+00FA: sub rsp,70h
+00FE: lea rdi,[rbp-14h]
+0102: mov esi,0Ah
+0107: mov edx,14h
+010C: call 0 <make_large>
+0111: mov eax,[rbp-14h]
+0114: mov [rbp-58h],eax
+0117: mov eax,[rbp-10h]
+011A: mov [rbp-54h],eax
+011D: mov eax,[rbp-0Ch]
+0120: mov [rbp-50h],eax
+0123: mov eax,[rbp-8]
+0126: mov [rbp-4Ch],eax
+0129: mov eax,[rbp-4]
+012C: mov [rbp-48h],eax
+012F: lea rdi,[rbp-28h]
+0133: mov esi,1Eh
+0138: mov edx,28h
+013D: call 000000000000007Bh <make_tuple>
+0142: mov eax,[rbp-28h]
+0145: mov [rbp-6Ch],eax
+0148: mov eax,[rbp-24h]
+014B: mov [rbp-68h],eax
+014E: mov eax,[rbp-20h]
+0151: mov [rbp-64h],eax
+0154: mov eax,[rbp-1Ch]
+0157: mov [rbp-60h],eax
+015A: mov eax,[rbp-18h]
+015D: mov [rbp-5Ch],eax
+0160: mov eax,[rbp-58h]
+0163: mov [rbp-2Ch],eax
+0166: mov eax,[rbp-48h]
+0169: mov [rbp-30h],eax
+016C: mov eax,[rbp-2Ch]
+016F: add eax,[rbp-30h]
+0172: mov [rbp-34h],eax
+0175: mov eax,[rbp-6Ch]
+0178: mov [rbp-38h],eax
+017B: mov eax,[rbp-34h]
+017E: add eax,[rbp-38h]
+0181: mov [rbp-3Ch],eax
+0184: mov eax,[rbp-5Ch]
+0187: mov [rbp-40h],eax
+018A: mov eax,[rbp-3Ch]
+018D: add eax,[rbp-40h]
+0190: mov [rbp-44h],eax
+0193: mov eax,[rbp-44h]
+0196: mov rsp,rbp
+0199: pop rbp
+019A: ret
