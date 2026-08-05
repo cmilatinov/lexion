@@ -189,9 +189,10 @@ main:
   pop r8
   call pair_after_gprs
   add rsp, 16
+  push rax
   mov eax, DWORD PTR [rbp-16]
-  add eax, eax
-  mov DWORD PTR [rbp-24], eax
+  add eax, DWORD PTR [rsp]
+  add rsp, 8
   mov eax, DWORD PTR [rbp-24]
   add rsp, 96
   pop rbp

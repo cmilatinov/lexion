@@ -1,0 +1,112 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_indexed_aggregate_stack_call.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global large_before_f32
+large_before_f32:
+# fn large_before_f32(
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+  mov eax, DWORD PTR [rbp+16]
+  mov DWORD PTR [rbp-20], eax
+  mov eax, DWORD PTR [rbp+16+4]
+  mov DWORD PTR [rbp-20+4], eax
+  mov eax, DWORD PTR [rbp+16+8]
+  mov DWORD PTR [rbp-20+8], eax
+  mov eax, DWORD PTR [rbp+16+12]
+  mov DWORD PTR [rbp-20+12], eax
+  mov eax, DWORD PTR [rbp+16+16]
+  mov DWORD PTR [rbp-20+16], eax
+#     return a + b + c + d + e + f + value.first + value.fifth;
+  mov r10d, edi
+  add r10d, esi
+  mov edi, r10d
+  add edi, edx
+  mov esi, edi
+  add esi, ecx
+  mov edi, esi
+  add edi, r8d
+  mov esi, edi
+  add esi, r9d
+  mov edi, DWORD PTR [rbp-20]
+  mov edx, esi
+  add edx, edi
+  mov edi, DWORD PTR [rbp-4]
+  mov eax, edx
+  add eax, edi
+  add rsp, 32
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+#         Large { first: 7, second: 8, third: 9, fourth: 10, fifth: 11 },
+  mov eax, 7
+  mov DWORD PTR [rbp-20], eax
+  mov eax, 8
+  mov DWORD PTR [rbp-16], eax
+  mov eax, 9
+  mov DWORD PTR [rbp-12], eax
+  mov eax, 10
+  mov DWORD PTR [rbp-8], eax
+  mov eax, 11
+  mov DWORD PTR [rbp-4], eax
+#     return large_before_f32(
+#         1, 2, 3, 4, 5, 6,
+#         Large { first: 7, second: 8, third: 9, fourth: 10, fifth: 11 },
+#         12.0
+#     );
+  sub rsp, 8
+  mov DWORD PTR [rsp], 0x41400000
+  sub rsp, 24
+  mov QWORD PTR [rsp], 0
+  mov QWORD PTR [rsp+8], 0
+  mov QWORD PTR [rsp+16], 0
+  mov eax, DWORD PTR [rbp-20]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-20+4]
+  mov DWORD PTR [rsp+4], eax
+  mov eax, DWORD PTR [rbp-20+8]
+  mov DWORD PTR [rsp+8], eax
+  mov eax, DWORD PTR [rbp-20+12]
+  mov DWORD PTR [rsp+12], eax
+  mov eax, DWORD PTR [rbp-20+16]
+  mov DWORD PTR [rsp+16], eax
+  mov eax, 6
+  push rax
+  mov eax, 5
+  push rax
+  mov eax, 4
+  push rax
+  mov eax, 3
+  push rax
+  mov eax, 2
+  push rax
+  mov eax, 1
+  push rax
+  mov rdi, QWORD PTR [rsp]
+  mov rsi, QWORD PTR [rsp+8]
+  mov rdx, QWORD PTR [rsp+16]
+  mov rcx, QWORD PTR [rsp+24]
+  mov r8, QWORD PTR [rsp+32]
+  mov r9, QWORD PTR [rsp+40]
+  movss xmm0, DWORD PTR [rsp+72]
+  sub rsp, 32
+  mov rax, QWORD PTR [rsp+80]
+  mov QWORD PTR [rsp], rax
+  mov rax, QWORD PTR [rsp+88]
+  mov QWORD PTR [rsp+8], rax
+  mov rax, QWORD PTR [rsp+96]
+  mov QWORD PTR [rsp+16], rax
+  call large_before_f32
+  add rsp, 112
+  add rsp, 32
+  pop rbp
+  ret

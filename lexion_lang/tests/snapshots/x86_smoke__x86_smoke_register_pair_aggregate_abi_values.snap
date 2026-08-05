@@ -51,19 +51,19 @@ shift_quad:
 #     };
   sub rsp, 8
   mov QWORD PTR [rsp], 0
-  mov eax, DWORD PTR [rbp-32]
-  mov DWORD PTR [rsp], eax
-  mov eax, DWORD PTR [rbp-32+4]
-  mov DWORD PTR [rsp+4], eax
-  mov rax, QWORD PTR [rsp]
-  add rsp, 8
-  sub rsp, 8
-  mov QWORD PTR [rsp], 0
   mov eax, DWORD PTR [rbp-32+8]
   mov DWORD PTR [rsp], eax
   mov eax, DWORD PTR [rbp-32+8+4]
   mov DWORD PTR [rsp+4], eax
   mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-32]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-32+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rax, QWORD PTR [rsp]
   add rsp, 8
   add rsp, 48
   pop rbp
@@ -99,17 +99,17 @@ shift_tuple:
   mov DWORD PTR [rbp-20], edi
   sub rsp, 8
   mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-28+8]
+  mov DWORD PTR [rsp], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
   mov eax, DWORD PTR [rbp-28]
   mov DWORD PTR [rsp], eax
   mov eax, DWORD PTR [rbp-28+4]
   mov DWORD PTR [rsp+4], eax
   mov rax, QWORD PTR [rsp]
-  add rsp, 8
-  sub rsp, 8
-  mov QWORD PTR [rsp], 0
-  mov eax, DWORD PTR [rbp-28+8]
-  mov DWORD PTR [rsp], eax
-  mov rdx, QWORD PTR [rsp]
   add rsp, 8
   add rsp, 48
   pop rbp
