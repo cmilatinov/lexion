@@ -1,0 +1,48 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "string_machine_snapshot(&compile_machine_code(\"backend/x86_string_abi_registers.lex\"))"
+snapshot_kind: text
+---
+symbols:
+echo=0x0000
+main=0x001D
+
+code bytes:
+55 48 89 E5 48 83 EC 10 48 89 7D F0 48 89 75 F8 48 8B 45 F0 48 8B 55 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 20 48 8D 3D 39 00 00 00 48 BE 05 00 00 00 00 00 00 00 E8 C5 FF FF FF 48 89 45 F0 48 89 55 F8 8B 45 F0 89 45 E0 8B 45 F4 89 45 E4 8B 45 F8 89 45 E8 8B 45 FC 89 45 EC B8 00 00 00 00 48 89 EC 5D C3
+
+data bytes:
+68 65 6C 6C 6F
+
+disassembly:
+echo:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov [rbp-10h],rdi
+000C: mov [rbp-8],rsi
+0010: mov rax,[rbp-10h]
+0014: mov rdx,[rbp-8]
+0018: mov rsp,rbp
+001B: pop rbp
+001C: ret
+main:
+001D: push rbp
+001E: mov rbp,rsp
+0021: sub rsp,20h
+0025: lea rdi,[65h]
+002C: mov rsi,5
+0036: call 0 <echo>
+003B: mov [rbp-10h],rax
+003F: mov [rbp-8],rdx
+0043: mov eax,[rbp-10h]
+0046: mov [rbp-20h],eax
+0049: mov eax,[rbp-0Ch]
+004C: mov [rbp-1Ch],eax
+004F: mov eax,[rbp-8]
+0052: mov [rbp-18h],eax
+0055: mov eax,[rbp-4]
+0058: mov [rbp-14h],eax
+005B: mov eax,0
+0060: mov rsp,rbp
+0063: pop rbp
+0064: ret

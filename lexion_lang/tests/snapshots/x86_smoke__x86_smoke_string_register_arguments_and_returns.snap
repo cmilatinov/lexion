@@ -1,0 +1,64 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_string_abi_registers.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global echo
+echo:
+# fn echo(value: &str) -> &str {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+  push rdi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-24], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-24+4], eax
+  add rsp, 8
+  push rsi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-24+8], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-24+8+4], eax
+  add rsp, 8
+#     return value;
+  mov rax, QWORD PTR [rbp-24]
+  mov rdx, QWORD PTR [rbp-24+8]
+  add rsp, 32
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+#     let value = echo("hello");
+  sub rsp, 16
+  lea rax, [rip + .Lstr_68656c6c6f]
+  mov rdx, 5
+  mov QWORD PTR [rsp], rax
+  mov QWORD PTR [rsp+8], rdx
+  pop rdi
+  pop rsi
+  call echo
+  mov QWORD PTR [rbp-24], rax
+  mov QWORD PTR [rbp-24+8], rdx
+  mov eax, DWORD PTR [rbp-24]
+  mov DWORD PTR [rbp-40], eax
+  mov eax, DWORD PTR [rbp-24+4]
+  mov DWORD PTR [rbp-40+4], eax
+  mov eax, DWORD PTR [rbp-24+8]
+  mov DWORD PTR [rbp-40+8], eax
+  mov eax, DWORD PTR [rbp-24+12]
+  mov DWORD PTR [rbp-40+12], eax
+#     return 0;
+  mov eax, 0
+  add rsp, 48
+  pop rbp
+  ret
+.section .rodata
+.Lstr_68656c6c6f:
+  .byte 104, 101, 108, 108, 111
