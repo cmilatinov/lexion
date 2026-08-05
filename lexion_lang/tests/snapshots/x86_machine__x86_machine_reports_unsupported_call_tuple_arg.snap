@@ -3,4 +3,5 @@ source: lexion_lang/tests/x86_machine.rs
 expression: "compile_machine_code_error(\"backend/x86_unsupported_call_tuple_arg.lex\").join(\"\\n\")"
 snapshot_kind: text
 ---
-x86 machine-code backend does not support aggregate ABI values yet: (i32, bool)
+x86 machine-code backend does not support register-pair aggregate ABI values yet: (i32, bool, i32)
+x86 machine-code backend does not support non-integer aggregate ABI values yet: (i32, bool, i32)

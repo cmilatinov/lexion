@@ -223,7 +223,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    if self.operand_is_reference(context.name, value) {
+                    if self.operand_is_aggregate(context.name, value) {
+                        self.load_aggregate_operand(
+                            assembler,
+                            slots,
+                            context.name,
+                            value,
+                            asm_register64(context.return_register),
+                        )?;
+                    } else if self.operand_is_reference(context.name, value) {
                         load_reference_operand(
                             assembler,
                             slots,
@@ -520,7 +528,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
 
         for (param, _, ty) in stack_args.iter().rev() {
-            if self.type_is_reference(*ty) {
+            if self.type_is_aggregate(*ty) {
+                self.load_aggregate_operand(assembler, slots, function, param, rax)?;
+            } else if self.type_is_reference(*ty) {
                 load_reference_operand(assembler, slots, param, rax)?;
             } else if self.operand_is_f32(function, param) {
                 load_float_operand(assembler, slots, param, xmm0)?;
@@ -540,6 +550,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     load_float_operand(assembler, slots, param, asm_register_xmm(register))?;
                 } else if self.type_is_reference(*ty) {
                     load_reference_operand(assembler, slots, param, asm_register64(register))?;
+                } else if self.type_is_aggregate(*ty) {
+                    self.load_aggregate_operand(
+                        assembler,
+                        slots,
+                        function,
+                        param,
+                        asm_register64(register),
+                    )?;
                 } else {
                     load_operand(assembler, slots, param, asm_register32(register))?;
                 }
@@ -554,7 +572,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             let register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            if self.operand_is_reference(function, return_target) {
+            if self.operand_is_aggregate(function, return_target) {
+                self.store_aggregate_operand(
+                    assembler,
+                    slots,
+                    function,
+                    return_target,
+                    asm_register64(register),
+                )?;
+            } else if self.operand_is_reference(function, return_target) {
                 store_reference_operand(assembler, slots, return_target, asm_register64(register))?;
             } else if self.operand_is_f32(function, return_target) {
                 store_float_operand(assembler, slots, return_target, asm_register_xmm(register))?;
@@ -595,6 +621,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         let incoming_offset = incoming_stack_arg_offset(stack_offset);
                         assembler.movss(xmm15, dword_ptr(rbp + incoming_offset as i32))?;
                         assembler.movss(dword_ptr(rbp - *offset as i32), xmm15)?;
+                    }
+                } else if self.type_is_aggregate(*ty) {
+                    if let Some(register) = outgoing_register(location) {
+                        self.store_aggregate_operand(
+                            assembler,
+                            slots,
+                            &self.cfg[range.start].label,
+                            &Operand::Variable(param.clone()),
+                            asm_register64(register),
+                        )?;
                     }
                 } else if self.type_is_reference(*ty) {
                     if let Some(register) = outgoing_register(location) {
@@ -774,10 +810,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
             Instruction::Parameter(inst) => self
-                .unsupported_aggregate_operand_message(function, &inst.param)
+                .unsupported_aggregate_operand_message(function, &inst.param, None)
                 .or_else(|| self.unsupported_operand_message(function, &inst.param)),
             Instruction::Return(inst) => inst.value.as_ref().and_then(|value| {
-                self.unsupported_aggregate_operand_message(function, value)
+                self.unsupported_aggregate_operand_message(function, value, None)
                     .or_else(|| self.unsupported_operand_message(function, value))
             }),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
@@ -953,6 +989,31 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         )
     }
 
+    fn aggregate_is_integer_only(&self, ty: Index) -> bool {
+        let ty = self.types.canonicalize(ty);
+        self.types.size_align(ty, Bitness::_64).size <= 8
+            && match self.types.get(ty) {
+                Some(Type::TupleType(tuple)) => tuple
+                    .types
+                    .iter()
+                    .all(|ty| self.aggregate_member_is_integer(*ty)),
+                Some(Type::StructType(struct_)) => struct_
+                    .members
+                    .iter()
+                    .all(|member| self.aggregate_member_is_integer(member.ty)),
+                _ => false,
+            }
+    }
+
+    fn aggregate_member_is_integer(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::PrimitiveType(
+                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
+            ))
+        )
+    }
+
     fn member_place(&self, function: &str, place: &Place) -> Option<(Operand, usize, Index)> {
         let Place::Member { base, member } = place else {
             return None;
@@ -995,6 +1056,71 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         };
         let size = self.types.size_align(ty, Bitness::_64).size;
         emit_aggregate_region_copy(assembler, slots, (&inst.src, 0), (&inst.dst, 0), size)
+    }
+
+    fn aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        self.operand_type(function, operand)
+            .filter(|ty| self.type_is_aggregate(*ty))
+            .map(|ty| self.types.size_align(ty, Bitness::_64).size)
+    }
+
+    fn load_aggregate_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        register: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(8);
+        assembler.sub(rsp, 8)?;
+        assembler.xor(rax, rax)?;
+        assembler.mov(qword_ptr(rsp), rax)?;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, aggregate_stack_value(slots, operand, offset))?;
+                assembler.mov(dword_ptr(rsp + offset as i32), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(
+                        eax,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                    )?;
+                    assembler.mov(byte_ptr(rsp + (offset + byte) as i32), al)?;
+                }
+            }
+        }
+        assembler.mov(register, qword_ptr(rsp))?;
+        assembler.add(rsp, 8)
+    }
+
+    fn store_aggregate_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        register: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(8);
+        assembler.push(register)?;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, dword_ptr(rsp + offset as i32))?;
+                assembler.mov(aggregate_stack_value(slots, operand, offset), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.mov(al, byte_ptr(rsp + (offset + byte) as i32))?;
+                    assembler.mov(
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                        al,
+                    )?;
+                }
+            }
+        }
+        assembler.add(rsp, 8)
     }
 
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
@@ -1129,14 +1255,27 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support vararg function signatures yet: {function}"
             ));
         }
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_aggregate_type_message(*ty)
+            .enumerate()
+            .find_map(|(index, ty)| {
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
                     .or_else(|| self.unsupported_type_message(*ty))
             })
-            .or_else(|| self.unsupported_aggregate_type_message(signature.return_type))
+            .or_else(|| {
+                self.unsupported_aggregate_type_message(
+                    signature.return_type,
+                    self.target
+                        .calling_convention()
+                        .assign_ret(self.types, signature)
+                        .as_ref(),
+                )
+            })
             .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
@@ -1148,11 +1287,26 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 inst.function
             ));
         }
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
         signature
             .params
             .iter()
-            .find_map(|ty| self.unsupported_aggregate_type_message(*ty))
-            .or_else(|| self.unsupported_aggregate_type_message(signature.return_type))
+            .enumerate()
+            .find_map(|(index, ty)| {
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
+            })
+            .or_else(|| {
+                self.unsupported_aggregate_type_message(
+                    signature.return_type,
+                    self.target
+                        .calling_convention()
+                        .assign_ret(self.types, signature)
+                        .as_ref(),
+                )
+            })
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -1225,22 +1379,40 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         )
     }
 
-    fn unsupported_aggregate_type_message(&self, ty: Index) -> Option<String> {
-        self.type_is_aggregate(ty).then(|| {
-            format!(
-                "x86 machine-code backend does not support aggregate ABI values yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
+    fn unsupported_aggregate_type_message(
+        &self,
+        ty: Index,
+        location: Option<&Location>,
+    ) -> Option<String> {
+        if !self.type_is_aggregate(ty)
+            || self.aggregate_is_integer_only(ty)
+                && (location.is_none() || matches!(location, Some(Location::Register(_))))
+        {
+            return None;
+        }
+        let detail = match location {
+            Some(Location::Pair { .. }) => "register-pair aggregate ABI values",
+            Some(Location::Stack(_) | Location::RegisterAndStack(_, _)) => {
+                "stack-passed aggregate ABI values"
+            }
+            Some(Location::Indirect { .. }) => "indirect aggregate ABI values",
+            _ if !self.aggregate_is_integer_only(ty) => "non-integer aggregate ABI values",
+            _ => "aggregate ABI values",
+        };
+        Some(format!(
+            "x86 machine-code backend does not support {detail} yet: {}",
+            self.types.to_string_index(ty)
+        ))
     }
 
     fn unsupported_aggregate_operand_message(
         &self,
         function: &str,
         operand: &Operand,
+        location: Option<&Location>,
     ) -> Option<String> {
         self.operand_type(function, operand)
-            .and_then(|ty| self.unsupported_aggregate_type_message(ty))
+            .and_then(|ty| self.unsupported_aggregate_type_message(ty, location))
     }
 
     fn unsupported_copy_message(

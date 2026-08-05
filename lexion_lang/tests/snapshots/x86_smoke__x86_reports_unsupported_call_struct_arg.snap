@@ -3,38 +3,38 @@ source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86_error(\"backend/x86_unsupported_call_struct_arg.lex\").join(\"\\n\")"
 snapshot_kind: text
 ---
-  x x86 backend does not support aggregate ABI values yet: Point
-   ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:5:4]
- 4 | }
- 5 | fn get_x(point: Point) -> i32 {
+  x x86 backend does not support register-pair aggregate ABI values yet: Point
+   ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:6:4]
+ 5 | }
+ 6 | fn get_x(point: Point) -> i32 {
    :    ^^|^^
    :      `-- here
- 6 |     return 1;
+ 7 |     return 1;
    `----
 
-  x x86 backend does not support aggregate ABI values yet: Point
-   ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:8:4]
- 7 | }
- 8 | fn main(point: Point) -> i32 {
-   :    ^^|^
-   :      `-- here
- 9 |     return get_x(point);
-   `----
-
-  x x86 backend does not support aggregate ABI values yet: Point
-    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:9:12]
-  8 | fn main(point: Point) -> i32 {
-  9 |     return get_x(point);
-    :            ^^^^^^|^^^^^
-    :                  `-- here
- 10 | }
+  x x86 backend does not support register-pair aggregate ABI values yet: Point
+    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:9:4]
+  8 | }
+  9 | fn main(point: Point) -> i32 {
+    :    ^^|^
+    :      `-- here
+ 10 |     return get_x(point);
     `----
 
-  x x86 backend does not support aggregate ABI values yet: Point
-    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:9:12]
-  8 | fn main(point: Point) -> i32 {
-  9 |     return get_x(point);
+  x x86 backend does not support non-integer aggregate ABI values yet: Point
+    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:10:12]
+  9 | fn main(point: Point) -> i32 {
+ 10 |     return get_x(point);
     :            ^^^^^^|^^^^^
     :                  `-- here
- 10 | }
+ 11 | }
+    `----
+
+  x x86 backend does not support register-pair aggregate ABI values yet: Point
+    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:10:12]
+  9 | fn main(point: Point) -> i32 {
+ 10 |     return get_x(point);
+    :            ^^^^^^|^^^^^
+    :                  `-- here
+ 11 | }
     `----

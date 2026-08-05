@@ -187,6 +187,11 @@ fn x86_smoke_local_aggregate_values() {
 }
 
 #[test]
+fn x86_smoke_one_eightbyte_aggregate_abi_values() {
+    insta::assert_snapshot!(compile_x86("backend/x86_aggregate_abi.lex"));
+}
+
+#[test]
 fn x86_smoke_aggregate_member_values() {
     insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
 }
