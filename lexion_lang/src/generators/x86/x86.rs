@@ -707,22 +707,36 @@ impl<'a> CodeGeneratorX86<'a> {
             Some(Type::TupleType(tuple)) => tuple
                 .types
                 .iter()
-                .all(|ty| self.aggregate_member_is_integer(*ty)),
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
             Some(Type::StructType(struct_)) => struct_
                 .members
                 .iter()
-                .all(|member| self.aggregate_member_is_integer(member.ty)),
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
             _ => false,
         }
     }
 
-    fn aggregate_member_is_integer(&self, ty: Index) -> bool {
-        matches!(
-            self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
-        )
+    fn aggregate_member_is_integer_like(&self, ty: Index) -> bool {
+        match self.types.get(self.types.canonicalize(ty)) {
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+                    | PrimitiveType::I32
+                    | PrimitiveType::U32,
+                )
+                | Type::RefType(_),
+            ) => true,
+            Some(Type::TupleType(tuple)) => tuple
+                .types
+                .iter()
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
+            Some(Type::StructType(struct_)) => struct_
+                .members
+                .iter()
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
+            _ => false,
+        }
     }
 
     fn type_is_reference(&self, ty: Index) -> bool {

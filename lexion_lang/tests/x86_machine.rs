@@ -211,6 +211,11 @@ fn x86_machine_code_one_eightbyte_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_machine_code_nested_reference_aggregate_abi_values() {
+    compile_machine_code("backend/x86_nested_reference_aggregate_abi.lex");
+}
+
+#[test]
 fn x86_machine_code_aggregate_member_values() {
     let code = compile_machine_code("backend/x86_aggregate_members.lex");
 
