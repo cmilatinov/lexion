@@ -371,18 +371,8 @@ fn x86_reports_unsupported_zero_fixed_vararg_calls() {
 }
 
 #[test]
-fn x86_reports_unsupported_function_values() {
-    insta::assert_snapshot!(
-        compile_x86_error("backend/x86_unsupported_function_value.lex").join("\n")
-    );
-}
-
-#[test]
-fn x86_reports_unsupported_shadowed_function_value_calls() {
-    insta::assert_snapshot!(compile_x86_error(
-        "backend/x86_unsupported_shadowed_function_value.lex"
-    )
-    .join("\n"));
+fn x86_smoke_function_values() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_values.lex"));
 }
 
 #[test]

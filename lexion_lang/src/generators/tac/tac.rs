@@ -10,9 +10,10 @@ use crate::generators::label::{Label, LabelGenerator};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, BaseInstruction, BorrowInstruction, CodeLocation, CodeSpan,
     ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction, EndFunctionInstruction,
-    ExternInstruction, FunctionCallInstruction, FunctionInstruction, FunctionRange, Instruction,
-    InstructionBlock, InstructionInstance, JumpInstruction, LivenessInterval, LoadInstruction,
-    Operand, ParameterInstruction, Place, ReturnInstruction, StoreInstruction,
+    ExternInstruction, FunctionCallInstruction, FunctionCallTarget, FunctionInstruction,
+    FunctionRange, Instruction, InstructionBlock, InstructionInstance, JumpInstruction,
+    LivenessInterval, LoadInstruction, Operand, ParameterInstruction, Place, ReturnInstruction,
+    StoreInstruction,
 };
 use crate::operators;
 use crate::pipeline::PipelineStage;
@@ -203,9 +204,8 @@ impl<'a> CodeGeneratorTac<'a> {
 
     fn call(
         &mut self,
-        function: String,
+        target: FunctionCallTarget,
         function_type: Option<Index>,
-        is_direct_function: bool,
         return_target: Option<Operand>,
         source_span: SourceSpan,
     ) -> CodeLocation {
@@ -213,9 +213,8 @@ impl<'a> CodeGeneratorTac<'a> {
             live: Default::default(),
             source_span: Some(source_span),
             instruction: Instruction::FunctionCall(FunctionCallInstruction {
-                function,
+                target,
                 function_type,
-                is_direct_function,
                 return_target,
             }),
         })
@@ -544,7 +543,11 @@ impl<'a> CodeGeneratorTac<'a> {
     }
 
     fn ident_expr(&mut self, expr: &IdentExpr) -> Operand {
-        Operand::Variable(expr.ident.clone())
+        self.symbols
+            .lookup(self.scope, expr.ident.as_str())
+            .filter(|(_, _, entry)| entry.ty == SymbolTableEntryType::Function)
+            .map(|_| Operand::Label(expr.ident.clone()))
+            .unwrap_or_else(|| Operand::Variable(expr.ident.clone()))
     }
 
     fn operator_expr(&mut self, expr: &SourcedExpr) -> Operand {
@@ -829,17 +832,6 @@ impl<'a> CodeGeneratorTac<'a> {
         else {
             return None;
         };
-        let Sourced {
-            value:
-                TypedExpr {
-                    expr: Expr::IdentExpr(ident),
-                    ..
-                },
-            ..
-        } = expr.as_ref()
-        else {
-            return None;
-        };
         let return_value = if !self.types.eq(expr.ty, self.types.unit()) {
             Some(self.alloc_temp(*ty, *span))
         } else {
@@ -853,18 +845,12 @@ impl<'a> CodeGeneratorTac<'a> {
         for arg in args {
             self.param(arg, Some(*span));
         }
-        let (function_type, is_direct_function) = self
-            .symbols
-            .lookup(self.scope, ident.ident.as_str())
-            .map(|(_, _, entry)| (entry.var_type, entry.ty == SymbolTableEntryType::Function))
-            .unwrap_or((None, false));
-        self.call(
-            ident.ident.clone(),
-            function_type,
-            is_direct_function,
-            return_value.clone(),
-            *span,
-        );
+        let function = self.expr(expr);
+        let target = match function {
+            Operand::Label(name) => FunctionCallTarget::Direct(name),
+            operand => FunctionCallTarget::Indirect(operand),
+        };
+        self.call(target, Some(expr.ty), return_value.clone(), *span);
         return_value
     }
 

@@ -1,0 +1,52 @@
+---
+source: lexion_lang/tests/compiler_emit.rs
+expression: assembly.as_str()
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global apply
+apply:
+# fn apply(callback: fn(i32) -> i32, value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov QWORD PTR [rbp-8], rdi
+  mov DWORD PTR [rbp-16], esi
+#     return callback(value);
+  mov eax, DWORD PTR [rbp-16]
+  push rax
+  pop rdi
+  mov rax, QWORD PTR [rbp-8]
+  call rax
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     let callback = add_one;
+  lea rax, [add_one]
+  mov rdi, rax
+#     return apply(callback, 4);
+  mov eax, 4
+  push rax
+  mov rax, rdi
+  push rax
+  pop rdi
+  pop rsi
+  call apply
+  pop rbp
+  ret

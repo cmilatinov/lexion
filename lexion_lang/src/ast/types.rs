@@ -284,6 +284,19 @@ impl TypeCollection {
                     Some(self.insert(&Type::TupleType(TupleType { types })))
                 }
             }
+            AstType::Function(ty) => {
+                let params = ty
+                    .params
+                    .iter()
+                    .map(|param| self.insert_ast_type(&param.value))
+                    .collect::<Option<Vec<_>>>()?;
+                let return_type = self.insert_ast_type(&ty.return_type.value)?;
+                Some(self.insert(&Type::FunctionType(FunctionType {
+                    params,
+                    return_type,
+                    is_vararg: false,
+                })))
+            }
         }
     }
 

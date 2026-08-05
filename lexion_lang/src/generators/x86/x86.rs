@@ -3,8 +3,9 @@ use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, BaseInstruction, BorrowInstruction, CodeLocation,
-    ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction, FunctionRange,
-    Instruction, InstructionInstance, LoadInstruction, Operand, Place, StoreInstruction,
+    ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction, FunctionCallTarget,
+    FunctionRange, Instruction, InstructionInstance, LoadInstruction, Operand, Place,
+    StoreInstruction,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::{
@@ -237,7 +238,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 .return_target
                 .as_ref()
                 .and_then(|target| self.operand_source_span(target))
-                .or_else(|| self.symbol_span(&inst.function)),
+                .or_else(|| {
+                    inst.target
+                        .direct_name()
+                        .and_then(|name| self.symbol_span(name))
+                }),
             Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
             Instruction::Return(inst) => inst
                 .value
@@ -295,7 +300,10 @@ impl<'a> CodeGeneratorX86<'a> {
                 self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
             }
-            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+            Operand::Label(name) => self
+                .global_symbol_entry(name)
+                .and_then(|entry| entry.var_type),
+            Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }
     }
 
@@ -331,6 +339,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 };
                 if self.operand_is_aggregate(function, &inst.src) {
                     self.emit_aggregate_copy(lines, frame, function, location, inst);
+                } else if self.operand_is_function(function, &inst.src)
+                    || self.operand_is_function(function, &inst.dst)
+                {
+                    load_function_operand(lines, frame, location, &inst.src, Register::RAX);
+                    store_reference_operand(lines, frame, location, &inst.dst, Register::RAX);
                 } else if self.operand_is_reference(function, &inst.src)
                     || self.operand_is_reference(function, &inst.dst)
                 {
@@ -476,14 +489,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::FunctionCall(inst) => self
-                .unsupported_call_target_message(inst)
-                .or_else(|| self.unsupported_call_signature_message(inst))
-                .or_else(|| {
+            Instruction::FunctionCall(inst) => {
+                self.unsupported_call_signature_message(inst).or_else(|| {
                     inst.return_target
                         .as_ref()
                         .and_then(|target| self.unsupported_operand_message(function, target))
-                }),
+                })
+            }
             Instruction::Extern(_) => None,
             Instruction::Copy(inst) => self.unsupported_copy_message(function, inst),
             Instruction::ConditionalJump(inst) => inst
@@ -701,6 +713,11 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
+    fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
     fn operand_is_aggregate(&self, function: &str, operand: &Operand) -> bool {
         self.operand_type(function, operand)
             .is_some_and(|ty| self.type_is_aggregate(ty))
@@ -758,6 +775,13 @@ impl<'a> CodeGeneratorX86<'a> {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
             Some(Type::RefType(_))
+        )
+    }
+
+    fn type_is_function(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::FunctionType(_))
         )
     }
 
@@ -995,7 +1019,7 @@ impl<'a> CodeGeneratorX86<'a> {
         if signature.is_vararg {
             return Some(format!(
                 "x86 backend does not support calls to vararg functions yet: {}",
-                inst.function
+                inst.target
             ));
         }
         signature
@@ -1022,15 +1046,6 @@ impl<'a> CodeGeneratorX86<'a> {
             })
     }
 
-    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (!inst.is_direct_function).then(|| {
-            format!(
-                "x86 backend does not support indirect calls through function values yet: {}",
-                inst.function
-            )
-        })
-    }
-
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
         let ty = self.types.canonicalize(ty);
         let name = self.types.to_string_index(ty);
@@ -1052,9 +1067,7 @@ impl<'a> CodeGeneratorX86<'a> {
             Type::RefType(_) => Some(format!(
                 "x86 backend does not support references to `{name}` values yet"
             )),
-            Type::FunctionType(_) => Some(format!(
-                "x86 backend does not support function values yet: {name}"
-            )),
+            Type::FunctionType(_) => None,
             Type::TupleType(_)
             | Type::StructType(_)
             | Type::TypeDefType(_)
@@ -1640,7 +1653,13 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             emit_call_stack_padding(lines, stack_arg_count, stack_padding);
         }
-        lines.push(format!("  call {}", inst.function));
+        match &inst.target {
+            FunctionCallTarget::Direct(name) => lines.push(format!("  call {name}")),
+            FunctionCallTarget::Indirect(target) => {
+                load_function_operand(lines, frame, location, target, Register::RAX);
+                lines.push(String::from("  call rax"));
+            }
+        }
         let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
             + stack_padding
             + staged_arg_count * STACK_ARG_SLOT_BYTES;
@@ -1725,6 +1744,8 @@ impl<'a> CodeGeneratorX86<'a> {
         }
         if self.operand_is_reference(function, operand) {
             load_reference_operand(lines, frame, location, operand, Register::RAX);
+        } else if self.operand_is_function(function, operand) {
+            load_function_operand(lines, frame, location, operand, Register::RAX);
         } else {
             load_operand(lines, frame, location, operand, Register::RAX);
         }
@@ -1896,7 +1917,9 @@ impl<'a> CodeGeneratorX86<'a> {
                 } else if self.symbol_is_reference(
                     &self.cfg[range.start].label,
                     &assigned.interval().variable,
-                ) {
+                ) || self
+                    .symbol_is_function(&self.cfg[range.start].label, &assigned.interval().variable)
+                {
                     let Some(destination) = frame.variable_location(
                         assigned.interval().variable.as_str(),
                         assigned.location(),
@@ -1972,6 +1995,12 @@ impl<'a> CodeGeneratorX86<'a> {
                     Some(Type::RefType(_))
                 )
             })
+    }
+
+    fn symbol_is_function(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_function(ty))
     }
 
     fn symbol_frame_size_align(&self, function: &str, name: &str) -> SizeAlign {
@@ -2361,6 +2390,9 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
             }
         }
         Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand(target, names);
+            }
             if let Some(target) = &inst.return_target {
                 collect_operand(target, names);
             }
@@ -2612,6 +2644,25 @@ fn load_operand(
             register_name_32(register)
         )),
         Operand::Label(_) => lines.push(format!("  lea {}, [{operand}]", register_name(register))),
+    }
+}
+
+fn load_function_operand(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    register: Register,
+) {
+    match operand {
+        Operand::Label(name) => lines.push(format!("  lea {}, [{name}]", register_name(register))),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            load_reference_operand(lines, frame, location, operand, register)
+        }
+        Operand::Placeholder => lines.push(format!("  xor {0}, {0}", register_name(register))),
+        Operand::Literal(_) => {
+            unreachable!("function values must be stored or declared functions")
+        }
     }
 }
 

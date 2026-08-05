@@ -744,7 +744,7 @@ Param -> 'ident' ':' Type [Sourced<Param>] {{
 }};
 
 
-Type -> PathType | ReferenceType | TupleType [Sourced<Type>] {{ $$ = $1; }} ;
+Type -> PathType | ReferenceType | TupleType | FunctionType [Sourced<Type>] {{ $$ = $1; }} ;
 
 PathType -> Path 
 [Sourced<Type>] {{
@@ -797,6 +797,17 @@ TupleType -> '(' ')'
         SpanBuilder::merge($1.span, $2.span),
         Type::Tuple(TupleType {
             types: vec![]
+        })
+    ).into();
+}} ;
+
+FunctionType -> 'fn' '(' TypeList ')' '->' Type
+[Sourced<Type>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $6.span),
+        Type::Function(FunctionType {
+            params: $3,
+            return_type: Box::new($6),
         })
     ).into();
 }} ;

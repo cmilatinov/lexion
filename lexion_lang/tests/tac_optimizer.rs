@@ -2,8 +2,8 @@ use lexion_lang::ast::Lit;
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction,
-    FunctionCallInstruction, Instruction, InstructionInstance, JumpInstruction, LiveSets, Operand,
-    Place, ReturnInstruction, StoreInstruction,
+    FunctionCallInstruction, FunctionCallTarget, Instruction, InstructionInstance, JumpInstruction,
+    LiveSets, Operand, Place, ReturnInstruction, StoreInstruction,
 };
 use lexion_lang::generators::tac::{
     analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
@@ -316,9 +316,8 @@ fn call_branch_barrier_cfg() -> ControlFlowGraph {
         .instructions
         .push(instruction(Instruction::FunctionCall(
             FunctionCallInstruction {
-                function: String::from("touch"),
+                target: FunctionCallTarget::Direct(String::from("touch")),
                 function_type: None,
-                is_direct_function: true,
                 return_target: None,
             },
         )));
