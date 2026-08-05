@@ -399,6 +399,13 @@ fn x86_aggregate_reference_copies_preserve_allocated_rax() {
 }
 
 #[test]
+fn x86_smoke_projected_aggregate_references() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_projected_aggregate_references.lex"
+    ));
+}
+
+#[test]
 fn x86_smoke_function_scoped_symbol_types() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_scoped_symbols.lex"));
 }

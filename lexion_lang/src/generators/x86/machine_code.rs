@@ -189,7 +189,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> Result<bool, IcedError> {
         match instruction {
             Instruction::Borrow(inst) => {
-                self.emit_borrow(assembler, slots, inst)?;
+                self.emit_borrow(assembler, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Load(inst) => {
@@ -896,7 +896,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn unsupported_message(&self, function: &str, instruction: &Instruction) -> Option<String> {
         match instruction {
             Instruction::Borrow(inst) => self
-                .unsupported_borrow_message(&inst.place)
+                .unsupported_borrow_message(function, &inst.place)
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
                 .unsupported_load_message(function, &inst.place)
@@ -953,17 +953,22 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
-    fn unsupported_borrow_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_borrow_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Direct(value) if operand_name(value).is_some() => None,
             Place::Direct(_) => Some(String::from(
                 "x86 machine-code backend can only borrow stored values",
             )),
-            Place::Member { .. } | Place::Index { .. } | Place::Dereference(_) => {
-                Some(String::from(
-                    "x86 machine-code backend does not support references to projected places yet",
-                ))
-            }
+            Place::Member { .. } if self.member_place(function, place).is_some() => None,
+            Place::Member { .. } => Some(String::from(
+                "x86 machine-code backend does not support references through projected places yet",
+            )),
+            Place::Index { .. } => Some(String::from(
+                "x86 machine-code backend does not support references to indexed places yet",
+            )),
+            Place::Dereference(_) => Some(String::from(
+                "x86 machine-code backend does not support references to dereferenced places yet",
+            )),
         }
     }
 
@@ -971,12 +976,24 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         &self,
         assembler: &mut CodeAssembler,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &crate::generators::tac::instructions::BorrowInstruction,
     ) -> Result<(), IcedError> {
-        let Place::Direct(value) = &inst.place else {
-            unreachable!("unsupported borrow places are diagnosed before emission")
-        };
-        assembler.lea(rax, qword_ptr(rbp - stack_slot_offset(slots, value)))?;
+        match &inst.place {
+            Place::Direct(value) => {
+                assembler.lea(rax, qword_ptr(rbp - stack_slot_offset(slots, value)))?;
+            }
+            Place::Member { .. } => {
+                let (base, offset, _) = self.member_place(function, &inst.place).unwrap();
+                assembler.lea(
+                    rax,
+                    qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                )?;
+            }
+            Place::Index { .. } | Place::Dereference(_) => {
+                unreachable!("unsupported borrow places are diagnosed before emission")
+            }
+        }
         store_reference_operand(assembler, slots, &inst.target, rax)
     }
 
