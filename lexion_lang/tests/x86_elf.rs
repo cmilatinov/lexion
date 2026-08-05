@@ -268,6 +268,19 @@ fn x86_elf_executable_supports_empty_string_literal() {
 }
 
 #[test]
+fn x86_elf_executable_supports_string_abi_transport() {
+    let executable = compile_elf("backend/x86_string_abi_stack.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+
+    assert!(executable.symbols().contains_key("echo"));
+    assert!(executable.symbols().contains_key("take"));
+    insta::assert_snapshot!(disassemble(
+        &executable.as_bytes()[code_start..executable.data_offset()],
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
 fn x86_elf_reports_unsupported_extern_calls() {
     insta::assert_snapshot!(compile_elf_error("backend/x86_unsupported_extern_call.lex").join("\n"));
 }
