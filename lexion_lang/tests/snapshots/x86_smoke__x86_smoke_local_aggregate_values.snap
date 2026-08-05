@@ -1,0 +1,56 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_local_aggregates.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+#     let pair = (3, false);
+  mov eax, 3
+  mov DWORD PTR [rbp-16], eax
+  mov eax, 0
+  mov BYTE PTR [rbp-12], al
+  mov eax, DWORD PTR [rbp-16]
+  mov DWORD PTR [rbp-32], eax
+  mov eax, DWORD PTR [rbp-16+4]
+  mov DWORD PTR [rbp-32+4], eax
+#     let pair_copy = pair;
+  mov eax, DWORD PTR [rbp-32]
+  mov DWORD PTR [rbp-40], eax
+  mov eax, DWORD PTR [rbp-32+4]
+  mov DWORD PTR [rbp-40+4], eax
+#     pair_copy.0 = 7;
+  mov eax, 7
+  mov DWORD PTR [rbp-40], eax
+#     let point = Point { y: 4, x: 7 };
+  mov eax, 4
+  mov DWORD PTR [rbp-20], eax
+  mov eax, 7
+  mov DWORD PTR [rbp-24], eax
+  mov eax, DWORD PTR [rbp-24]
+  mov DWORD PTR [rbp-48], eax
+  mov eax, DWORD PTR [rbp-24+4]
+  mov DWORD PTR [rbp-48+4], eax
+#     let point_copy = point;
+  mov eax, DWORD PTR [rbp-48]
+  mov DWORD PTR [rbp-56], eax
+  mov eax, DWORD PTR [rbp-48+4]
+  mov DWORD PTR [rbp-56+4], eax
+#     point_copy.y = 9;
+  mov eax, 9
+  mov DWORD PTR [rbp-52], eax
+#     return point_copy.x + point_copy.y;
+  mov eax, DWORD PTR [rbp-56]
+  mov DWORD PTR [rbp-8], eax
+  mov esi, DWORD PTR [rbp-52]
+  mov eax, DWORD PTR [rbp-8]
+  add eax, esi
+  add rsp, 64
+  pop rbp
+  ret

@@ -1,7 +1,8 @@
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
 use lexion_lang::generators::x86::{
-    AbiRegisterAllocator, CodeGeneratorX86, X86EmitOptions, X86Target,
+    AbiRegisterAllocator, Bitness, CMemoryLayoutBuilder, CodeGeneratorX86, X86EmitOptions,
+    X86Target,
 };
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
@@ -25,6 +26,7 @@ fn compile_x86(fixture: &str) -> String {
     TypeChecker::new((source.clone(), &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, intervals) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -57,6 +59,7 @@ fn compile_x86_error(fixture: &str) -> Vec<String> {
     TypeChecker::new((source.clone(), &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, intervals) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -179,6 +182,16 @@ fn x86_smoke_char_values() {
 }
 
 #[test]
+fn x86_smoke_local_aggregate_values() {
+    insta::assert_snapshot!(compile_x86("backend/x86_local_aggregates.lex"));
+}
+
+#[test]
+fn x86_smoke_aggregate_member_values() {
+    insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
+}
+
+#[test]
 fn x86_reports_unsupported_float_casts() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_float_cast.lex").join("\n"));
 }
@@ -196,7 +209,7 @@ fn x86_reports_unsupported_call_string_arg() {
 }
 
 #[test]
-fn x86_reports_unsupported_tuple_values() {
+fn x86_reports_unsupported_tuple_parameters() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_tuple.lex").join("\n"));
 }
 
@@ -208,7 +221,7 @@ fn x86_reports_unsupported_call_tuple_arg() {
 }
 
 #[test]
-fn x86_reports_unsupported_struct_values() {
+fn x86_reports_unsupported_struct_parameters() {
     insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_struct.lex").join("\n"));
 }
 
@@ -216,6 +229,13 @@ fn x86_reports_unsupported_struct_values() {
 fn x86_reports_unsupported_call_struct_arg() {
     insta::assert_snapshot!(
         compile_x86_error("backend/x86_unsupported_call_struct_arg.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_reports_unsupported_aggregate_members() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_aggregate_members.lex").join("\n")
     );
 }
 

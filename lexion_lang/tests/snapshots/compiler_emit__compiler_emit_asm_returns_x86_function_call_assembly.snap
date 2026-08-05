@@ -15,7 +15,6 @@ combine:
   mov eax, edi
   add eax, esi
   mov DWORD PTR [rbp-8], eax
-  mov eax, DWORD PTR [rbp-8]
 #     return first + c;
   mov eax, DWORD PTR [rbp-8]
   add eax, edx

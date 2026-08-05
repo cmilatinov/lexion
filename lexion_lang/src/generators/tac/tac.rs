@@ -2,7 +2,8 @@ use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IndexExpr, Lit,
-    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructExpr, TupleExpr, TypedExpr,
+    VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
@@ -506,6 +507,22 @@ impl<'a> CodeGeneratorTac<'a> {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::StructExpr(_),
+                        ..
+                    },
+                ..
+            } => self.struct_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::TupleExpr(_),
+                        ..
+                    },
+                ..
+            } => self.tuple_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::IfExpr(_),
                         ..
                     },
@@ -751,6 +768,52 @@ impl<'a> CodeGeneratorTac<'a> {
 
     fn index_expr(&mut self, expr: &SourcedExpr) -> Operand {
         self.load_expr(expr)
+    }
+
+    fn tuple_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let TypedExpr {
+            expr: Expr::TupleExpr(TupleExpr { values }),
+            ty,
+        } = &expr.value
+        else {
+            unreachable!()
+        };
+        let target = self.alloc_temp(*ty, expr.span);
+        for (index, value) in values.iter().enumerate() {
+            let value = self.expr(value);
+            self.store(
+                Place::Member {
+                    base: Box::new(Place::Direct(target.clone())),
+                    member: index.to_string(),
+                },
+                value,
+                Some(expr.span),
+            );
+        }
+        target
+    }
+
+    fn struct_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let TypedExpr {
+            expr: Expr::StructExpr(StructExpr { fields, .. }),
+            ty,
+        } = &expr.value
+        else {
+            unreachable!()
+        };
+        let target = self.alloc_temp(*ty, expr.span);
+        for field in fields {
+            let value = self.expr(&field.value.expr);
+            self.store(
+                Place::Member {
+                    base: Box::new(Place::Direct(target.clone())),
+                    member: field.value.name.value.clone(),
+                },
+                value,
+                Some(field.value.expr.span),
+            );
+        }
+        target
     }
 
     fn call_expr(&mut self, expr: &SourcedExpr) -> Option<Operand> {

@@ -62,7 +62,7 @@ StructField -> 'ident' ':' Type
     ).into();
 }} ;
 
-WhileStmt -> 'while' Expr '{' StmtList '}' 
+WhileStmt -> 'while' ConditionExpr '{' StmtList '}'
 [SourcedStmt] {{
     $$ = (
         SpanBuilder::merge($1.span, $3.span),
@@ -118,6 +118,16 @@ Expr -> BlockExpr
     $$ = Box::new($1);
 }} ;
 
+ConditionExpr -> IfExpr
+               | ConditionAssignExpr
+[Box<SourcedExpr>] {{
+    $$ = $1;
+}} ;
+ConditionExpr -> BlockExpr
+[Box<SourcedExpr>] {{
+    $$ = Box::new($1);
+}} ;
+
 OptExpr -> Expr [Option<Box<SourcedExpr>>] {{ $$ = Some($1); }} ;
 OptExpr -> [Option<Box<SourcedExpr>>] {{ $$ = None; }} ;
 
@@ -142,7 +152,7 @@ IfExpr -> IfThenExpr
     $$ = $1;
 }} ;
 
-IfThenExpr -> 'if' Expr BlockExpr
+IfThenExpr -> 'if' ConditionExpr BlockExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $3.span),
@@ -154,7 +164,7 @@ IfThenExpr -> 'if' Expr BlockExpr
     ).into());
 }} ;
 
-IfElseExpr -> 'if' Expr BlockExpr 'else' BlockOrIfExpr
+IfElseExpr -> 'if' ConditionExpr BlockExpr 'else' BlockOrIfExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $5.span),
@@ -189,8 +199,23 @@ AssignExpr -> CondExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
 }} ;
+AssignExpr -> StructExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
 
-CondExpr -> LogicOrExpr '?' Expr ':' CondExpr
+ConditionAssignExpr -> UnaryExpr '=' ConditionAssignExpr
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $3.span),
+        Expr::OperatorExpr(OperatorExpr {
+            operator: "=",
+            args: vec![*$1, *$3]
+        }).into()
+    ).into());
+}} ;
+ConditionAssignExpr -> ConditionTernaryExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
+
+CondExpr -> LogicOrExpr '?' Expr ':' CondFalseExpr
 [Box<SourcedExpr>] {{
     $$ = Box::new((
         SpanBuilder::merge($1.span, $5.span),
@@ -204,6 +229,24 @@ CondExpr -> LogicOrExpr
 [Box<SourcedExpr>] {{
     $$ = $1;
 }} ;
+
+CondFalseExpr -> CondExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
+CondFalseExpr -> StructExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
+
+ConditionTernaryExpr -> LogicOrExpr '?' Expr ':' ConditionTernaryExpr
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $5.span),
+        Expr::OperatorExpr(OperatorExpr {
+            operator: "?:",
+            args: vec![*$1, *$3, *$5]
+        }).into()
+    ).into());
+}} ;
+ConditionTernaryExpr -> LogicOrExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
 
 LogicOrExpr -> LogicOrExpr '||' LogicAndExpr
 [Box<SourcedExpr>] {{
@@ -484,9 +527,70 @@ PrimaryExpr -> 'ident'
         }).into()
     ).into());
 }} ;
+PrimaryExpr -> TupleExpr
+[Box<SourcedExpr>] {{ $$ = $1; }} ;
 PrimaryExpr -> '(' Expr ')'
 [Box<SourcedExpr>] {{
     $$ = $2;
+}} ;
+
+StructExpr -> 'ident' '{' StructExprFields '}'
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $4.span),
+        Expr::StructExpr(StructExpr {
+            name: ($1.span, $1.value).into(),
+            fields: $3
+        }).into()
+    ).into());
+}} ;
+
+StructExprFields -> StructExprFieldList OptComma
+[Vec<Sourced<StructExprField>>] {{ $$ = $1; }} ;
+StructExprFields ->
+[Vec<Sourced<StructExprField>>] {{ $$ = vec![]; }} ;
+
+StructExprFieldList -> StructExprFieldList ',' StructExprField
+[Vec<Sourced<StructExprField>>] {{
+    $1.push($3);
+    $$ = $1;
+}} ;
+StructExprFieldList -> StructExprField
+[Vec<Sourced<StructExprField>>] {{ $$ = vec![$1]; }} ;
+
+StructExprField -> 'ident' ':' Expr
+[Sourced<StructExprField>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $3.span),
+        StructExprField {
+            name: ($1.span, $1.value).into(),
+            expr: *$3
+        }
+    ).into();
+}} ;
+
+TupleExpr -> '(' ')'
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $2.span),
+        Expr::TupleExpr(TupleExpr { values: vec![] }).into()
+    ).into());
+}} ;
+TupleExpr -> '(' Expr ',' ')'
+[Box<SourcedExpr>] {{
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $4.span),
+        Expr::TupleExpr(TupleExpr { values: vec![*$2] }).into()
+    ).into());
+}} ;
+TupleExpr -> '(' Expr ',' ArgList ')'
+[Box<SourcedExpr>] {{
+    let mut values = vec![*$2];
+    values.extend($4);
+    $$ = Box::new((
+        SpanBuilder::merge($1.span, $5.span),
+        Expr::TupleExpr(TupleExpr { values }).into()
+    ).into());
 }} ;
 
 ArgList -> ArgList ',' AssignExpr

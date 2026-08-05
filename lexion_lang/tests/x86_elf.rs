@@ -2,7 +2,9 @@ use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
 use lexion_lang::compiler::{EmitTarget, LexionCompiler, LexionCompilerOptions};
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
-use lexion_lang::generators::x86::{CodeGeneratorX86Elf, X86ElfExecutable, X86ElfOptions};
+use lexion_lang::generators::x86::{
+    Bitness, CMemoryLayoutBuilder, CodeGeneratorX86Elf, X86ElfExecutable, X86ElfOptions,
+};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
@@ -25,6 +27,7 @@ fn compile_elf(fixture: &str) -> X86ElfExecutable {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -49,6 +52,7 @@ fn compile_elf_error(fixture: &str) -> Vec<String> {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -313,5 +317,37 @@ fn x86_elf_reference_stack_arguments_run_on_linux_x86_64() {
     assert_eq!(
         run_executable_fixture("backend/x86_reference_stack_arguments.lex"),
         Some(9)
+    );
+}
+
+#[test]
+fn x86_elf_executable_supports_local_aggregate_values() {
+    let executable = compile_elf("backend/x86_local_aggregates.lex");
+
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[test]
+fn x86_elf_executable_supports_aggregate_member_values() {
+    let executable = compile_elf("backend/x86_aggregate_members.lex");
+
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_local_aggregate_values_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_local_aggregates.lex"),
+        Some(16)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_aggregate_member_values_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_aggregate_members.lex"),
+        Some(102)
     );
 }

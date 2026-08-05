@@ -1,0 +1,206 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_aggregate_members.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  sub rsp, 256
+#     let first = 11;
+  mov eax, 11
+  mov DWORD PTR [rbp-164], eax
+#     let second = 23;
+  mov eax, 23
+  mov DWORD PTR [rbp-168], eax
+#     let tuple = (&first, (3, 4));
+  lea rax, [rbp-164]
+  mov QWORD PTR [rbp-88], rax
+  mov rax, QWORD PTR [rbp-88]
+  mov QWORD PTR [rbp-32], rax
+  mov eax, 3
+  mov DWORD PTR [rbp-104], eax
+  mov eax, 4
+  mov DWORD PTR [rbp-100], eax
+  mov eax, DWORD PTR [rbp-104]
+  mov DWORD PTR [rbp-24], eax
+  mov eax, DWORD PTR [rbp-104+4]
+  mov DWORD PTR [rbp-24+4], eax
+  mov eax, DWORD PTR [rbp-32]
+  mov DWORD PTR [rbp-184], eax
+  mov eax, DWORD PTR [rbp-32+4]
+  mov DWORD PTR [rbp-184+4], eax
+  mov eax, DWORD PTR [rbp-32+8]
+  mov DWORD PTR [rbp-184+8], eax
+  mov eax, DWORD PTR [rbp-32+12]
+  mov DWORD PTR [rbp-184+12], eax
+#     let tuple_copy = tuple;
+  mov eax, DWORD PTR [rbp-184]
+  mov DWORD PTR [rbp-200], eax
+  mov eax, DWORD PTR [rbp-184+4]
+  mov DWORD PTR [rbp-200+4], eax
+  mov eax, DWORD PTR [rbp-184+8]
+  mov DWORD PTR [rbp-200+8], eax
+  mov eax, DWORD PTR [rbp-184+12]
+  mov DWORD PTR [rbp-200+12], eax
+#     tuple_copy.0 = &second;
+  lea rax, [rbp-168]
+  mov QWORD PTR [rbp-112], rax
+  mov rax, QWORD PTR [rbp-112]
+  mov QWORD PTR [rbp-200], rax
+#     tuple_copy.1 = (7, 8);
+  mov eax, 7
+  mov DWORD PTR [rbp-120], eax
+  mov eax, 8
+  mov DWORD PTR [rbp-116], eax
+  mov eax, DWORD PTR [rbp-120]
+  mov DWORD PTR [rbp-192], eax
+  mov eax, DWORD PTR [rbp-120+4]
+  mov DWORD PTR [rbp-192+4], eax
+#     let tuple_reference = tuple_copy.0;
+  mov rax, QWORD PTR [rbp-200]
+  mov QWORD PTR [rbp-128], rax
+  mov rax, QWORD PTR [rbp-128]
+  mov QWORD PTR [rbp-224], rax
+#     let tuple_copy_inner = tuple_copy.1;
+  mov eax, DWORD PTR [rbp-192]
+  mov DWORD PTR [rbp-136], eax
+  mov eax, DWORD PTR [rbp-192+4]
+  mov DWORD PTR [rbp-136+4], eax
+  mov eax, DWORD PTR [rbp-136]
+  mov DWORD PTR [rbp-208], eax
+  mov eax, DWORD PTR [rbp-136+4]
+  mov DWORD PTR [rbp-208+4], eax
+#     let tuple_inner = tuple_copy.1;
+  mov eax, DWORD PTR [rbp-192]
+  mov DWORD PTR [rbp-144], eax
+  mov eax, DWORD PTR [rbp-192+4]
+  mov DWORD PTR [rbp-144+4], eax
+  mov eax, DWORD PTR [rbp-144]
+  mov DWORD PTR [rbp-216], eax
+  mov eax, DWORD PTR [rbp-144+4]
+  mov DWORD PTR [rbp-216+4], eax
+#     tuple_inner.0 = 9;
+  mov eax, 9
+  mov DWORD PTR [rbp-216], eax
+#         reference: &first,
+  lea rax, [rbp-164]
+  mov QWORD PTR [rbp-40], rax
+  mov rax, QWORD PTR [rbp-40]
+  mov QWORD PTR [rbp-160], rax
+#         inner: Inner { first: 5, second: 6 },
+  mov eax, 5
+  mov DWORD PTR [rbp-48], eax
+  mov eax, 6
+  mov DWORD PTR [rbp-44], eax
+  mov eax, DWORD PTR [rbp-48]
+  mov DWORD PTR [rbp-152], eax
+  mov eax, DWORD PTR [rbp-48+4]
+  mov DWORD PTR [rbp-152+4], eax
+#     let values = Values {
+  mov eax, DWORD PTR [rbp-160]
+  mov DWORD PTR [rbp-240], eax
+  mov eax, DWORD PTR [rbp-160+4]
+  mov DWORD PTR [rbp-240+4], eax
+  mov eax, DWORD PTR [rbp-160+8]
+  mov DWORD PTR [rbp-240+8], eax
+  mov eax, DWORD PTR [rbp-160+12]
+  mov DWORD PTR [rbp-240+12], eax
+#     let values_copy = values;
+  mov eax, DWORD PTR [rbp-240]
+  mov DWORD PTR [rbp-256], eax
+  mov eax, DWORD PTR [rbp-240+4]
+  mov DWORD PTR [rbp-256+4], eax
+  mov eax, DWORD PTR [rbp-240+8]
+  mov DWORD PTR [rbp-256+8], eax
+  mov eax, DWORD PTR [rbp-240+12]
+  mov DWORD PTR [rbp-256+12], eax
+#     values_copy.reference = &second;
+  lea rax, [rbp-168]
+  mov QWORD PTR [rbp-56], rax
+  mov rax, QWORD PTR [rbp-56]
+  mov QWORD PTR [rbp-256], rax
+#     values_copy.inner = Inner { first: 10, second: 12 };
+  mov eax, 10
+  mov DWORD PTR [rbp-64], eax
+  mov eax, 12
+  mov DWORD PTR [rbp-60], eax
+  mov eax, DWORD PTR [rbp-64]
+  mov DWORD PTR [rbp-248], eax
+  mov eax, DWORD PTR [rbp-64+4]
+  mov DWORD PTR [rbp-248+4], eax
+#     let values_inner = values_copy.inner;
+  mov eax, DWORD PTR [rbp-248]
+  mov DWORD PTR [rbp-72], eax
+  mov eax, DWORD PTR [rbp-248+4]
+  mov DWORD PTR [rbp-72+4], eax
+  mov eax, DWORD PTR [rbp-72]
+  mov DWORD PTR [rbp-264], eax
+  mov eax, DWORD PTR [rbp-72+4]
+  mov DWORD PTR [rbp-264+4], eax
+#     values_inner.first = 14;
+  mov eax, 14
+  mov DWORD PTR [rbp-264], eax
+#     let original_tuple_value = *tuple.0;
+  mov rax, QWORD PTR [rbp-184]
+  mov QWORD PTR [rbp-80], rax
+  mov rdx, QWORD PTR [rbp-80]
+  mov edx, DWORD PTR [rdx]
+  mov esi, edx
+#     let copied_reference_value = *tuple_reference;
+  mov rdx, QWORD PTR [rbp-224]
+  mov edx, DWORD PTR [rdx]
+  mov r9d, edx
+#     let copied_tuple_value = tuple_copy_inner.0;
+  mov edx, DWORD PTR [rbp-208]
+  mov r10d, edx
+#     let independent_tuple_value = tuple_inner.0;
+  mov edx, DWORD PTR [rbp-216]
+  mov eax, edx
+#     let original_struct_value = values.inner.first;
+  mov edx, DWORD PTR [rbp-232]
+  mov edi, edx
+#     let copied_struct_reference_value = *values_copy.reference;
+  push rax
+  mov rax, QWORD PTR [rbp-256]
+  mov QWORD PTR [rbp-96], rax
+  pop rax
+  mov r11, QWORD PTR [rbp-96]
+  mov r11d, DWORD PTR [r11]
+  mov edx, r11d
+#     let copied_struct_value = values_copy.inner.first;
+  mov r11d, DWORD PTR [rbp-248]
+  mov ecx, r11d
+#     let independent_struct_value = values_inner.first;
+  mov r11d, DWORD PTR [rbp-264]
+  mov r8d, r11d
+#     return original_tuple_value + copied_reference_value + copied_tuple_value
+  mov r11d, esi
+  add r11d, r9d
+  mov esi, r11d
+  add esi, r10d
+#     return original_tuple_value + copied_reference_value + copied_tuple_value
+#         + independent_tuple_value + original_struct_value + copied_struct_reference_value
+  mov r9d, esi
+  add r9d, eax
+  mov eax, r9d
+  add eax, edi
+  mov edi, eax
+  add edi, edx
+#     return original_tuple_value + copied_reference_value + copied_tuple_value
+#         + independent_tuple_value + original_struct_value + copied_struct_reference_value
+#         + copied_struct_value + independent_struct_value;
+  mov eax, edi
+  add eax, ecx
+  mov DWORD PTR [rbp-16], eax
+  mov eax, DWORD PTR [rbp-16]
+  add eax, r8d
+  add rsp, 256
+  pop rbx
+  pop rbp
+  ret

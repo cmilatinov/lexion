@@ -1,0 +1,39 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  outer = false
+  inner = false
+  if false == outer then goto $celse_1
+
+$cthen_1:
+  store 1 -> $t2.x
+  store 2 -> $t2.y
+  $t1 = $t2
+  goto $cend_2
+
+$celse_1:
+  if false == inner then goto $celse_2
+
+$cthen_2:
+  store 3 -> $t4.x
+  store 4 -> $t4.y
+  $t3 = $t4
+  goto $cend_1
+
+$celse_2:
+  store 5 -> $t5.x
+  store 6 -> $t5.y
+  $t3 = $t5
+
+$cend_1:
+  $t1 = $t3
+
+$cend_2:
+  point = $t1
+  $t6 = load point.x
+  return $t6
+  endfn main

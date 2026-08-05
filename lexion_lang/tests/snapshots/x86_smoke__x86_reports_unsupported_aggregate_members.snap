@@ -1,0 +1,31 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_aggregate_members.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support references to `&Point` values yet
+    ,-[tests/fixtures/backend/x86_unsupported_aggregate_members.lex:17:27]
+ 16 |     let point = Point { x: 4 };
+ 17 |     let point_reference = &point;
+    :                           ^^^|^^
+    :                              `-- here
+ 18 |     return (*point_reference).x;
+    `----
+
+  x x86 backend does not support references to `&Point` values yet
+    ,-[tests/fixtures/backend/x86_unsupported_aggregate_members.lex:17:9]
+ 16 |     let point = Point { x: 4 };
+ 17 |     let point_reference = &point;
+    :         ^^^^^^^|^^^^^^^
+    :                `-- here
+ 18 |     return (*point_reference).x;
+    `----
+
+  x x86 backend does not support member access through projected references yet
+    ,-[tests/fixtures/backend/x86_unsupported_aggregate_members.lex:18:13]
+ 17 |     let point_reference = &point;
+ 18 |     return (*point_reference).x;
+    :             ^^^^^^^^^|^^^^^^^^^
+    :                      `-- here
+ 19 | }
+    `----

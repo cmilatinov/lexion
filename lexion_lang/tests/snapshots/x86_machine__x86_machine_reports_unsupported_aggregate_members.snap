@@ -1,0 +1,7 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "compile_machine_code_error(\"backend/x86_unsupported_aggregate_members.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+x86 machine-code backend does not support references to `&Point` values yet
+x86 machine-code backend does not support member access through projected references yet
