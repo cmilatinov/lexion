@@ -25,6 +25,7 @@ pub struct X86ElfExecutable {
     entry_point: u64,
     text_offset: usize,
     runtime_size: usize,
+    data_offset: usize,
     symbols: BTreeMap<String, u64>,
 }
 
@@ -43,6 +44,10 @@ impl X86ElfExecutable {
 
     pub fn runtime_size(&self) -> usize {
         self.runtime_size
+    }
+
+    pub fn data_offset(&self) -> usize {
+        self.data_offset
     }
 
     pub fn symbols(&self) -> &BTreeMap<String, u64> {
@@ -138,6 +143,7 @@ impl<'a> CodeGeneratorX86Elf<'a> {
             entry_point,
             text_offset: options.text_offset as usize,
             runtime_size: runtime.len(),
+            data_offset: options.text_offset as usize + runtime.len() + code.data_offset(),
             symbols,
         })
     }
