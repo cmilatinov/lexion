@@ -1576,6 +1576,7 @@ impl<'a> CodeGeneratorX86<'a> {
         let stack_arg_count = arg_types
             .iter()
             .zip(arg_locations.iter())
+        let indirect_return = self.function_call_indirect_return(inst);
             .filter_map(|(ty, location)| {
                 stack_location_offset(location).map(|offset| {
                     offset
