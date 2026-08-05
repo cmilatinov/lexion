@@ -1,0 +1,243 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_register_pair_aggregates.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global shift_quad
+shift_quad:
+# fn shift_quad(value: Quad) -> Quad {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rdi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-48], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-48+4], eax
+  add rsp, 8
+  push rsi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-48+8], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-48+8+4], eax
+  add rsp, 8
+#         first: value.first + 1,
+  mov eax, DWORD PTR [rbp-48]
+  mov edi, eax
+  add edi, 1
+  mov DWORD PTR [rbp-32], edi
+#         second: value.second + 2,
+  mov eax, DWORD PTR [rbp-44]
+  mov edi, eax
+  add edi, 2
+  mov DWORD PTR [rbp-28], edi
+#         third: value.third + 3,
+  mov eax, DWORD PTR [rbp-40]
+  mov edi, eax
+  add edi, 3
+  mov DWORD PTR [rbp-24], edi
+#         fourth: value.fourth + 4
+  mov eax, DWORD PTR [rbp-36]
+  mov edi, eax
+  add edi, 4
+  mov DWORD PTR [rbp-20], edi
+#     return Quad {
+#         first: value.first + 1,
+#         second: value.second + 2,
+#         third: value.third + 3,
+#         fourth: value.fourth + 4
+#     };
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-32]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-32+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-32+8]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-32+8+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  add rsp, 48
+  pop rbp
+  ret
+.global shift_tuple
+shift_tuple:
+# fn shift_tuple(value: (i32, i32, i32)) -> (i32, i32, i32) {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rdi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-40], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-40+4], eax
+  add rsp, 8
+  push rsi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-40+8], eax
+  add rsp, 8
+#     return (value.0 + 1, value.1 + 2, value.2 + 3);
+  mov eax, DWORD PTR [rbp-40]
+  mov edi, eax
+  add edi, 1
+  mov DWORD PTR [rbp-28], edi
+  mov eax, DWORD PTR [rbp-36]
+  mov edi, eax
+  add edi, 2
+  mov DWORD PTR [rbp-24], edi
+  mov eax, DWORD PTR [rbp-32]
+  mov edi, eax
+  add edi, 3
+  mov DWORD PTR [rbp-20], edi
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-28]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-28+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-28+8]
+  mov DWORD PTR [rsp], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  add rsp, 48
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  sub rsp, 128
+#     let quad = shift_quad(Quad { first: 1, second: 2, third: 3, fourth: 4 });
+  mov eax, 1
+  mov DWORD PTR [rbp-72], eax
+  mov eax, 2
+  mov DWORD PTR [rbp-68], eax
+  mov eax, 3
+  mov DWORD PTR [rbp-64], eax
+  mov eax, 4
+  mov DWORD PTR [rbp-60], eax
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-72]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-72+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-72+8]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-72+8+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  push rdx
+  push rax
+  pop rdi
+  pop rsi
+  sub rsp, 8
+  call shift_quad
+  add rsp, 8
+  push rax
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-56], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-56+4], eax
+  add rsp, 8
+  push rdx
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-56+8], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-56+8+4], eax
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-56]
+  mov DWORD PTR [rbp-112], eax
+  mov eax, DWORD PTR [rbp-56+4]
+  mov DWORD PTR [rbp-112+4], eax
+  mov eax, DWORD PTR [rbp-56+8]
+  mov DWORD PTR [rbp-112+8], eax
+  mov eax, DWORD PTR [rbp-56+12]
+  mov DWORD PTR [rbp-112+12], eax
+#     let tuple = shift_tuple((5, 6, 7));
+  mov eax, 5
+  mov DWORD PTR [rbp-96], eax
+  mov eax, 6
+  mov DWORD PTR [rbp-92], eax
+  mov eax, 7
+  mov DWORD PTR [rbp-88], eax
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-96]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-96+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-96+8]
+  mov DWORD PTR [rsp], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  push rdx
+  push rax
+  pop rdi
+  pop rsi
+  sub rsp, 8
+  call shift_tuple
+  add rsp, 8
+  push rax
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-84], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-84+4], eax
+  add rsp, 8
+  push rdx
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-84+8], eax
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-84]
+  mov DWORD PTR [rbp-124], eax
+  mov eax, DWORD PTR [rbp-84+4]
+  mov DWORD PTR [rbp-124+4], eax
+  mov eax, DWORD PTR [rbp-84+8]
+  mov DWORD PTR [rbp-124+8], eax
+#     return quad.first + quad.second + quad.third + quad.fourth + tuple.0 + tuple.1 + tuple.2;
+  mov edi, DWORD PTR [rbp-112]
+  mov esi, DWORD PTR [rbp-108]
+  mov edx, edi
+  add edx, esi
+  mov edi, DWORD PTR [rbp-104]
+  mov esi, edx
+  add esi, edi
+  mov edi, DWORD PTR [rbp-100]
+  mov edx, esi
+  add edx, edi
+  mov edi, DWORD PTR [rbp-124]
+  mov esi, edx
+  add esi, edi
+  mov edi, DWORD PTR [rbp-120]
+  mov edx, esi
+  add edx, edi
+  mov edi, DWORD PTR [rbp-116]
+  mov eax, edx
+  add eax, edi
+  add rsp, 128
+  pop rbx
+  pop rbp
+  ret

@@ -679,6 +679,13 @@ fn active_requires_register(assigned: &AssignedLivenessInterval, register: Regis
 }
 
 fn hard_register_constraint(constraints: &[AbiLocationConstraint]) -> HardRegisterConstraint {
+    // A pair needs two registers atomically; scalar allocation keeps it in its home.
+    if constraints
+        .iter()
+        .any(|constraint| matches!(constraint.abi_location(), Location::Pair { .. }))
+    {
+        return HardRegisterConstraint::Conflict;
+    }
     let mut required = None;
     for register in constraints
         .iter()
@@ -782,6 +789,23 @@ mod tests {
     }
 
     #[test]
+    fn register_pair_constraint_spills_instead_of_using_a_scalar_register() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let mut allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+
+        let location = allocator.allocate_location(
+            &[Register::RAX, Register::RDX],
+            &[pair_constraint(Register::RAX, Register::RDX)],
+            &mut Vec::new(),
+        );
+
+        assert_stack(&location, 0);
+    }
+
+    #[test]
     fn caller_saved_hard_register_constraint_spills_when_disallowed() {
         let cfg = ControlFlowGraph::new();
         let types = TypeCollection::default();
@@ -843,6 +867,17 @@ mod tests {
             location: location(0),
             role: AbiLocationRole::ReturnValue,
             abi_location: Location::Register(register),
+        }
+    }
+
+    fn pair_constraint(low: Register, high: Register) -> AbiLocationConstraint {
+        AbiLocationConstraint {
+            location: location(0),
+            role: AbiLocationRole::ReturnValue,
+            abi_location: Location::Pair {
+                low: Box::new(Location::Register(low)),
+                high: Box::new(Location::Register(high)),
+            },
         }
     }
 

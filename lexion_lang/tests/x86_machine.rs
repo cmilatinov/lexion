@@ -223,6 +223,13 @@ fn x86_machine_code_nested_reference_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_machine_code_register_pair_aggregate_abi_values() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregates.lex"
+    )));
+}
+
+#[test]
 fn x86_machine_code_aggregate_member_values() {
     let code = compile_machine_code("backend/x86_aggregate_members.lex");
 
@@ -276,6 +283,14 @@ fn x86_machine_reports_unsupported_call_string_arg() {
 fn x86_machine_reports_unsupported_call_tuple_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_tuple_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_stack_and_indirect_aggregates() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_stack_and_indirect_aggregates.lex"
     )
     .join("\n"));
 }

@@ -359,14 +359,25 @@ impl<'a> CodeGeneratorX86<'a> {
                         .function_return_register(function)
                         .unwrap_or(Register::RAX);
                     if self.operand_is_aggregate(function, value) {
-                        self.load_aggregate_operand(
-                            lines,
-                            frame,
-                            function,
-                            location,
-                            value,
-                            return_register,
-                        );
+                        if let Some((low, high)) = self.function_return_pair(function) {
+                            self.load_aggregate_pair(
+                                lines,
+                                frame,
+                                function,
+                                location,
+                                value,
+                                (low, high),
+                            );
+                        } else {
+                            self.load_aggregate_operand(
+                                lines,
+                                frame,
+                                function,
+                                location,
+                                value,
+                                return_register,
+                            );
+                        }
                     } else if self.operand_is_reference(function, value) {
                         load_reference_operand(lines, frame, location, value, return_register);
                     } else if self.operand_is_f32(function, value) {
@@ -1061,12 +1072,17 @@ impl<'a> CodeGeneratorX86<'a> {
     ) -> Option<String> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
-                && (location.is_none() || matches!(location, Some(Location::Register(_))))
+                && (location.is_none()
+                    || matches!(location, Some(Location::Register(_)))
+                    || location.and_then(register_pair).is_some())
         {
             return None;
         }
         let detail = match location {
-            Some(Location::Pair { .. }) => "register-pair aggregate ABI values",
+            Some(Location::Pair { .. }) if location.and_then(register_pair).is_some() => {
+                "register-pair aggregate ABI values"
+            }
+            Some(Location::Pair { .. }) => "stack-passed aggregate ABI values",
             Some(Location::Stack(_) | Location::RegisterAndStack(_, _)) => {
                 "stack-passed aggregate ABI values"
             }
@@ -1157,6 +1173,15 @@ impl<'a> CodeGeneratorX86<'a> {
             .and_then(outgoing_register)
     }
 
+    fn function_return_pair(&self, function: &str) -> Option<(Register, Register)> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
+    }
+
     fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
         let signature = self.function_call_signature(inst)?;
         self.target
@@ -1164,6 +1189,18 @@ impl<'a> CodeGeneratorX86<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(outgoing_register)
+    }
+
+    fn function_call_return_pair(
+        &self,
+        inst: &FunctionCallInstruction,
+    ) -> Option<(Register, Register)> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
     }
 
     fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
@@ -1499,17 +1536,19 @@ impl<'a> CodeGeneratorX86<'a> {
                     lines.push(format!("  add rsp, {STACK_ARG_SLOT_BYTES}"));
                     continue;
                 }
-                let Some(register) = outgoing_register(abi_location) else {
-                    continue;
-                };
-                if is_xmm_register(register) {
-                    lines.push(format!(
-                        "  movss {}, DWORD PTR [rsp]",
-                        register_name(register)
-                    ));
-                    lines.push(String::from("  add rsp, 8"));
-                } else {
-                    lines.push(format!("  pop {}", register_name(register)));
+                if let Some((low, high)) = register_pair(abi_location) {
+                    lines.push(format!("  pop {}", register_name(low)));
+                    lines.push(format!("  pop {}", register_name(high)));
+                } else if let Some(register) = outgoing_register(abi_location) {
+                    if is_xmm_register(register) {
+                        lines.push(format!(
+                            "  movss {}, DWORD PTR [rsp]",
+                            register_name(register)
+                        ));
+                        lines.push(String::from("  add rsp, 8"));
+                    } else {
+                        lines.push(format!("  pop {}", register_name(register)));
+                    }
                 }
             }
             emit_call_stack_padding(lines, stack_arg_count, stack_padding);
@@ -1526,14 +1565,25 @@ impl<'a> CodeGeneratorX86<'a> {
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
             if self.operand_is_aggregate(function, return_target) {
-                self.store_aggregate_from_register(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    return_target,
-                    return_register,
-                );
+                if let Some((low, high)) = self.function_call_return_pair(inst) {
+                    self.store_aggregate_pair(
+                        lines,
+                        frame,
+                        function,
+                        location,
+                        return_target,
+                        (low, high),
+                    );
+                } else {
+                    self.store_aggregate_from_register(
+                        lines,
+                        frame,
+                        function,
+                        location,
+                        return_target,
+                        return_register,
+                    );
+                }
             } else if self.operand_is_reference(function, return_target) {
                 store_reference_operand(lines, frame, location, return_target, return_register);
             } else if self.operand_is_f32(function, return_target) {
@@ -1553,8 +1603,31 @@ impl<'a> CodeGeneratorX86<'a> {
         operand: &Operand,
     ) {
         if self.operand_is_aggregate(function, operand) {
-            self.load_aggregate_operand(lines, frame, function, location, operand, Register::RAX);
-            lines.push(String::from("  push rax"));
+            if self
+                .aggregate_size(function, operand)
+                .is_some_and(|size| size > 8)
+            {
+                self.load_aggregate_pair(
+                    lines,
+                    frame,
+                    function,
+                    location,
+                    operand,
+                    (Register::RAX, Register::RDX),
+                );
+                lines.push(String::from("  push rdx"));
+                lines.push(String::from("  push rax"));
+            } else {
+                self.load_aggregate_operand(
+                    lines,
+                    frame,
+                    function,
+                    location,
+                    operand,
+                    Register::RAX,
+                );
+                lines.push(String::from("  push rax"));
+            }
             return;
         } else if self.operand_is_f32(function, operand) {
             stage_float_parameter(lines, frame, location, operand);
@@ -1652,12 +1725,31 @@ impl<'a> CodeGeneratorX86<'a> {
                 {
                     continue;
                 }
-                let Some(source) = incoming_location(constraint.abi_location()) else {
-                    continue;
-                };
                 let parameter = Operand::Variable(assigned.interval().variable.clone());
                 let Some(destination) = frame.operand_location(constraint.location(), &parameter)
                 else {
+                    continue;
+                };
+                if self.symbol_is_aggregate(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) {
+                    if let (Some((low, high)), Some(size), Some(destination)) = (
+                        register_pair(constraint.abi_location()),
+                        self.aggregate_size(&self.cfg[range.start].label, &parameter),
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        store_aggregate_register(lines, low, &destination, 8);
+                        store_aggregate_register(
+                            lines,
+                            high,
+                            &offset_assembly_operand(&destination, 8),
+                            size - 8,
+                        );
+                        continue;
+                    }
+                }
+                let Some(source) = incoming_location(constraint.abi_location()) else {
                     continue;
                 };
                 if self.symbol_is_f32(&self.cfg[range.start].label, &assigned.interval().variable) {
@@ -1841,6 +1933,51 @@ impl<'a> CodeGeneratorX86<'a> {
             return;
         };
         store_aggregate_register(lines, register, &destination, size);
+    }
+
+    fn load_aggregate_pair(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        registers: (Register, Register),
+    ) {
+        let (low, high) = registers;
+        let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(size) = self.aggregate_size(function, operand) else {
+            return;
+        };
+        load_aggregate_register(lines, &source, low, 8);
+        load_aggregate_register(lines, &offset_assembly_operand(&source, 8), high, size - 8);
+    }
+
+    fn store_aggregate_pair(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        registers: (Register, Register),
+    ) {
+        let (low, high) = registers;
+        let Some(destination) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(size) = self.aggregate_size(function, operand) else {
+            return;
+        };
+        store_aggregate_register(lines, low, &destination, 8);
+        store_aggregate_register(
+            lines,
+            high,
+            &offset_assembly_operand(&destination, 8),
+            size - 8,
+        );
     }
 }
 
@@ -2892,6 +3029,13 @@ fn outgoing_register(location: &Location) -> Option<Register> {
         | Location::Indirect { .. }
         | Location::Pair { .. } => None,
     }
+}
+
+fn register_pair(location: &Location) -> Option<(Register, Register)> {
+    let Location::Pair { low, high } = location else {
+        return None;
+    };
+    Some((outgoing_register(low)?, outgoing_register(high)?))
 }
 
 fn operand_name(operand: &Operand) -> Option<String> {
