@@ -3,4 +3,4 @@ source: lexion_lang/tests/x86_machine.rs
 expression: "compile_machine_code_error(\"backend/x86_unsupported_stack_and_indirect_aggregates.lex\").join(\"\\n\")"
 snapshot_kind: text
 ---
-x86 machine-code backend does not support stack-passed aggregate ABI values yet: (i32, i32, i32)
+x86 machine-code backend does not support indirect aggregate ABI values yet: (i32, i32, i32, i32, i32)
