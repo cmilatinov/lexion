@@ -527,20 +527,34 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 stack_offset(location).map(|offset| (*param, offset, *ty))
             })
             .collect::<Vec<_>>();
+        let stack_arg_slots = stack_args
+            .iter()
+            .map(|(_, offset, ty)| {
+                offset
+                    + self
+                        .types
+                        .size_align(*ty, Bitness::_64)
+                        .size
+                        .div_ceil(STACK_ARG_SLOT_BYTES)
+            })
+            .max()
+            .unwrap_or(0);
         let fixed_stack_bytes = self.target.calling_convention().fixed_stack_bytes();
         let stack_padding = call_stack_padding(
-            stack_args.len(),
+            stack_arg_slots,
             fixed_stack_bytes,
             self.target.calling_convention().stack_alignment(),
         );
-        let reserved_stack_bytes = fixed_stack_bytes + stack_padding;
+        let reserved_stack_bytes =
+            fixed_stack_bytes + stack_padding + stack_arg_slots * STACK_ARG_SLOT_BYTES;
         if reserved_stack_bytes > 0 {
             assembler.sub(rsp, reserved_stack_bytes as i32)?;
         }
 
-        for (param, _, ty) in stack_args.iter().rev() {
+        for (param, offset, ty) in &stack_args {
             if self.type_is_aggregate(*ty) {
-                self.load_aggregate_operand(assembler, slots, function, param, rax)?;
+                self.emit_aggregate_stack_argument(assembler, slots, function, param, *offset)?;
+                continue;
             } else if self.type_is_reference(*ty) {
                 load_reference_operand(assembler, slots, param, rax)?;
             } else if self.operand_is_f32(function, param) {
@@ -549,7 +563,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             } else {
                 load_operand(assembler, slots, param, eax)?;
             }
-            assembler.push(rax)?;
+            assembler.mov(
+                qword_ptr(rsp + (*offset * STACK_ARG_SLOT_BYTES) as i32),
+                rax,
+            )?;
         }
         for ((param, location), ty) in params
             .iter()
@@ -577,7 +594,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
         }
         assembler.call(label_name(labels, inst.function.as_str()))?;
-        let stack_cleanup = stack_args.len() * STACK_ARG_SLOT_BYTES + reserved_stack_bytes;
+        let stack_cleanup = reserved_stack_bytes;
         if stack_cleanup > 0 {
             assembler.add(rsp, stack_cleanup as i32)?;
         }
@@ -663,6 +680,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                             &self.cfg[range.start].label,
                             &Operand::Variable(param.clone()),
                             asm_register64(register),
+                        )?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        self.store_aggregate_stack_param(
+                            assembler,
+                            slots,
+                            &self.cfg[range.start].label,
+                            &Operand::Variable(param.clone()),
+                            stack_offset,
                         )?;
                     }
                 } else if self.type_is_reference(*ty) {
@@ -1300,6 +1325,68 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         self.store_aggregate_operand_part(assembler, slots, function, operand, (8, size - 8), high)
     }
 
+    fn emit_aggregate_stack_argument(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(0);
+        for slot in 0..size.div_ceil(STACK_ARG_SLOT_BYTES) {
+            assembler.mov(
+                qword_ptr(rsp + ((stack_offset + slot) * STACK_ARG_SLOT_BYTES) as i32),
+                0,
+            )?;
+        }
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            let destination = (stack_offset * STACK_ARG_SLOT_BYTES + offset) as i32;
+            if width == 4 {
+                assembler.mov(eax, aggregate_stack_value(slots, operand, offset))?;
+                assembler.mov(dword_ptr(rsp + destination), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(
+                        eax,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                    )?;
+                    assembler.mov(byte_ptr(rsp + destination + byte as i32), al)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn store_aggregate_stack_param(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(0);
+        let incoming = incoming_stack_arg_offset(stack_offset) as i32;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, dword_ptr(rbp + incoming + offset as i32))?;
+                assembler.mov(aggregate_stack_value(slots, operand, offset), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(eax, byte_ptr(rbp + incoming + (offset + byte) as i32))?;
+                    assembler.mov(
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                        al,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn store_aggregate_operand_part(
         &self,
         assembler: &mut CodeAssembler,
@@ -1602,8 +1689,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
                 && (location.is_none()
-                    || matches!(location, Some(Location::Register(_)))
-                    || location.and_then(register_pair).is_some())
+                    || matches!(location, Some(Location::Register(_) | Location::Stack(_)))
+                    || location.and_then(register_pair).is_some()
+                    || location.and_then(stack_offset).is_some())
         {
             return None;
         }
@@ -2202,10 +2290,8 @@ fn stack_offset(location: &Location) -> Option<usize> {
     match location {
         Location::Stack(offset) => Some(offset.0),
         Location::RegisterAndStack(_, offset) => Some(offset.0),
-        Location::NoStorage
-        | Location::Register(_)
-        | Location::Indirect { .. }
-        | Location::Pair { .. } => None,
+        Location::Pair { low, .. } => stack_offset(low),
+        Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
     }
 }
 

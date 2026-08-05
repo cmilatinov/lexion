@@ -258,6 +258,13 @@ fn x86_machine_code_indexed_register_pair_call_arguments() {
 }
 
 #[test]
+fn x86_machine_code_stack_aggregate_arguments() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_stack_aggregate_arguments.lex"
+    )));
+}
+
+#[test]
 fn x86_machine_code_aggregate_member_values() {
     let code = compile_machine_code("backend/x86_aggregate_members.lex");
 

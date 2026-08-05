@@ -1073,8 +1073,9 @@ impl<'a> CodeGeneratorX86<'a> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
                 && (location.is_none()
-                    || matches!(location, Some(Location::Register(_)))
-                    || location.and_then(register_pair).is_some())
+                    || matches!(location, Some(Location::Register(_) | Location::Stack(_)))
+                    || location.and_then(register_pair).is_some()
+                    || location.and_then(stack_location_offset).is_some())
         {
             return None;
         }
@@ -1518,10 +1519,22 @@ impl<'a> CodeGeneratorX86<'a> {
             })
             .unwrap_or_default();
         let arg_locations = &arg_locations[..pending_param_count];
-        let stack_arg_count = arg_locations
-            .iter()
-            .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
-            .count();
+        let stack_arg_count = self
+            .function_call_signature(inst)
+            .into_iter()
+            .flat_map(|signature| signature.params.iter().zip(arg_locations.iter()))
+            .filter_map(|(ty, location)| {
+                stack_location_offset(location).map(|offset| {
+                    offset
+                        + self
+                            .types
+                            .size_align(*ty, Bitness::_64)
+                            .size
+                            .div_ceil(STACK_ARG_SLOT_BYTES)
+                })
+            })
+            .max()
+            .unwrap_or(0);
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let staged_arg_count = usize::from(indexed_arguments)
             * arg_locations
@@ -1607,31 +1620,21 @@ impl<'a> CodeGeneratorX86<'a> {
         operand: &Operand,
     ) {
         if self.operand_is_aggregate(function, operand) {
-            if self
-                .aggregate_size(function, operand)
-                .is_some_and(|size| size > 8)
-            {
-                self.load_aggregate_pair(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    operand,
-                    (Register::RAX, Register::RDX),
-                );
-                lines.push(String::from("  push rdx"));
-                lines.push(String::from("  push rax"));
-            } else {
-                self.load_aggregate_operand(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    operand,
-                    Register::RAX,
-                );
-                lines.push(String::from("  push rax"));
+            let Some(size) = self.aggregate_size(function, operand) else {
+                return;
+            };
+            let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+                return;
+            };
+            let slots = size.div_ceil(STACK_ARG_SLOT_BYTES);
+            lines.push(format!("  sub rsp, {}", slots * STACK_ARG_SLOT_BYTES));
+            for slot in 0..slots {
+                lines.push(format!(
+                    "  mov QWORD PTR {}, 0",
+                    rsp_slot(slot * STACK_ARG_SLOT_BYTES)
+                ));
             }
+            emit_memory_copy(lines, &source, "[rsp]", size);
             return;
         } else if self.operand_is_f32(function, operand) {
             stage_float_parameter(lines, frame, location, operand);
@@ -1752,6 +1755,19 @@ impl<'a> CodeGeneratorX86<'a> {
                         );
                         continue;
                     }
+                    if let (Some(size), Some(offset), Some(destination)) = (
+                        self.aggregate_size(&self.cfg[range.start].label, &parameter),
+                        stack_location_offset(constraint.abi_location()),
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        emit_memory_copy(
+                            lines,
+                            &format!("[rbp+{}]", 16 + offset * STACK_ARG_SLOT_BYTES),
+                            &destination,
+                            size,
+                        );
+                        continue;
+                    }
                 }
                 let Some(source) = incoming_location(constraint.abi_location()) else {
                     continue;
@@ -1770,6 +1786,16 @@ impl<'a> CodeGeneratorX86<'a> {
                         {
                             store_aggregate_register(lines, source, &destination, size);
                         }
+                    } else if let (Some(size), Some(destination)) = (
+                        size,
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        emit_memory_copy(
+                            lines,
+                            &assembly_operand(source).replace("DWORD PTR ", ""),
+                            &destination,
+                            size,
+                        );
                     }
                 } else if self.symbol_is_reference(
                     &self.cfg[range.start].label,
@@ -3095,6 +3121,15 @@ fn register_pair(location: &Location) -> Option<(Register, Register)> {
         return None;
     };
     Some((outgoing_register(low)?, outgoing_register(high)?))
+}
+
+fn stack_location_offset(location: &Location) -> Option<usize> {
+    match location {
+        Location::Stack(offset) => Some(offset.0),
+        Location::RegisterAndStack(_, offset) => Some(offset.0),
+        Location::Pair { low, .. } => stack_location_offset(low),
+        Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
+    }
 }
 
 fn operand_name(operand: &Operand) -> Option<String> {

@@ -29,7 +29,7 @@ impl CallingConvention for SystemV64 {
 
         for &arg_ty in &signature.params {
             let kind = types.kind(arg_ty);
-            let SizeAlign { size, .. } = types.size_align(arg_ty, Bitness::_64);
+            let SizeAlign { size, align } = types.size_align(arg_ty, Bitness::_64);
             if size == 0 {
                 result.push(Location::NoStorage);
                 continue;
@@ -51,6 +51,7 @@ impl CallingConvention for SystemV64 {
                             int_arg_idx += 1;
                             result.push(Location::Register(reg));
                         } else {
+                            stack_offset = align_stack_offset(stack_offset, align.value());
                             let offset = StackOffset(stack_offset);
                             stack_offset += 1;
                             result.push(Location::Stack(offset))
@@ -65,6 +66,7 @@ impl CallingConvention for SystemV64 {
                                 high: Location::Register(high).into(),
                             });
                         } else {
+                            stack_offset = align_stack_offset(stack_offset, align.value());
                             result.push(Location::Pair {
                                 low: Location::Stack(StackOffset(stack_offset)).into(),
                                 high: Location::Stack(StackOffset(stack_offset + 1)).into(),
@@ -72,11 +74,13 @@ impl CallingConvention for SystemV64 {
                             stack_offset += 2;
                         }
                     } else {
+                        stack_offset = align_stack_offset(stack_offset, align.value());
                         result.push(Location::Stack(StackOffset(stack_offset)));
                         stack_offset += stack_slots(size);
                     }
                 }
                 TypeKind::Unknown => {
+                    stack_offset = align_stack_offset(stack_offset, align.value());
                     result.push(Location::Stack(StackOffset(stack_offset)));
                     stack_offset += stack_slots(size);
                 }
@@ -180,4 +184,9 @@ impl CallingConvention for SystemV64 {
 
 fn stack_slots(size: usize) -> usize {
     size.div_ceil(STACK_SLOT_BYTES).max(1)
+}
+
+fn align_stack_offset(offset: usize, align: usize) -> usize {
+    let slots = align.div_ceil(STACK_SLOT_BYTES).max(1);
+    offset.div_ceil(slots) * slots
 }
