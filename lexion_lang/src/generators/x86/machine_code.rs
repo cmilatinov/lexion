@@ -1187,9 +1187,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         low: Register,
         high: Register,
     ) -> Result<(), IcedError> {
-        self.load_aggregate_operand_part(assembler, slots, function, operand, (0, 8), low)?;
         let size = self.aggregate_size(function, operand).unwrap_or(8);
-        self.load_aggregate_operand_part(assembler, slots, function, operand, (8, size - 8), high)
+        self.load_aggregate_operand_part(assembler, slots, function, operand, (8, size - 8), high)?;
+        self.load_aggregate_operand_part(assembler, slots, function, operand, (0, 8), low)
     }
 
     fn load_aggregate_operand_part(

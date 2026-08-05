@@ -207,6 +207,15 @@ fn x86_smoke_register_pair_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_smoke_indexed_register_pair_call_arguments() {
+    let assembly = compile_x86("backend/x86_indexed_register_pair_call.lex");
+    assert!(
+        assembly.contains("mov rdi, QWORD PTR [rsp+72]\n  mov rsi, QWORD PTR [rsp+80]"),
+        "indexed call did not load the register pair from its staged slots:\n{assembly}"
+    );
+}
+
+#[test]
 fn x86_smoke_aggregate_member_values() {
     insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
 }

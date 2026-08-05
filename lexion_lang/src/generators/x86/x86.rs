@@ -1523,7 +1523,11 @@ impl<'a> CodeGeneratorX86<'a> {
             .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
             .count();
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
-        let staged_arg_count = usize::from(indexed_arguments) * pending_param_count;
+        let staged_arg_count = usize::from(indexed_arguments)
+            * arg_locations
+                .iter()
+                .map(staged_argument_slot_count)
+                .sum::<usize>();
         let stack_padding = frame.call_stack_padding(
             stack_arg_count + staged_arg_count,
             self.target.calling_convention().stack_alignment(),
@@ -1556,7 +1560,7 @@ impl<'a> CodeGeneratorX86<'a> {
         lines.push(format!("  call {}", inst.function));
         let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
             + stack_padding
-            + usize::from(indexed_arguments) * pending_param_count * STACK_ARG_SLOT_BYTES;
+            + staged_arg_count * STACK_ARG_SLOT_BYTES;
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
         }
@@ -1951,8 +1955,8 @@ impl<'a> CodeGeneratorX86<'a> {
         let Some(size) = self.aggregate_size(function, operand) else {
             return;
         };
-        load_aggregate_register(lines, &source, low, 8);
         load_aggregate_register(lines, &offset_assembly_operand(&source, 8), high, size - 8);
+        load_aggregate_register(lines, &source, low, 8);
     }
 
     fn store_aggregate_pair(
@@ -2724,10 +2728,28 @@ fn emit_indexed_call_arguments(
     stack_padding: usize,
 ) {
     for (index, location) in arg_locations.iter().enumerate() {
+        let source_offset = arg_locations[..index]
+            .iter()
+            .map(staged_argument_slot_count)
+            .sum::<usize>()
+            * STACK_ARG_SLOT_BYTES;
+        if let Some((low, high)) = register_pair(location) {
+            let low_source = rsp_slot(source_offset);
+            let high_source = rsp_slot(source_offset + STACK_ARG_SLOT_BYTES);
+            lines.push(format!(
+                "  mov {}, QWORD PTR {low_source}",
+                register_name(low)
+            ));
+            lines.push(format!(
+                "  mov {}, QWORD PTR {high_source}",
+                register_name(high)
+            ));
+            continue;
+        }
         let Some(register) = outgoing_register(location) else {
             continue;
         };
-        let source = rsp_slot(index * STACK_ARG_SLOT_BYTES);
+        let source = rsp_slot(source_offset);
         if is_xmm_register(register) {
             lines.push(format!(
                 "  movss {}, DWORD PTR {source}",
@@ -2754,10 +2776,23 @@ fn emit_indexed_call_arguments(
         let Location::Stack(offset) = location else {
             continue;
         };
-        let source = rsp_slot(outgoing_bytes + index * STACK_ARG_SLOT_BYTES);
+        let source_offset = arg_locations[..index]
+            .iter()
+            .map(staged_argument_slot_count)
+            .sum::<usize>()
+            * STACK_ARG_SLOT_BYTES;
+        let source = rsp_slot(outgoing_bytes + source_offset);
         let destination = rsp_slot(offset.0 * STACK_ARG_SLOT_BYTES);
         lines.push(format!("  mov rax, QWORD PTR {source}"));
         lines.push(format!("  mov QWORD PTR {destination}, rax"));
+    }
+}
+
+fn staged_argument_slot_count(location: &Location) -> usize {
+    if register_pair(location).is_some() {
+        2
+    } else {
+        1
     }
 }
 

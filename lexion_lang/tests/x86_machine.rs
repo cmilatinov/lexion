@@ -230,6 +230,11 @@ fn x86_machine_code_register_pair_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_machine_code_indexed_register_pair_call_arguments() {
+    compile_machine_code("backend/x86_indexed_register_pair_call.lex");
+}
+
+#[test]
 fn x86_machine_code_aggregate_member_values() {
     let code = compile_machine_code("backend/x86_aggregate_members.lex");
 

@@ -379,6 +379,15 @@ fn x86_elf_one_eightbyte_aggregate_abi_values_run_on_linux_x86_64() {
 fn x86_elf_register_pair_aggregate_abi_values_run_on_linux_x86_64() {
     assert_eq!(
         run_executable_fixture("backend/x86_register_pair_aggregates.lex"),
-        Some(49)
+        Some(44)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_indexed_register_pair_call_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_indexed_register_pair_call.lex"),
+        Some(9)
     );
 }
