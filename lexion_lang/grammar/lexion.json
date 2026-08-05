@@ -459,7 +459,7 @@
     {
       "left": "ConditionAssignExpr",
       "right": [
-        "ConditionCondExpr"
+        "ConditionTernaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -511,13 +511,13 @@
       }
     },
     {
-      "left": "ConditionCondExpr",
+      "left": "ConditionTernaryExpr",
       "right": [
         "LogicOrExpr",
         "'?'",
         "Expr",
         "':'",
-        "ConditionCondExpr"
+        "ConditionTernaryExpr"
       ],
       "reduction": {
         "ty": "Box<SourcedExpr>",
@@ -525,7 +525,7 @@
       }
     },
     {
-      "left": "ConditionCondExpr",
+      "left": "ConditionTernaryExpr",
       "right": [
         "LogicOrExpr"
       ],
