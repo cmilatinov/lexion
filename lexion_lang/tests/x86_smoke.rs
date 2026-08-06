@@ -249,6 +249,13 @@ fn x86_smoke_indirect_aggregate_returns() {
 }
 
 #[test]
+fn x86_smoke_indexed_indirect_return_stack_pair_arguments() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_indexed_indirect_return_stack_pair_arguments.lex"
+    ));
+}
+
+#[test]
 fn x86_smoke_aggregate_member_values() {
     insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
 }

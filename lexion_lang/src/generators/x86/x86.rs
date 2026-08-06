@@ -1576,7 +1576,6 @@ impl<'a> CodeGeneratorX86<'a> {
         let stack_arg_count = arg_types
             .iter()
             .zip(arg_locations.iter())
-        let indirect_return = self.function_call_indirect_return(inst);
             .filter_map(|(ty, location)| {
                 stack_location_offset(location).map(|offset| {
                     offset
@@ -1589,6 +1588,7 @@ impl<'a> CodeGeneratorX86<'a> {
             })
             .max()
             .unwrap_or(0);
+        let indirect_return = self.function_call_indirect_return(inst);
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let argument_slot_counts = arg_types
             .iter()
