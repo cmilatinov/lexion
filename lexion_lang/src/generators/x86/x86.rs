@@ -1289,7 +1289,7 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_parameter_message(*ty)
+                self.unsupported_string_abi_message(*ty)
                     .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
                     .or_else(|| self.unsupported_type_message(*ty))
             })
@@ -1318,7 +1318,7 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_parameter_message(*ty).or_else(|| {
+                self.unsupported_string_abi_message(*ty).or_else(|| {
                     self.unsupported_aggregate_type_message(
                         *ty,
                         self.target
@@ -1328,6 +1328,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     )
                 })
             })
+            .or_else(|| self.unsupported_string_abi_message(signature.return_type))
             .or_else(|| {
                 self.unsupported_aggregate_type_message(
                     signature.return_type,
@@ -1381,7 +1382,7 @@ impl<'a> CodeGeneratorX86<'a> {
         ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
-    fn unsupported_string_parameter_message(&self, ty: Index) -> Option<String> {
+    fn unsupported_string_abi_message(&self, ty: Index) -> Option<String> {
         self.type_is_string_reference(ty).then(|| {
             format!(
                 "x86 backend does not support string values yet: {}",

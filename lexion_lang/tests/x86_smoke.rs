@@ -312,6 +312,13 @@ fn x86_reports_unsupported_string_parameters() {
 }
 
 #[test]
+fn x86_reports_unsupported_string_returns() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_string_return.lex").join("\n")
+    );
+}
+
+#[test]
 fn x86_reports_unsupported_call_string_arg() {
     insta::assert_snapshot!(
         compile_x86_error("backend/x86_unsupported_call_string_arg.lex").join("\n")
