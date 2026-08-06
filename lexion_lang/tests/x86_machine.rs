@@ -344,7 +344,7 @@ fn x86_machine_reports_unsupported_string_parameters() {
 }
 
 #[test]
-fn x86_machine_code_string_register_arguments_and_returns() {
+fn x86_machine_code_string_register_arguments() {
     insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
         "backend/x86_string_abi_registers.lex"
     )));

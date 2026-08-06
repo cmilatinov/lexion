@@ -1343,7 +1343,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     self.target
                         .calling_convention()
                         .assign_args(self.types, 0, signature)
-                    .get(index),
+                        .get(index),
                 )
             })
             .or_else(|| {
@@ -3403,7 +3403,7 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
 fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
     let mut saw_stack_argument = false;
     arg_locations.iter().any(|location| {
-        if stack_argument_offset(location).is_some() {
+        if stack_location_offset(location).is_some() {
             saw_stack_argument = true;
             return false;
         }
@@ -3472,10 +3472,15 @@ fn emit_indexed_call_arguments(
 }
 
 fn staged_argument_slot_count(location: &Location) -> usize {
-    if register_pair(location).is_some() {
-        2
-    } else {
-        1
+    match location {
+        Location::Pair { low, high } => {
+            staged_argument_slot_count(low) + staged_argument_slot_count(high)
+        }
+        Location::NoStorage
+        | Location::Register(_)
+        | Location::Stack(_)
+        | Location::RegisterAndStack(_, _)
+        | Location::Indirect { .. } => 1,
     }
 }
 

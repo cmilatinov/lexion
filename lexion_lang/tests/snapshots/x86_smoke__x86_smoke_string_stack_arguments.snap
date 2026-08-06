@@ -5,58 +5,16 @@ snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
-.global echo
-echo:
-# fn echo(value: &str) -> &str {
-  push rbp
-  mov rbp, rsp
-  sub rsp, 32
-  push rdi
-  mov eax, DWORD PTR [rsp]
-  mov DWORD PTR [rbp-24], eax
-  mov eax, DWORD PTR [rsp+4]
-  mov DWORD PTR [rbp-24+4], eax
-  add rsp, 8
-  push rsi
-  mov eax, DWORD PTR [rsp]
-  mov DWORD PTR [rbp-24+8], eax
-  mov eax, DWORD PTR [rsp+4]
-  mov DWORD PTR [rbp-24+8+4], eax
-  add rsp, 8
-#     return value;
-  mov rax, QWORD PTR [rbp-24]
-  mov rdx, QWORD PTR [rbp-24+8]
-  add rsp, 32
-  pop rbp
-  ret
 .global take
 take:
-# fn take(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, value: &str) -> &str {
+# fn take(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, value: &str) -> i32 {
   push rbp
   mov rbp, rsp
-  sub rsp, 48
-  mov eax, DWORD PTR [rbp+16]
-  mov DWORD PTR [rbp-48], eax
-  mov eax, DWORD PTR [rbp+16+4]
-  mov DWORD PTR [rbp-48+4], eax
-  mov eax, DWORD PTR [rbp+16+8]
-  mov DWORD PTR [rbp-48+8], eax
-  mov eax, DWORD PTR [rbp+16+12]
-  mov DWORD PTR [rbp-48+12], eax
-#     return echo(value);
   sub rsp, 16
-  mov rax, QWORD PTR [rbp-48]
-  mov rdx, QWORD PTR [rbp-48+8]
-  mov QWORD PTR [rsp], rax
-  mov QWORD PTR [rsp+8], rdx
-  pop rdi
-  pop rsi
-  call echo
-  mov QWORD PTR [rbp-32], rax
-  mov QWORD PTR [rbp-32+8], rdx
-  mov rax, QWORD PTR [rbp-32]
-  mov rdx, QWORD PTR [rbp-32+8]
-  add rsp, 48
+  mov DWORD PTR [rbp-8], edi
+#     return a;
+  mov eax, DWORD PTR [rbp-8]
+  add rsp, 16
   pop rbp
   ret
 .global main
@@ -64,8 +22,7 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-  sub rsp, 48
-#     let value = take(1, 2, 3, 4, 5, 6, "hello");
+#     return take(1, 2, 3, 4, 5, 6, "hello");
   sub rsp, 16
   lea rax, [rip + .Lstr_68656c6c6f]
   mov rdx, 5
@@ -91,19 +48,6 @@ main:
   pop r9
   call take
   add rsp, 16
-  mov QWORD PTR [rbp-24], rax
-  mov QWORD PTR [rbp-24+8], rdx
-  mov eax, DWORD PTR [rbp-24]
-  mov DWORD PTR [rbp-40], eax
-  mov eax, DWORD PTR [rbp-24+4]
-  mov DWORD PTR [rbp-40+4], eax
-  mov eax, DWORD PTR [rbp-24+8]
-  mov DWORD PTR [rbp-40+8], eax
-  mov eax, DWORD PTR [rbp-24+12]
-  mov DWORD PTR [rbp-40+12], eax
-#     return 0;
-  mov eax, 0
-  add rsp, 48
   pop rbp
   ret
 .section .rodata

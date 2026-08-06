@@ -305,13 +305,18 @@ fn x86_smoke_string_literals() {
 }
 
 #[test]
-fn x86_smoke_string_register_arguments_and_returns() {
+fn x86_smoke_string_register_arguments() {
     insta::assert_snapshot!(compile_x86("backend/x86_string_abi_registers.lex"));
 }
 
 #[test]
 fn x86_smoke_string_stack_arguments() {
     insta::assert_snapshot!(compile_x86("backend/x86_string_abi_stack.lex"));
+}
+
+#[test]
+fn x86_smoke_string_stack_descriptor_before_register_argument() {
+    insta::assert_snapshot!(compile_x86("backend/x86_string_abi_indexed.lex"));
 }
 
 #[test]

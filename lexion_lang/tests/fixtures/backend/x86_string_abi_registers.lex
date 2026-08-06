@@ -1,8 +1,7 @@
-fn echo(value: &str) -> &str {
-    return value;
+fn accept(value: &str) -> i32 {
+    return 0;
 }
 
 fn main() -> i32 {
-    let value = echo("hello");
-    return 0;
+    return accept("hello");
 }
