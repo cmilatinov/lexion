@@ -1,0 +1,6 @@
+---
+source: lexion_lang/tests/x86_elf.rs
+expression: "compile_elf_error(\"backend/x86_unsupported_string_return.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+x86 ELF executable output requires `main` to return an integer scalar or unit, found &str
