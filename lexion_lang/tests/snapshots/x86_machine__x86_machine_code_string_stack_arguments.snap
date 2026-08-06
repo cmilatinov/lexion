@@ -4,74 +4,44 @@ expression: "string_machine_snapshot(&compile_machine_code(\"backend/x86_string_
 snapshot_kind: text
 ---
 symbols:
-echo=0x0000
-main=0x0057
-take=0x001D
+main=0x0013
+take=0x0000
 
 code bytes:
-55 48 89 E5 48 83 EC 10 48 89 7D F0 48 89 75 F8 48 8B 45 F0 48 8B 55 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 20 48 8B 45 10 48 89 45 E0 48 8B 55 18 48 89 55 E8 48 8B 7D E0 48 8B 75 E8 E8 BE FF FF FF 48 89 45 F0 48 89 55 F8 48 8B 45 F0 48 8B 55 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 20 48 83 EC 10 48 8D 05 66 00 00 00 48 BA 05 00 00 00 00 00 00 00 48 89 04 24 48 89 54 24 08 BF 01 00 00 00 BE 02 00 00 00 BA 03 00 00 00 B9 04 00 00 00 41 B8 05 00 00 00 41 B9 06 00 00 00 E8 7B FF FF FF 48 83 C4 10 48 89 45 F0 48 89 55 F8 8B 45 F0 89 45 E0 8B 45 F4 89 45 E4 8B 45 F8 89 45 E8 8B 45 FC 89 45 EC B8 00 00 00 00 48 89 EC 5D C3
+55 48 89 E5 48 83 EC 10 89 7D FC 8B 45 FC 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 48 83 EC 10 48 8D 05 47 00 00 00 48 BA 05 00 00 00 00 00 00 00 48 89 04 24 48 89 54 24 08 BF 01 00 00 00 BE 02 00 00 00 BA 03 00 00 00 B9 04 00 00 00 41 B8 05 00 00 00 41 B9 06 00 00 00 E8 A2 FF FF FF 48 83 C4 10 89 45 FC 8B 45 FC 48 89 EC 5D C3
 
 data bytes:
 68 65 6C 6C 6F
 
 disassembly:
-echo:
+take:
 0000: push rbp
 0001: mov rbp,rsp
 0004: sub rsp,10h
-0008: mov [rbp-10h],rdi
-000C: mov [rbp-8],rsi
-0010: mov rax,[rbp-10h]
-0014: mov rdx,[rbp-8]
-0018: mov rsp,rbp
-001B: pop rbp
-001C: ret
-take:
-001D: push rbp
-001E: mov rbp,rsp
-0021: sub rsp,20h
-0025: mov rax,[rbp+10h]
-0029: mov [rbp-20h],rax
-002D: mov rdx,[rbp+18h]
-0031: mov [rbp-18h],rdx
-0035: mov rdi,[rbp-20h]
-0039: mov rsi,[rbp-18h]
-003D: call 0 <echo>
-0042: mov [rbp-10h],rax
-0046: mov [rbp-8],rdx
-004A: mov rax,[rbp-10h]
-004E: mov rdx,[rbp-8]
-0052: mov rsp,rbp
-0055: pop rbp
-0056: ret
+0008: mov [rbp-4],edi
+000B: mov eax,[rbp-4]
+000E: mov rsp,rbp
+0011: pop rbp
+0012: ret
 main:
-0057: push rbp
-0058: mov rbp,rsp
-005B: sub rsp,20h
-005F: sub rsp,10h
-0063: lea rax,[0D0h]
-006A: mov rdx,5
-0074: mov [rsp],rax
-0078: mov [rsp+8],rdx
-007D: mov edi,1
-0082: mov esi,2
-0087: mov edx,3
-008C: mov ecx,4
-0091: mov r8d,5
-0097: mov r9d,6
-009D: call 000000000000001Dh <take>
-00A2: add rsp,10h
-00A6: mov [rbp-10h],rax
-00AA: mov [rbp-8],rdx
-00AE: mov eax,[rbp-10h]
-00B1: mov [rbp-20h],eax
-00B4: mov eax,[rbp-0Ch]
-00B7: mov [rbp-1Ch],eax
-00BA: mov eax,[rbp-8]
-00BD: mov [rbp-18h],eax
-00C0: mov eax,[rbp-4]
-00C3: mov [rbp-14h],eax
-00C6: mov eax,0
-00CB: mov rsp,rbp
-00CE: pop rbp
-00CF: ret
+0013: push rbp
+0014: mov rbp,rsp
+0017: sub rsp,10h
+001B: sub rsp,10h
+001F: lea rax,[6Dh]
+0026: mov rdx,5
+0030: mov [rsp],rax
+0034: mov [rsp+8],rdx
+0039: mov edi,1
+003E: mov esi,2
+0043: mov edx,3
+0048: mov ecx,4
+004D: mov r8d,5
+0053: mov r9d,6
+0059: call 0 <take>
+005E: add rsp,10h
+0062: mov [rbp-4],eax
+0065: mov eax,[rbp-4]
+0068: mov rsp,rbp
+006B: pop rbp
+006C: ret
