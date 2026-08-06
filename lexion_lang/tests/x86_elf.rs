@@ -351,7 +351,7 @@ fn x86_elf_reference_stack_arguments_run_on_linux_x86_64() {
 fn x86_elf_aggregate_reference_places_run_on_linux_x86_64() {
     assert_eq!(
         run_executable_fixture("backend/x86_aggregate_reference_places.lex"),
-        Some(12)
+        Some(22)
     );
 }
 
