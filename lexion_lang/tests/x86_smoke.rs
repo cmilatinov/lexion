@@ -406,6 +406,11 @@ fn x86_smoke_projected_aggregate_references() {
 }
 
 #[test]
+fn x86_member_borrow_preserves_live_rax() {
+    insta::assert_snapshot!(compile_x86("backend/x86_member_borrow_preserves_rax.lex"));
+}
+
+#[test]
 fn x86_smoke_function_scoped_symbol_types() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_scoped_symbols.lex"));
 }

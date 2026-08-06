@@ -575,6 +575,12 @@ impl<'a> CodeGeneratorX86<'a> {
         location: CodeLocation,
         inst: &BorrowInstruction,
     ) {
+        let preserved_rax =
+            if operand_register(frame, location, &inst.target) != Some(Register::RAX) {
+                preserve_register(lines, frame, location, Register::RAX)
+            } else {
+                false
+            };
         let operand = match &inst.place {
             Place::Direct(value) => {
                 let Some(AssemblyLocation::FrameStack { offset }) =
