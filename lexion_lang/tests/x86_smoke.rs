@@ -202,6 +202,43 @@ fn x86_smoke_nested_reference_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_smoke_register_pair_aggregate_abi_values() {
+    let assembly = compile_x86("backend/x86_register_pair_aggregates.lex");
+    let shift_quad = assembly
+        .split_once("shift_quad:\n")
+        .and_then(|(_, assembly)| assembly.split_once("shift_tuple:\n"))
+        .map(|(assembly, _)| assembly)
+        .expect("missing shift_quad assembly");
+    let high_load = shift_quad
+        .find("mov rdx, QWORD PTR [rsp]")
+        .expect("missing RDX return-half load");
+    let low_load = shift_quad
+        .find("mov rax, QWORD PTR [rsp]")
+        .expect("missing RAX return-half load");
+    assert!(
+        high_load < low_load,
+        "register-pair return must load RDX before RAX scratch clobbers it:\n{shift_quad}"
+    );
+    insta::assert_snapshot!(assembly);
+}
+
+#[test]
+fn x86_smoke_register_pair_aggregate_abi_padding() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_register_pair_aggregate_padding.lex"
+    ));
+}
+
+#[test]
+fn x86_smoke_indexed_register_pair_call_arguments() {
+    let assembly = compile_x86("backend/x86_indexed_register_pair_call.lex");
+    assert!(
+        assembly.contains("mov rdi, QWORD PTR [rsp+72]\n  mov rsi, QWORD PTR [rsp+80]"),
+        "indexed call did not load the register pair from its staged slots:\n{assembly}"
+    );
+}
+
+#[test]
 fn x86_smoke_aggregate_member_values() {
     insta::assert_snapshot!(compile_x86("backend/x86_aggregate_members.lex"));
 }
@@ -233,6 +270,14 @@ fn x86_reports_unsupported_call_tuple_arg() {
     insta::assert_snapshot!(
         compile_x86_error("backend/x86_unsupported_call_tuple_arg.lex").join("\n")
     );
+}
+
+#[test]
+fn x86_reports_unsupported_stack_and_indirect_aggregates() {
+    insta::assert_snapshot!(compile_x86_error(
+        "backend/x86_unsupported_stack_and_indirect_aggregates.lex"
+    )
+    .join("\n"));
 }
 
 #[test]

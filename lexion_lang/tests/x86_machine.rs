@@ -223,6 +223,41 @@ fn x86_machine_code_nested_reference_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_machine_code_register_pair_aggregate_abi_values() {
+    let snapshot = machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregates.lex",
+    ));
+    let shift_quad = snapshot
+        .split_once("shift_quad:\n")
+        .and_then(|(_, disassembly)| disassembly.split_once("shift_tuple:\n"))
+        .map(|(disassembly, _)| disassembly)
+        .expect("missing shift_quad disassembly");
+    let high_load = shift_quad
+        .find("mov rdx,[rsp]")
+        .expect("missing RDX return-half load");
+    let low_load = shift_quad
+        .find("mov rax,[rsp]")
+        .expect("missing RAX return-half load");
+    assert!(
+        high_load < low_load,
+        "register-pair return must load RDX before RAX scratch clobbers it:\n{shift_quad}"
+    );
+    insta::assert_snapshot!(snapshot);
+}
+
+#[test]
+fn x86_machine_code_register_pair_aggregate_abi_padding() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregate_padding.lex",
+    )));
+}
+
+#[test]
+fn x86_machine_code_indexed_register_pair_call_arguments() {
+    compile_machine_code("backend/x86_indexed_register_pair_call.lex");
+}
+
+#[test]
 fn x86_machine_code_aggregate_member_values() {
     let code = compile_machine_code("backend/x86_aggregate_members.lex");
 
@@ -276,6 +311,14 @@ fn x86_machine_reports_unsupported_call_string_arg() {
 fn x86_machine_reports_unsupported_call_tuple_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_tuple_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_stack_and_indirect_aggregates() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_stack_and_indirect_aggregates.lex"
     )
     .join("\n"));
 }

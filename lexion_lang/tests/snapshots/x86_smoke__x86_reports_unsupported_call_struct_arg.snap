@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86_error(\"backend/x86_unsupported_call_struct_arg.lex\").join(\"\\n\")"
-snapshot_kind: text
 ---
   x x86 backend does not support register-pair aggregate ABI values yet: Point
    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:6:4]
@@ -19,6 +18,15 @@ snapshot_kind: text
     :    ^^|^
     :      `-- here
  10 |     return get_x(point);
+    `----
+
+  x x86 backend does not support non-integer aggregate ABI values yet: Point
+    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:10:12]
+  9 | fn main(point: Point) -> i32 {
+ 10 |     return get_x(point);
+    :            ^^^^^^|^^^^^
+    :                  `-- here
+ 11 | }
     `----
 
   x x86 backend does not support register-pair aggregate ABI values yet: Point

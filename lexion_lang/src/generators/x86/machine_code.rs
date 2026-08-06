@@ -224,13 +224,24 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
                     if self.operand_is_aggregate(context.name, value) {
-                        self.load_aggregate_operand(
-                            assembler,
-                            slots,
-                            context.name,
-                            value,
-                            asm_register64(context.return_register),
-                        )?;
+                        if let Some((low, high)) = self.function_return_pair(context.name) {
+                            self.load_aggregate_pair(
+                                assembler,
+                                slots,
+                                context.name,
+                                value,
+                                low,
+                                high,
+                            )?;
+                        } else {
+                            self.load_aggregate_operand(
+                                assembler,
+                                slots,
+                                context.name,
+                                value,
+                                asm_register64(context.return_register),
+                            )?;
+                        }
                     } else if self.operand_is_reference(context.name, value) {
                         load_reference_operand(
                             assembler,
@@ -545,7 +556,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .zip(locations.iter())
             .zip(signature.params.iter())
         {
-            if let Some(register) = outgoing_register(location) {
+            if let Some((low, high)) = register_pair(location) {
+                self.load_aggregate_pair(assembler, slots, function, param, low, high)?;
+            } else if let Some(register) = outgoing_register(location) {
                 if is_xmm_register(register) {
                     load_float_operand(assembler, slots, param, asm_register_xmm(register))?;
                 } else if self.type_is_reference(*ty) {
@@ -573,13 +586,24 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
             if self.operand_is_aggregate(function, return_target) {
-                self.store_aggregate_operand(
-                    assembler,
-                    slots,
-                    function,
-                    return_target,
-                    asm_register64(register),
-                )?;
+                if let Some((low, high)) = self.function_call_return_pair(inst) {
+                    self.store_aggregate_pair(
+                        assembler,
+                        slots,
+                        function,
+                        return_target,
+                        low,
+                        high,
+                    )?;
+                } else {
+                    self.store_aggregate_operand(
+                        assembler,
+                        slots,
+                        function,
+                        return_target,
+                        asm_register64(register),
+                    )?;
+                }
             } else if self.operand_is_reference(function, return_target) {
                 store_reference_operand(assembler, slots, return_target, asm_register64(register))?;
             } else if self.operand_is_f32(function, return_target) {
@@ -623,7 +647,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         assembler.movss(dword_ptr(rbp - *offset as i32), xmm15)?;
                     }
                 } else if self.type_is_aggregate(*ty) {
-                    if let Some(register) = outgoing_register(location) {
+                    if let Some((low, high)) = register_pair(location) {
+                        self.store_aggregate_pair(
+                            assembler,
+                            slots,
+                            &self.cfg[range.start].label,
+                            &Operand::Variable(param.clone()),
+                            low,
+                            high,
+                        )?;
+                    } else if let Some(register) = outgoing_register(location) {
                         self.store_aggregate_operand(
                             assembler,
                             slots,
@@ -1145,6 +1178,86 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         assembler.add(rsp, 8)
     }
 
+    fn load_aggregate_pair(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        low: Register,
+        high: Register,
+    ) -> Result<(), IcedError> {
+        let ty = self.operand_type(function, operand).unwrap();
+        let mut member_ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut member_ranges);
+        let low_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let end = (*offset + *size).min(8);
+                (*offset < end).then(|| (*offset, end - *offset))
+            })
+            .collect::<Vec<_>>();
+        let high_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let start = (*offset).max(8);
+                let end = (*offset + *size).min(16);
+                (start < end).then(|| (start - 8, end - start))
+            })
+            .collect::<Vec<_>>();
+
+        // This materialization uses RAX as scratch, so load RDX before the RAX half.
+        self.load_aggregate_operand_part(assembler, slots, operand, 8, &high_ranges, high)?;
+        self.load_aggregate_operand_part(assembler, slots, operand, 0, &low_ranges, low)
+    }
+
+    fn load_aggregate_operand_part(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        source_offset: usize,
+        member_ranges: &[(usize, usize)],
+        register: Register,
+    ) -> Result<(), IcedError> {
+        assembler.sub(rsp, 8)?;
+        assembler.xor(rax, rax)?;
+        assembler.mov(qword_ptr(rsp), rax)?;
+        for (member_offset, size) in member_ranges {
+            for offset in (0..*size).step_by(4) {
+                let width = (*size - offset).min(4);
+                if width == 4 {
+                    assembler.mov(
+                        eax,
+                        aggregate_stack_value(
+                            slots,
+                            operand,
+                            source_offset + member_offset + offset,
+                        ),
+                    )?;
+                    assembler.mov(dword_ptr(rsp + (member_offset + offset) as i32), eax)?;
+                } else {
+                    for byte in 0..width {
+                        assembler.movzx(
+                            eax,
+                            byte_ptr(
+                                rbp - aggregate_stack_offset(
+                                    slots,
+                                    operand,
+                                    source_offset + member_offset + offset + byte,
+                                ),
+                            ),
+                        )?;
+                        assembler
+                            .mov(byte_ptr(rsp + (member_offset + offset + byte) as i32), al)?;
+                    }
+                }
+            }
+        }
+        assembler.mov(asm_register64(register), qword_ptr(rsp))?;
+        assembler.add(rsp, 8)
+    }
+
     fn store_aggregate_operand(
         &self,
         assembler: &mut CodeAssembler,
@@ -1165,6 +1278,58 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     assembler.mov(al, byte_ptr(rsp + (offset + byte) as i32))?;
                     assembler.mov(
                         byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                        al,
+                    )?;
+                }
+            }
+        }
+        assembler.add(rsp, 8)
+    }
+
+    fn store_aggregate_pair(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        low: Register,
+        high: Register,
+    ) -> Result<(), IcedError> {
+        self.store_aggregate_operand_part(assembler, slots, function, operand, (0, 8), low)?;
+        let size = self.aggregate_size(function, operand).unwrap_or(8);
+        self.store_aggregate_operand_part(assembler, slots, function, operand, (8, size - 8), high)
+    }
+
+    fn store_aggregate_operand_part(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        _function: &str,
+        operand: &Operand,
+        range: (usize, usize),
+        register: Register,
+    ) -> Result<(), IcedError> {
+        let (offset, size) = range;
+        assembler.push(asm_register64(register))?;
+        for part_offset in (0..size).step_by(4) {
+            let width = (size - part_offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, dword_ptr(rsp + part_offset as i32))?;
+                assembler.mov(
+                    aggregate_stack_value(slots, operand, offset + part_offset),
+                    eax,
+                )?;
+            } else {
+                for byte in 0..width {
+                    assembler.mov(al, byte_ptr(rsp + (part_offset + byte) as i32))?;
+                    assembler.mov(
+                        byte_ptr(
+                            rbp - aggregate_stack_offset(
+                                slots,
+                                operand,
+                                offset + part_offset + byte,
+                            ),
+                        ),
                         al,
                     )?;
                 }
@@ -1436,12 +1601,17 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> Option<String> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
-                && (location.is_none() || matches!(location, Some(Location::Register(_))))
+                && (location.is_none()
+                    || matches!(location, Some(Location::Register(_)))
+                    || location.and_then(register_pair).is_some())
         {
             return None;
         }
         let detail = match location {
-            Some(Location::Pair { .. }) => "register-pair aggregate ABI values",
+            Some(Location::Pair { .. }) if location.and_then(register_pair).is_some() => {
+                "register-pair aggregate ABI values"
+            }
+            Some(Location::Pair { .. }) => "stack-passed aggregate ABI values",
             Some(Location::Stack(_) | Location::RegisterAndStack(_, _)) => {
                 "stack-passed aggregate ABI values"
             }
@@ -1629,6 +1799,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .and_then(outgoing_register)
     }
 
+    fn function_return_pair(&self, function: &str) -> Option<(Register, Register)> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
+    }
+
     fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
         let signature = self.function_call_signature(inst)?;
         self.target
@@ -1636,6 +1815,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(outgoing_register)
+    }
+
+    fn function_call_return_pair(
+        &self,
+        inst: &FunctionCallInstruction,
+    ) -> Option<(Register, Register)> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
     }
 }
 
@@ -1998,6 +2189,13 @@ fn outgoing_register(location: &Location) -> Option<Register> {
         | Location::Indirect { .. }
         | Location::Pair { .. } => None,
     }
+}
+
+fn register_pair(location: &Location) -> Option<(Register, Register)> {
+    let Location::Pair { low, high } = location else {
+        return None;
+    };
+    Some((outgoing_register(low)?, outgoing_register(high)?))
 }
 
 fn stack_offset(location: &Location) -> Option<usize> {
