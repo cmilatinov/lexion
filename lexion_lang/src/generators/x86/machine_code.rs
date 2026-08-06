@@ -329,7 +329,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     } else if self.function_returns_function(context.name) {
                         load_function_operand(
                             assembler,
-                            labels,
+                            labels.blocks,
                             slots,
                             value,
                             asm_register64(context.return_register),
@@ -1912,7 +1912,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_parameter_message(*ty)
+                self.unsupported_string_abi_message(*ty)
                     .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
                     .or_else(|| self.unsupported_type_message(*ty))
             })
@@ -1945,9 +1945,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_parameter_message(*ty)
+                self.unsupported_string_abi_message(*ty)
                     .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
             })
+            .or_else(|| self.unsupported_string_abi_message(signature.return_type))
             .or_else(|| {
                 self.unsupported_aggregate_type_message(
                     signature.return_type,
@@ -2016,7 +2017,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
-    fn unsupported_string_parameter_message(&self, ty: Index) -> Option<String> {
+    fn unsupported_string_abi_message(&self, ty: Index) -> Option<String> {
         self.type_is_string_reference(ty).then(|| {
             format!(
                 "x86 machine-code backend does not support string values yet: {}",
