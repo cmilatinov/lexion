@@ -837,6 +837,7 @@ impl<'a> CodeGeneratorTac<'a> {
         } else {
             None
         };
+        let function = self.expr(expr);
         let args = args
             .iter()
             .map(|arg| self.expr(arg))
@@ -845,7 +846,6 @@ impl<'a> CodeGeneratorTac<'a> {
         for arg in args {
             self.param(arg, Some(*span));
         }
-        let function = self.expr(expr);
         let target = match function {
             Operand::Label(name) => FunctionCallTarget::Direct(name),
             operand => FunctionCallTarget::Indirect(operand),

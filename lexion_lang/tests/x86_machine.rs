@@ -437,3 +437,10 @@ fn x86_machine_code_function_values() {
 
     insta::assert_snapshot!(machine_snapshot(&code));
 }
+
+#[test]
+fn x86_machine_code_function_value_returns() {
+    let code = compile_machine_code("backend/x86_function_value_returns.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}

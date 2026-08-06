@@ -811,6 +811,16 @@ FunctionType -> 'fn' '(' TypeList ')' '->' Type
         })
     ).into();
 }} ;
+FunctionType -> 'fn' '(' ')' '->' Type
+[Sourced<Type>] {{
+    $$ = (
+        SpanBuilder::merge($1.span, $5.span),
+        Type::Function(FunctionType {
+            params: vec![],
+            return_type: Box::new($5),
+        })
+    ).into();
+}} ;
 
 TypeList -> TypeList ',' Type 
 [Vec<Sourced<Type>>] {{

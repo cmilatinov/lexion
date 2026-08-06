@@ -1,0 +1,97 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_function_value_returns.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global make_adder
+make_adder:
+# fn make_adder() -> fn(i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return add_one;
+  lea rax, [add_one]
+  pop rbp
+  ret
+.global zero
+zero:
+# fn zero() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return 0;
+  mov eax, 0
+  pop rbp
+  ret
+.global apply_zero
+apply_zero:
+# fn apply_zero(callback: fn() -> i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov QWORD PTR [rbp-8], rdi
+#     return callback();
+  mov rax, QWORD PTR [rbp-8]
+  call rax
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  sub rsp, 32
+#     let callback = make_adder();
+  sub rsp, 8
+  call make_adder
+  add rsp, 8
+  mov rbx, rax
+#     return make_adder()(4) + callback(1) + apply_zero(zero);
+  sub rsp, 8
+  call make_adder
+  add rsp, 8
+  mov QWORD PTR [rbp-16], rax
+  mov eax, 4
+  push rax
+  pop rdi
+  sub rsp, 8
+  mov rax, QWORD PTR [rbp-16]
+  call rax
+  add rsp, 8
+  mov DWORD PTR [rbp-24], eax
+  mov eax, 1
+  push rax
+  pop rdi
+  sub rsp, 8
+  mov rax, rbx
+  call rax
+  add rsp, 8
+  mov ebx, DWORD PTR [rbp-24]
+  add ebx, eax
+  lea rax, [zero]
+  push rax
+  pop rdi
+  sub rsp, 8
+  call apply_zero
+  add rsp, 8
+  push rax
+  mov eax, ebx
+  add eax, DWORD PTR [rsp]
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-32]
+  add rsp, 32
+  pop rbx
+  pop rbp
+  ret

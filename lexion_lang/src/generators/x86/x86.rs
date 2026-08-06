@@ -398,6 +398,8 @@ impl<'a> CodeGeneratorX86<'a> {
                                 return_register,
                             );
                         }
+                    } else if self.function_returns_function(function) {
+                        load_function_operand(lines, frame, location, value, return_register);
                     } else if self.operand_is_reference(function, value) {
                         load_reference_operand(lines, frame, location, value, return_register);
                     } else if self.operand_is_f32(function, value) {
@@ -1211,6 +1213,11 @@ impl<'a> CodeGeneratorX86<'a> {
             .and_then(register_pair)
     }
 
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
+    }
+
     fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
         let signature = self.function_signature(function)?;
         match self
@@ -1692,7 +1699,9 @@ impl<'a> CodeGeneratorX86<'a> {
                         return_register,
                     );
                 }
-            } else if self.operand_is_reference(function, return_target) {
+            } else if self.operand_is_reference(function, return_target)
+                || self.operand_is_function(function, return_target)
+            {
                 store_reference_operand(lines, frame, location, return_target, return_register);
             } else if self.operand_is_f32(function, return_target) {
                 store_float_operand(lines, frame, location, return_target, return_register);

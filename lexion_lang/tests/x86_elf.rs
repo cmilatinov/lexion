@@ -230,6 +230,19 @@ fn x86_elf_executable_supports_function_values() {
 }
 
 #[test]
+fn x86_elf_executable_supports_function_value_returns() {
+    let executable = compile_elf("backend/x86_function_value_returns.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("make_adder"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
 fn x86_elf_reports_unsupported_extern_calls() {
     insta::assert_snapshot!(compile_elf_error("backend/x86_unsupported_extern_call.lex").join("\n"));
 }

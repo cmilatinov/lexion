@@ -1522,6 +1522,20 @@
       }
     },
     {
+      "left": "FunctionType",
+      "right": [
+        "'fn'",
+        "'('",
+        "')'",
+        "'->'",
+        "Type"
+      ],
+      "reduction": {
+        "ty": "Sourced<Type>",
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $5.span),\n        Type::Function(FunctionType {\n            params: vec![],\n            return_type: Box::new($5),\n        })\n    ).into();"
+      }
+    },
+    {
       "left": "TypeList",
       "right": [
         "TypeList",
