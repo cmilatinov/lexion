@@ -20,15 +20,6 @@ snapshot_kind: text
  5 |     return first(value);
    `----
 
-  x x86 backend does not support non-integer aggregate ABI values yet: (i32, bool, i32)
-   ,-[tests/fixtures/backend/x86_unsupported_call_tuple_arg.lex:5:12]
- 4 | fn main(value: (i32, bool, i32)) -> i32 {
- 5 |     return first(value);
-   :            ^^^^^^|^^^^^
-   :                  `-- here
- 6 | }
-   `----
-
   x x86 backend does not support register-pair aggregate ABI values yet: (i32, bool, i32)
    ,-[tests/fixtures/backend/x86_unsupported_call_tuple_arg.lex:5:12]
  4 | fn main(value: (i32, bool, i32)) -> i32 {

@@ -991,18 +991,17 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn aggregate_is_integer_only(&self, ty: Index) -> bool {
         let ty = self.types.canonicalize(ty);
-        self.types.size_align(ty, Bitness::_64).size <= 8
-            && match self.types.get(ty) {
-                Some(Type::TupleType(tuple)) => tuple
-                    .types
-                    .iter()
-                    .all(|ty| self.aggregate_member_is_integer_like(*ty)),
-                Some(Type::StructType(struct_)) => struct_
-                    .members
-                    .iter()
-                    .all(|member| self.aggregate_member_is_integer_like(member.ty)),
-                _ => false,
-            }
+        match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple
+                .types
+                .iter()
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
+            Some(Type::StructType(struct_)) => struct_
+                .members
+                .iter()
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
+            _ => false,
+        }
     }
 
     fn aggregate_member_is_integer_like(&self, ty: Index) -> bool {

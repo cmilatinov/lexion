@@ -21,15 +21,6 @@ snapshot_kind: text
  10 |     return get_x(point);
     `----
 
-  x x86 backend does not support non-integer aggregate ABI values yet: Point
-    ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:10:12]
-  9 | fn main(point: Point) -> i32 {
- 10 |     return get_x(point);
-    :            ^^^^^^|^^^^^
-    :                  `-- here
- 11 | }
-    `----
-
   x x86 backend does not support register-pair aggregate ABI values yet: Point
     ,-[tests/fixtures/backend/x86_unsupported_call_struct_arg.lex:10:12]
   9 | fn main(point: Point) -> i32 {

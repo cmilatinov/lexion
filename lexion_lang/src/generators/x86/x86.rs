@@ -700,9 +700,6 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn aggregate_is_integer_only(&self, ty: Index) -> bool {
         let ty = self.types.canonicalize(ty);
-        if self.types.size_align(ty, Bitness::_64).size > 8 {
-            return false;
-        }
         match self.types.get(ty) {
             Some(Type::TupleType(tuple)) => tuple
                 .types
