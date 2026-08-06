@@ -1078,6 +1078,29 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .map(|ty| self.types.size_align(ty, Bitness::_64).size)
     }
 
+    fn aggregate_member_ranges(
+        &self,
+        ty: Index,
+        base_offset: usize,
+        ranges: &mut Vec<(usize, usize)>,
+    ) {
+        let ty = self.types.canonicalize(ty);
+        let members = match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple.types.to_vec(),
+            Some(Type::StructType(struct_)) => {
+                struct_.members.iter().map(|member| member.ty).collect()
+            }
+            _ => {
+                ranges.push((base_offset, self.types.size_align(ty, Bitness::_64).size));
+                return;
+            }
+        };
+        let layout = self.types.memory_layout(ty).unwrap();
+        for (member, member_layout) in members.iter().zip(layout.members()) {
+            self.aggregate_member_ranges(*member, base_offset + member_layout.offset, ranges);
+        }
+    }
+
     fn load_aggregate_operand(
         &self,
         assembler: &mut CodeAssembler,
@@ -1086,22 +1109,36 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         operand: &Operand,
         register: AsmRegister64,
     ) -> Result<(), IcedError> {
-        let size = self.aggregate_size(function, operand).unwrap_or(8);
+        let ty = self.operand_type(function, operand).unwrap();
+        let mut ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut ranges);
         assembler.sub(rsp, 8)?;
         assembler.xor(rax, rax)?;
         assembler.mov(qword_ptr(rsp), rax)?;
-        for offset in (0..size).step_by(4) {
-            let width = (size - offset).min(4);
-            if width == 4 {
-                assembler.mov(eax, aggregate_stack_value(slots, operand, offset))?;
-                assembler.mov(dword_ptr(rsp + offset as i32), eax)?;
-            } else {
-                for byte in 0..width {
-                    assembler.movzx(
+        for (member_offset, size) in ranges {
+            for offset in (0..size).step_by(4) {
+                let width = (size - offset).min(4);
+                if width == 4 {
+                    assembler.mov(
                         eax,
-                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                        aggregate_stack_value(slots, operand, member_offset + offset),
                     )?;
-                    assembler.mov(byte_ptr(rsp + (offset + byte) as i32), al)?;
+                    assembler.mov(dword_ptr(rsp + (member_offset + offset) as i32), eax)?;
+                } else {
+                    for byte in 0..width {
+                        assembler.movzx(
+                            eax,
+                            byte_ptr(
+                                rbp - aggregate_stack_offset(
+                                    slots,
+                                    operand,
+                                    member_offset + offset + byte,
+                                ),
+                            ),
+                        )?;
+                        assembler
+                            .mov(byte_ptr(rsp + (member_offset + offset + byte) as i32), al)?;
+                    }
                 }
             }
         }

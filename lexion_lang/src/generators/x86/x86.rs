@@ -1785,6 +1785,29 @@ impl<'a> CodeGeneratorX86<'a> {
             .map(|ty| self.types.size_align(ty, Bitness::_64).size)
     }
 
+    fn aggregate_member_ranges(
+        &self,
+        ty: Index,
+        base_offset: usize,
+        ranges: &mut Vec<(usize, usize)>,
+    ) {
+        let ty = self.types.canonicalize(ty);
+        let members = match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple.types.to_vec(),
+            Some(Type::StructType(struct_)) => {
+                struct_.members.iter().map(|member| member.ty).collect()
+            }
+            _ => {
+                ranges.push((base_offset, self.types.size_align(ty, Bitness::_64).size));
+                return;
+            }
+        };
+        let layout = self.types.memory_layout(ty).unwrap();
+        for (member, member_layout) in members.iter().zip(layout.members()) {
+            self.aggregate_member_ranges(*member, base_offset + member_layout.offset, ranges);
+        }
+    }
+
     fn load_aggregate_operand(
         &self,
         lines: &mut Vec<String>,
@@ -1797,10 +1820,12 @@ impl<'a> CodeGeneratorX86<'a> {
         let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
             return;
         };
-        let Some(size) = self.aggregate_size(function, operand) else {
+        let Some(ty) = self.operand_type(function, operand) else {
             return;
         };
-        load_aggregate_register(lines, &source, register, size);
+        let mut ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut ranges);
+        load_aggregate_register(lines, &source, register, &ranges);
     }
 
     fn store_aggregate_from_register(
@@ -2475,11 +2500,23 @@ fn emit_memory_copy(lines: &mut Vec<String>, source: &str, destination: &str, si
     }
 }
 
-/// Materialize exactly the aggregate's bytes while leaving ABI padding zeroed.
-fn load_aggregate_register(lines: &mut Vec<String>, source: &str, register: Register, size: usize) {
+/// Materialize initialized aggregate members while leaving ABI padding zeroed.
+fn load_aggregate_register(
+    lines: &mut Vec<String>,
+    source: &str,
+    register: Register,
+    member_ranges: &[(usize, usize)],
+) {
     lines.push(String::from("  sub rsp, 8"));
     lines.push(String::from("  mov QWORD PTR [rsp], 0"));
-    emit_memory_copy(lines, source, "[rsp]", size);
+    for (offset, size) in member_ranges {
+        emit_memory_copy(
+            lines,
+            &offset_assembly_operand(source, *offset),
+            &offset_assembly_operand("[rsp]", *offset),
+            *size,
+        );
+    }
     lines.push(format!(
         "  mov {}, QWORD PTR [rsp]",
         register_name(register)

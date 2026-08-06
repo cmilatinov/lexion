@@ -211,6 +211,13 @@ fn x86_machine_code_one_eightbyte_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_machine_code_one_eightbyte_aggregate_abi_padding() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_aggregate_abi_padding.lex"
+    )));
+}
+
+#[test]
 fn x86_machine_code_nested_reference_aggregate_abi_values() {
     compile_machine_code("backend/x86_nested_reference_aggregate_abi.lex");
 }
