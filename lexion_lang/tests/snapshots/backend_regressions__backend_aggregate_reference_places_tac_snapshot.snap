@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/backend_regressions.rs
 expression: tac_snapshot(&cfg)
-snapshot_kind: text
 ---
 main:
   fn main
@@ -11,6 +10,7 @@ main:
   value = $t1
   $t2 = borrow value
   reference = $t2
+  live = 10
   $t3 = load *reference
   copy = $t3
   store 4 -> $t4.first
@@ -20,9 +20,10 @@ main:
   $t5 = load *reference
   loaded = $t5
   $t6 = load copy.first
-  $t7 = load loaded.second
-  $t8 = $t6 + $t7
-  $t9 = load loaded.third
-  $t10 = $t8 + $t9
-  return $t10
+  $t7 = live + $t6
+  $t8 = load loaded.second
+  $t9 = $t7 + $t8
+  $t10 = load loaded.third
+  $t11 = $t9 + $t10
+  return $t11
   endfn main

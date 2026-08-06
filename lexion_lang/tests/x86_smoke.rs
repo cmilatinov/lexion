@@ -386,6 +386,19 @@ fn x86_smoke_aggregate_reference_places() {
 }
 
 #[test]
+fn x86_aggregate_reference_copies_preserve_allocated_rax() {
+    let assembly = compile_x86("backend/x86_aggregate_reference_places.lex");
+
+    assert!(
+        assembly
+            .matches("push rax\n  mov rdx, QWORD PTR [rbp-104]")
+            .count()
+            >= 2,
+        "aggregate reference copies did not preserve an allocated RAX:\n{assembly}"
+    );
+}
+
+#[test]
 fn x86_smoke_function_scoped_symbol_types() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_scoped_symbols.lex"));
 }

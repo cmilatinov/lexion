@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/compiler_emit.rs
 expression: assembly.as_str()
-snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text

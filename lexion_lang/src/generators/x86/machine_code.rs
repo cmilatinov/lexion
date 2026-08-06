@@ -2047,6 +2047,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .and_then(outgoing_register)
     }
 
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
+    }
+
     fn function_return_pair(&self, function: &str) -> Option<(Register, Register)> {
         let signature = self.function_signature(function)?;
         self.target
@@ -2054,11 +2059,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(register_pair)
-    }
-
-    fn function_returns_function(&self, function: &str) -> bool {
-        self.function_signature(function)
-            .is_some_and(|signature| self.type_is_function(signature.return_type))
     }
 
     fn function_return_indirect_size(&self, function: &str) -> Option<usize> {

@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86(\"backend/x86_aggregate_reference_places.lex\")"
-snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
@@ -29,7 +28,10 @@ main:
   mov QWORD PTR [rbp-32], rax
   mov rax, QWORD PTR [rbp-32]
   mov QWORD PTR [rbp-104], rax
+#     let live = 10;
+  mov eax, 10
 #     let copy = *reference;
+  push rax
   mov rdx, QWORD PTR [rbp-104]
   mov eax, DWORD PTR [rdx]
   mov DWORD PTR [rbp-44], eax
@@ -37,19 +39,29 @@ main:
   mov DWORD PTR [rbp-44+4], eax
   mov eax, DWORD PTR [rdx+8]
   mov DWORD PTR [rbp-44+8], eax
+  pop rax
+  push rax
   mov eax, DWORD PTR [rbp-44]
   mov DWORD PTR [rbp-80], eax
   mov eax, DWORD PTR [rbp-44+4]
   mov DWORD PTR [rbp-80+4], eax
   mov eax, DWORD PTR [rbp-44+8]
   mov DWORD PTR [rbp-80+8], eax
+  pop rax
 #     *reference = Triple { first: 4, second: 5, third: 6 };
+  push rax
   mov eax, 4
   mov DWORD PTR [rbp-56], eax
+  pop rax
+  push rax
   mov eax, 5
   mov DWORD PTR [rbp-52], eax
+  pop rax
+  push rax
   mov eax, 6
   mov DWORD PTR [rbp-48], eax
+  pop rax
+  push rax
   mov rdx, QWORD PTR [rbp-104]
   mov eax, DWORD PTR [rbp-56]
   mov DWORD PTR [rdx], eax
@@ -57,7 +69,9 @@ main:
   mov DWORD PTR [rdx+4], eax
   mov eax, DWORD PTR [rbp-56+8]
   mov DWORD PTR [rdx+8], eax
+  pop rax
 #     let loaded = *reference;
+  push rax
   mov rdx, QWORD PTR [rbp-104]
   mov eax, DWORD PTR [rdx]
   mov DWORD PTR [rbp-68], eax
@@ -65,20 +79,25 @@ main:
   mov DWORD PTR [rbp-68+4], eax
   mov eax, DWORD PTR [rdx+8]
   mov DWORD PTR [rbp-68+8], eax
+  pop rax
+  push rax
   mov eax, DWORD PTR [rbp-68]
   mov DWORD PTR [rbp-92], eax
   mov eax, DWORD PTR [rbp-68+4]
   mov DWORD PTR [rbp-92+4], eax
   mov eax, DWORD PTR [rbp-68+8]
   mov DWORD PTR [rbp-92+8], eax
-#     return copy.first + loaded.second + loaded.third;
-  mov eax, DWORD PTR [rbp-80]
-  mov esi, DWORD PTR [rbp-88]
+  pop rax
+#     return live + copy.first + loaded.second + loaded.third;
+  mov edi, DWORD PTR [rbp-80]
   mov edx, eax
-  add edx, esi
+  add edx, edi
+  mov eax, DWORD PTR [rbp-88]
+  mov edi, edx
+  add edi, eax
   mov eax, DWORD PTR [rbp-84]
   mov DWORD PTR [rbp-8], eax
-  mov eax, edx
+  mov eax, edi
   add eax, DWORD PTR [rbp-8]
   add rsp, 128
   pop rbp

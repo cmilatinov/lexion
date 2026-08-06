@@ -7,8 +7,9 @@ struct Triple {
 fn main() -> i32 {
     let value = Triple { first: 1, second: 2, third: 3 };
     let reference = &value;
+    let live = 10;
     let copy = *reference;
     *reference = Triple { first: 4, second: 5, third: 6 };
     let loaded = *reference;
-    return copy.first + loaded.second + loaded.third;
+    return live + copy.first + loaded.second + loaded.third;
 }
