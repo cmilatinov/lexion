@@ -381,6 +381,11 @@ fn x86_smoke_function_value_returns() {
 }
 
 #[test]
+fn x86_smoke_function_value_members() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_value_members.lex"));
+}
+
+#[test]
 fn x86_smoke_system_v_function_call() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_call.lex"));
 }

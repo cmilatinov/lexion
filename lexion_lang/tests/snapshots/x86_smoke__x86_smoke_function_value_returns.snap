@@ -90,6 +90,7 @@ main:
   mov eax, ebx
   add eax, DWORD PTR [rsp]
   add rsp, 8
+  mov DWORD PTR [rbp-32], eax
   mov eax, DWORD PTR [rbp-32]
   add rsp, 32
   pop rbx

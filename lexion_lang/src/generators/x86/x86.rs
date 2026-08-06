@@ -602,7 +602,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     restore_register(lines, Register::RAX, preserved);
                     return;
                 }
-                if self.type_is_reference(ty) {
+                if self.type_is_reference(ty) || self.type_is_function(ty) {
                     let preserved = preserve_register(lines, frame, location, Register::RAX);
                     lines.push(format!("  mov rax, QWORD PTR {operand}"));
                     store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
@@ -669,9 +669,13 @@ impl<'a> CodeGeneratorX86<'a> {
                     let preserved = preserve_register(lines, frame, location, Register::RAX);
                     emit_memory_copy(lines, &source, &operand, size);
                     restore_register(lines, Register::RAX, preserved);
-                } else if self.type_is_reference(ty) {
+                } else if self.type_is_reference(ty) || self.type_is_function(ty) {
                     let preserved = preserve_register(lines, frame, location, Register::RAX);
-                    load_reference_operand(lines, frame, location, &inst.value, Register::RAX);
+                    if self.type_is_function(ty) {
+                        load_function_operand(lines, frame, location, &inst.value, Register::RAX);
+                    } else {
+                        load_reference_operand(lines, frame, location, &inst.value, Register::RAX);
+                    }
                     lines.push(format!("  mov QWORD PTR {operand}, rax"));
                     restore_register(lines, Register::RAX, preserved);
                 } else if is_f32_type(self.types, ty) {
@@ -884,7 +888,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     | PrimitiveType::BOOL
                     | PrimitiveType::CHAR
             ))
-        ) || (self.type_is_reference(ty) && self.types.size_align(ty, Bitness::_64).size == 8)
+        ) || ((self.type_is_reference(ty) || self.type_is_function(ty))
+            && self.types.size_align(ty, Bitness::_64).size == 8)
             || self.type_is_aggregate(ty)))
         .then(|| {
             format!(
@@ -3007,7 +3012,7 @@ fn emit_indexed_call_arguments(
     }
     lines.push(format!("  sub rsp, {outgoing_bytes}"));
     for (index, location) in arg_locations.iter().enumerate() {
-        let Some(offset) = stack_argument_offset(location) else {
+        let Some(offset) = stack_location_offset(location) else {
             continue;
         };
         let source_offset =

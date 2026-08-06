@@ -1,0 +1,47 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "machine_snapshot(&compile_machine_code(\"backend/x86_function_value_members.lex\"))"
+snapshot_kind: text
+---
+symbols:
+add_one=0x0000
+main=0x001E
+
+bytes:
+55 48 89 E5 48 83 EC 10 89 7D F8 8B 45 F8 05 01 00 00 00 89 45 FC 8B 45 FC 48 89 EC 5D C3 55 48 89 E5 48 83 EC 20 48 8D 05 D3 FF FF FF 48 89 45 F8 8B 45 F8 89 45 E0 8B 45 FC 89 45 E4 48 8D 05 BC FF FF FF 48 89 45 E0 48 8B 45 E0 48 89 45 E8 BF 04 00 00 00 48 8B 45 E8 FF D0 89 45 F4 8B 45 F4 48 89 EC 5D C3
+
+disassembly:
+add_one:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov [rbp-8],edi
+000B: mov eax,[rbp-8]
+000E: add eax,1
+0013: mov [rbp-4],eax
+0016: mov eax,[rbp-4]
+0019: mov rsp,rbp
+001C: pop rbp
+001D: ret
+main:
+001E: push rbp
+001F: mov rbp,rsp
+0022: sub rsp,20h
+0026: lea rax,[0]
+002D: mov [rbp-8],rax
+0031: mov eax,[rbp-8]
+0034: mov [rbp-20h],eax
+0037: mov eax,[rbp-4]
+003A: mov [rbp-1Ch],eax
+003D: lea rax,[0]
+0044: mov [rbp-20h],rax
+0048: mov rax,[rbp-20h]
+004C: mov [rbp-18h],rax
+0050: mov edi,4
+0055: mov rax,[rbp-18h]
+0059: call rax <add_one>
+005B: mov [rbp-0Ch],eax
+005E: mov eax,[rbp-0Ch]
+0061: mov rsp,rbp
+0064: pop rbp
+0065: ret

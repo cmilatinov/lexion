@@ -197,7 +197,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::Store(inst) => {
-                self.emit_store(assembler, slots, context.name, inst)?;
+                self.emit_store(assembler, labels, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Assignment(inst) => {
@@ -1010,7 +1010,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         size,
                     );
                 }
-                if self.type_is_reference(ty) {
+                if self.type_is_reference(ty) || self.type_is_function(ty) {
                     assembler.mov(
                         rax,
                         qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
@@ -1040,6 +1040,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_store(
         &self,
         assembler: &mut CodeAssembler,
+        labels: &HashMap<String, CodeLabel>,
         slots: &BTreeMap<String, usize>,
         function: &str,
         inst: &crate::generators::tac::instructions::StoreInstruction,
@@ -1070,8 +1071,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         (&base, offset),
                         size,
                     )
-                } else if self.type_is_reference(ty) {
-                    load_reference_operand(assembler, slots, &inst.value, rax)?;
+                } else if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    if self.type_is_function(ty) {
+                        load_function_operand(assembler, labels, slots, &inst.value, rax)?;
+                    } else {
+                        load_reference_operand(assembler, slots, &inst.value, rax)?;
+                    }
                     assembler.mov(
                         qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
                         rax,
@@ -1584,7 +1589,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     | PrimitiveType::BOOL
                     | PrimitiveType::CHAR
             ))
-        ) || (self.type_is_reference(ty) && self.types.size_align(ty, Bitness::_64).size == 8)
+        ) || ((self.type_is_reference(ty) || self.type_is_function(ty))
+            && self.types.size_align(ty, Bitness::_64).size == 8)
             || self.type_is_aggregate(ty)))
         .then(|| {
             format!(

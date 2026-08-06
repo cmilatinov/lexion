@@ -444,3 +444,10 @@ fn x86_machine_code_function_value_returns() {
 
     insta::assert_snapshot!(machine_snapshot(&code));
 }
+
+#[test]
+fn x86_machine_code_function_value_members() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_members.lex"
+    )));
+}
