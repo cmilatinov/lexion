@@ -64,22 +64,17 @@ main:
   mov eax, DWORD PTR [rbp-40+12]
   mov DWORD PTR [rbp-104+12], eax
 #     let _returned = identity(padded);
-  sub rsp, 8
+  sub rsp, 16
   mov QWORD PTR [rsp], 0
-  mov eax, DWORD PTR [rbp-104+8]
+  mov QWORD PTR [rsp+8], 0
+  mov eax, DWORD PTR [rbp-104]
   mov DWORD PTR [rsp], eax
-  mov eax, DWORD PTR [rbp-104+8+4]
+  mov eax, DWORD PTR [rbp-104+4]
   mov DWORD PTR [rsp+4], eax
-  mov rdx, QWORD PTR [rsp]
-  add rsp, 8
-  sub rsp, 8
-  mov QWORD PTR [rsp], 0
-  mov al, BYTE PTR [rbp-104]
-  mov BYTE PTR [rsp], al
-  mov rax, QWORD PTR [rsp]
-  add rsp, 8
-  push rdx
-  push rax
+  mov eax, DWORD PTR [rbp-104+8]
+  mov DWORD PTR [rsp+8], eax
+  mov eax, DWORD PTR [rbp-104+12]
+  mov DWORD PTR [rsp+12], eax
   pop rdi
   pop rsi
   call identity

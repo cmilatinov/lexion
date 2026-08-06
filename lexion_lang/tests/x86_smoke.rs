@@ -142,6 +142,11 @@ fn x86_smoke_f32_function_calls() {
 }
 
 #[test]
+fn x86_smoke_indexed_aggregate_stack_call() {
+    insta::assert_snapshot!(compile_x86("backend/x86_indexed_aggregate_stack_call.lex"));
+}
+
+#[test]
 fn x86_smoke_ternary_expression() {
     insta::assert_snapshot!(compile_x86("backend/ternary_expression.lex"));
 }
@@ -381,6 +386,11 @@ fn x86_smoke_stack_function_call() {
 #[test]
 fn x86_smoke_unit_arguments() {
     insta::assert_snapshot!(compile_x86("backend/x86_unit_arguments.lex"));
+}
+
+#[test]
+fn x86_smoke_zero_sized_aggregate_argument() {
+    insta::assert_snapshot!(compile_x86("backend/x86_zero_sized_aggregate_argument.lex"));
 }
 
 #[test]

@@ -59,9 +59,6 @@ main:
   mov DWORD PTR [rsp], eax
   mov eax, DWORD PTR [rbp-32+4]
   mov DWORD PTR [rsp+4], eax
-  mov rax, QWORD PTR [rsp]
-  add rsp, 8
-  push rax
   pop rdi
   call shift
   push rax

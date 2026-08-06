@@ -347,6 +347,22 @@ fn x86_elf_executable_supports_register_pair_aggregate_abi_values() {
     assert!(executable.symbols().contains_key("shift_tuple"));
 }
 
+#[test]
+fn x86_elf_executable_supports_stack_aggregate_arguments() {
+    let executable = compile_elf("backend/x86_stack_aggregate_arguments.lex");
+    assert!(executable.symbols().contains_key("large_after_gprs"));
+    assert!(executable.symbols().contains_key("pair_after_gprs"));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_stack_aggregate_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_stack_aggregate_arguments.lex"),
+        Some(81)
+    );
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn x86_elf_local_aggregate_values_run_on_linux_x86_64() {

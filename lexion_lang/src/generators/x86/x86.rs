@@ -1073,8 +1073,12 @@ impl<'a> CodeGeneratorX86<'a> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
                 && (location.is_none()
-                    || matches!(location, Some(Location::Register(_)))
-                    || location.and_then(register_pair).is_some())
+                    || matches!(
+                        location,
+                        Some(Location::NoStorage | Location::Register(_) | Location::Stack(_))
+                    )
+                    || location.and_then(register_pair).is_some()
+                    || location.and_then(stack_location_offset).is_some())
         {
             return None;
         }
@@ -1269,6 +1273,22 @@ impl<'a> CodeGeneratorX86<'a> {
                 load_operand(lines, frame, location, &inst.right, target_register);
             }
             (Some(left), operators::PLUS) => {
+                if frame
+                    .operand_location(location, &inst.right)
+                    .and_then(AssemblyLocation::register)
+                    == Some(target_register)
+                {
+                    // Preserve a call result before loading the left side into its register.
+                    lines.push(format!("  push {}", register_name(target_register)));
+                    load_operand(lines, frame, location, left, target_register);
+                    lines.push(format!(
+                        "  add {}, DWORD PTR [rsp]",
+                        register_name_32(target_register)
+                    ));
+                    lines.push(String::from("  add rsp, 8"));
+                    store_operand(lines, frame, location, &inst.target, target_register);
+                    return;
+                }
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
                     "  add {}, {}",
@@ -1509,35 +1529,53 @@ impl<'a> CodeGeneratorX86<'a> {
         pending_param_count: usize,
         inst: &FunctionCallInstruction,
     ) {
-        let arg_locations = self
+        let signature = self
             .function_call_signature(inst)
-            .map(|signature| {
-                self.target
-                    .calling_convention()
-                    .assign_args(self.types, 0, signature)
-            })
-            .unwrap_or_default();
+            .expect("function call should reference a checked function signature");
+        let arg_locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
         let arg_locations = &arg_locations[..pending_param_count];
-        let stack_arg_count = arg_locations
+        let arg_types = &signature.params[..pending_param_count];
+        let stack_arg_count = arg_types
             .iter()
-            .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
-            .count();
+            .zip(arg_locations.iter())
+            .filter_map(|(ty, location)| {
+                stack_location_offset(location).map(|offset| {
+                    offset
+                        + self
+                            .types
+                            .size_align(*ty, Bitness::_64)
+                            .size
+                            .div_ceil(STACK_ARG_SLOT_BYTES)
+                })
+            })
+            .max()
+            .unwrap_or(0);
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
-        let staged_arg_count = usize::from(indexed_arguments)
-            * arg_locations
-                .iter()
-                .map(staged_argument_slot_count)
-                .sum::<usize>();
+        let argument_slot_counts = arg_types
+            .iter()
+            .zip(arg_locations.iter())
+            .map(|(ty, location)| self.staged_argument_slot_count(*ty, location))
+            .collect::<Vec<_>>();
+        let staged_arg_count =
+            usize::from(indexed_arguments) * argument_slot_counts.iter().sum::<usize>();
         let stack_padding = frame.call_stack_padding(
             stack_arg_count + staged_arg_count,
             self.target.calling_convention().stack_alignment(),
         );
         if indexed_arguments {
-            emit_indexed_call_arguments(lines, arg_locations, stack_padding);
+            emit_indexed_call_arguments(
+                lines,
+                arg_locations,
+                &argument_slot_counts,
+                stack_arg_count,
+                stack_padding,
+            );
         } else {
             for abi_location in arg_locations {
                 if matches!(abi_location, Location::NoStorage) {
-                    lines.push(format!("  add rsp, {STACK_ARG_SLOT_BYTES}"));
                     continue;
                 }
                 if let Some((low, high)) = register_pair(abi_location) {
@@ -1598,6 +1636,17 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
+    fn staged_argument_slot_count(&self, ty: Index, location: &Location) -> usize {
+        if self.type_is_aggregate(ty) {
+            self.types
+                .size_align(ty, Bitness::_64)
+                .size
+                .div_ceil(STACK_ARG_SLOT_BYTES)
+        } else {
+            staged_argument_slot_count(location)
+        }
+    }
+
     fn emit_parameter(
         &self,
         lines: &mut Vec<String>,
@@ -1607,31 +1656,21 @@ impl<'a> CodeGeneratorX86<'a> {
         operand: &Operand,
     ) {
         if self.operand_is_aggregate(function, operand) {
-            if self
-                .aggregate_size(function, operand)
-                .is_some_and(|size| size > 8)
-            {
-                self.load_aggregate_pair(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    operand,
-                    (Register::RAX, Register::RDX),
-                );
-                lines.push(String::from("  push rdx"));
-                lines.push(String::from("  push rax"));
-            } else {
-                self.load_aggregate_operand(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    operand,
-                    Register::RAX,
-                );
-                lines.push(String::from("  push rax"));
+            let Some(size) = self.aggregate_size(function, operand) else {
+                return;
+            };
+            let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+                return;
+            };
+            let slots = size.div_ceil(STACK_ARG_SLOT_BYTES);
+            lines.push(format!("  sub rsp, {}", slots * STACK_ARG_SLOT_BYTES));
+            for slot in 0..slots {
+                lines.push(format!(
+                    "  mov QWORD PTR {}, 0",
+                    rsp_slot(slot * STACK_ARG_SLOT_BYTES)
+                ));
             }
+            emit_memory_copy(lines, &source, "[rsp]", size);
             return;
         } else if self.operand_is_f32(function, operand) {
             stage_float_parameter(lines, frame, location, operand);
@@ -1752,6 +1791,19 @@ impl<'a> CodeGeneratorX86<'a> {
                         );
                         continue;
                     }
+                    if let (Some(size), Some(offset), Some(destination)) = (
+                        self.aggregate_size(&self.cfg[range.start].label, &parameter),
+                        stack_location_offset(constraint.abi_location()),
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        emit_memory_copy(
+                            lines,
+                            &format!("[rbp+{}]", 16 + offset * STACK_ARG_SLOT_BYTES),
+                            &destination,
+                            size,
+                        );
+                        continue;
+                    }
                 }
                 let Some(source) = incoming_location(constraint.abi_location()) else {
                     continue;
@@ -1770,6 +1822,16 @@ impl<'a> CodeGeneratorX86<'a> {
                         {
                             store_aggregate_register(lines, source, &destination, size);
                         }
+                    } else if let (Some(size), Some(destination)) = (
+                        size,
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        emit_memory_copy(
+                            lines,
+                            &assembly_operand(source).replace("DWORD PTR ", ""),
+                            &destination,
+                            size,
+                        );
                     }
                 } else if self.symbol_is_reference(
                     &self.cfg[range.start].label,
@@ -2738,7 +2800,7 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
 fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
     let mut saw_stack_argument = false;
     arg_locations.iter().any(|location| {
-        if matches!(location, Location::Stack(_)) {
+        if stack_argument_offset(location).is_some() {
             saw_stack_argument = true;
             return false;
         }
@@ -2749,14 +2811,13 @@ fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool
 fn emit_indexed_call_arguments(
     lines: &mut Vec<String>,
     arg_locations: &[Location],
+    argument_slot_counts: &[usize],
+    stack_arg_count: usize,
     stack_padding: usize,
 ) {
     for (index, location) in arg_locations.iter().enumerate() {
-        let source_offset = arg_locations[..index]
-            .iter()
-            .map(staged_argument_slot_count)
-            .sum::<usize>()
-            * STACK_ARG_SLOT_BYTES;
+        let source_offset =
+            argument_slot_counts[..index].iter().sum::<usize>() * STACK_ARG_SLOT_BYTES;
         if let Some((low, high)) = register_pair(location) {
             let low_source = rsp_slot(source_offset);
             let high_source = rsp_slot(source_offset + STACK_ARG_SLOT_BYTES);
@@ -2787,28 +2848,23 @@ fn emit_indexed_call_arguments(
         }
     }
 
-    let stack_arg_count = arg_locations
-        .iter()
-        .filter(|location| matches!(location, Location::Stack(_)))
-        .count();
     let outgoing_bytes = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
     if outgoing_bytes == 0 {
         return;
     }
     lines.push(format!("  sub rsp, {outgoing_bytes}"));
     for (index, location) in arg_locations.iter().enumerate() {
-        let Location::Stack(offset) = location else {
+        let Some(offset) = stack_argument_offset(location) else {
             continue;
         };
-        let source_offset = arg_locations[..index]
-            .iter()
-            .map(staged_argument_slot_count)
-            .sum::<usize>()
-            * STACK_ARG_SLOT_BYTES;
-        let source = rsp_slot(outgoing_bytes + source_offset);
-        let destination = rsp_slot(offset.0 * STACK_ARG_SLOT_BYTES);
-        lines.push(format!("  mov rax, QWORD PTR {source}"));
-        lines.push(format!("  mov QWORD PTR {destination}, rax"));
+        let source_offset =
+            argument_slot_counts[..index].iter().sum::<usize>() * STACK_ARG_SLOT_BYTES;
+        for slot in 0..argument_slot_counts[index] {
+            let source = rsp_slot(outgoing_bytes + source_offset + slot * STACK_ARG_SLOT_BYTES);
+            let destination = rsp_slot((offset + slot) * STACK_ARG_SLOT_BYTES);
+            lines.push(format!("  mov rax, QWORD PTR {source}"));
+            lines.push(format!("  mov QWORD PTR {destination}, rax"));
+        }
     }
 }
 
@@ -3095,6 +3151,25 @@ fn register_pair(location: &Location) -> Option<(Register, Register)> {
         return None;
     };
     Some((outgoing_register(low)?, outgoing_register(high)?))
+}
+
+fn stack_location_offset(location: &Location) -> Option<usize> {
+    match location {
+        Location::Stack(offset) => Some(offset.0),
+        Location::RegisterAndStack(_, offset) => Some(offset.0),
+        Location::Pair { low, .. } => stack_location_offset(low),
+        Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
+    }
+}
+
+fn stack_argument_offset(location: &Location) -> Option<usize> {
+    match location {
+        Location::Stack(_) | Location::Pair { .. } => stack_location_offset(location),
+        Location::NoStorage
+        | Location::Register(_)
+        | Location::RegisterAndStack(_, _)
+        | Location::Indirect { .. } => None,
+    }
 }
 
 fn operand_name(operand: &Operand) -> Option<String> {
