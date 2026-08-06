@@ -36,6 +36,7 @@ pub struct X86MachineCode {
 struct MachineFunctionContext<'a> {
     name: &'a str,
     return_register: Register,
+    indirect_return_slot: Option<usize>,
 }
 
 impl X86MachineCode {
@@ -112,8 +113,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> Result<(), IcedError> {
         let function = self.cfg[range.start].label.as_str();
         let slots = self.stack_slots(range);
+        let indirect_return_slot = self
+            .function_return_indirect_size(function)
+            .map(|_| slots.values().copied().max().unwrap_or(0) + STACK_ARG_SLOT_BYTES);
         let stack_size = align_to(
-            slots.values().copied().max().unwrap_or(0),
+            indirect_return_slot
+                .or_else(|| slots.values().copied().max())
+                .unwrap_or(0),
             self.target.calling_convention().stack_alignment(),
         );
         let return_register = self
@@ -122,12 +128,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let context = MachineFunctionContext {
             name: function,
             return_register,
+            indirect_return_slot,
         };
         self.set_block_label(assembler, labels, self.cfg[range.start].label.as_str())?;
         assembler.push(rbp)?;
         assembler.mov(rbp, rsp)?;
         if stack_size > 0 {
             assembler.sub(rsp, stack_size as i32)?;
+        }
+        if let Some(offset) = indirect_return_slot {
+            assembler.mov(qword_ptr(rbp - offset as i32), rdi)?;
         }
         self.store_function_params(assembler, &slots, range)?;
 
@@ -224,7 +234,17 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
                     if self.operand_is_aggregate(context.name, value) {
-                        if let Some((low, high)) = self.function_return_pair(context.name) {
+                        if let Some(size) = self.function_return_indirect_size(context.name) {
+                            self.emit_indirect_aggregate_return(
+                                assembler,
+                                slots,
+                                value,
+                                size,
+                                context
+                                    .indirect_return_slot
+                                    .expect("missing indirect return slot"),
+                            )?;
+                        } else if let Some((low, high)) = self.function_return_pair(context.name) {
                             self.load_aggregate_pair(
                                 assembler,
                                 slots,
@@ -519,6 +539,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .target
             .calling_convention()
             .assign_args(self.types, 0, signature);
+        let indirect_return = matches!(
+            self.target
+                .calling_convention()
+                .assign_ret(self.types, signature),
+            Some(Location::Indirect { .. })
+        );
         let stack_args = params
             .iter()
             .zip(locations.iter())
@@ -549,6 +575,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             fixed_stack_bytes + stack_padding + stack_arg_slots * STACK_ARG_SLOT_BYTES;
         if reserved_stack_bytes > 0 {
             assembler.sub(rsp, reserved_stack_bytes as i32)?;
+        }
+        if indirect_return {
+            if let Some(return_target) = &inst.return_target {
+                assembler.lea(
+                    rdi,
+                    qword_ptr(rbp - aggregate_stack_offset(slots, return_target, 0)),
+                )?;
+            }
         }
 
         for (param, offset, ty) in &stack_args {
@@ -603,7 +637,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
             if self.operand_is_aggregate(function, return_target) {
-                if let Some((low, high)) = self.function_call_return_pair(inst) {
+                if indirect_return {
+                    // The callee has written directly to the return target and returns it in RAX.
+                } else if let Some((low, high)) = self.function_call_return_pair(inst) {
                     self.store_aggregate_pair(
                         assembler,
                         slots,
@@ -1158,6 +1194,33 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
     }
 
+    fn emit_indirect_aggregate_return(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        size: usize,
+        result_slot: usize,
+    ) -> Result<(), IcedError> {
+        assembler.mov(rax, qword_ptr(rbp - result_slot as i32))?;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(ecx, aggregate_stack_value(slots, operand, offset))?;
+                assembler.mov(dword_ptr(rax + offset as i32), ecx)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(
+                        ecx,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                    )?;
+                    assembler.mov(byte_ptr(rax + (offset + byte) as i32), cl)?;
+                }
+            }
+        }
+        assembler.mov(rax, qword_ptr(rbp - result_slot as i32))
+    }
+
     fn load_aggregate_operand(
         &self,
         assembler: &mut CodeAssembler,
@@ -1689,7 +1752,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
                 && (location.is_none()
-                    || matches!(location, Some(Location::Register(_) | Location::Stack(_)))
+                    || matches!(
+                        location,
+                        Some(
+                            Location::Register(_) | Location::Stack(_) | Location::Indirect { .. }
+                        )
+                    )
                     || location.and_then(register_pair).is_some()
                     || location.and_then(stack_offset).is_some())
         {
@@ -1894,6 +1962,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(register_pair)
+    }
+
+    fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
+        let signature = self.function_signature(function)?;
+        match self
+            .target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+        {
+            Some(Location::Indirect { size, .. }) => Some(size),
+            _ => None,
+        }
     }
 
     fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {

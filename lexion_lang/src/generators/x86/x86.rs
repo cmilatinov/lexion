@@ -123,6 +123,9 @@ impl<'a> CodeGeneratorX86<'a> {
         if frame.stack_size > 0 {
             lines.push(format!("  sub rsp, {}", frame.stack_size));
         }
+        if let Some(offset) = frame.indirect_return_slot {
+            lines.push(format!("  mov QWORD PTR [rbp-{offset}], rdi"));
+        }
         self.emit_function_parameter_moves(&mut lines, range, &frame);
 
         let mut emitted_return = false;
@@ -359,7 +362,11 @@ impl<'a> CodeGeneratorX86<'a> {
                         .function_return_register(function)
                         .unwrap_or(Register::RAX);
                     if self.operand_is_aggregate(function, value) {
-                        if let Some((low, high)) = self.function_return_pair(function) {
+                        if let Some(size) = self.function_return_indirect_size(function) {
+                            self.emit_indirect_aggregate_return(
+                                lines, frame, location, value, size,
+                            );
+                        } else if let Some((low, high)) = self.function_return_pair(function) {
                             self.load_aggregate_pair(
                                 lines,
                                 frame,
@@ -1075,7 +1082,12 @@ impl<'a> CodeGeneratorX86<'a> {
                 && (location.is_none()
                     || matches!(
                         location,
-                        Some(Location::NoStorage | Location::Register(_) | Location::Stack(_))
+                        Some(
+                            Location::NoStorage
+                                | Location::Register(_)
+                                | Location::Stack(_)
+                                | Location::Indirect { .. }
+                        )
                     )
                     || location.and_then(register_pair).is_some()
                     || location.and_then(stack_location_offset).is_some())
@@ -1186,6 +1198,18 @@ impl<'a> CodeGeneratorX86<'a> {
             .and_then(register_pair)
     }
 
+    fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
+        let signature = self.function_signature(function)?;
+        match self
+            .target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+        {
+            Some(Location::Indirect { size, .. }) => Some(size),
+            _ => None,
+        }
+    }
+
     fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
         let signature = self.function_call_signature(inst)?;
         self.target
@@ -1205,6 +1229,17 @@ impl<'a> CodeGeneratorX86<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(register_pair)
+    }
+
+    fn function_call_indirect_return(&self, inst: &FunctionCallInstruction) -> bool {
+        self.function_call_signature(inst).is_some_and(|signature| {
+            matches!(
+                self.target
+                    .calling_convention()
+                    .assign_ret(self.types, signature),
+                Some(Location::Indirect { .. })
+            )
+        })
     }
 
     fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
@@ -1553,6 +1588,7 @@ impl<'a> CodeGeneratorX86<'a> {
             })
             .max()
             .unwrap_or(0);
+        let indirect_return = self.function_call_indirect_return(inst);
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let argument_slot_counts = arg_types
             .iter()
@@ -1565,6 +1601,15 @@ impl<'a> CodeGeneratorX86<'a> {
             stack_arg_count + staged_arg_count,
             self.target.calling_convention().stack_alignment(),
         );
+        if indirect_return {
+            if let Some(destination) = inst
+                .return_target
+                .as_ref()
+                .and_then(|target| aggregate_member_operand(frame, location, target, 0))
+            {
+                lines.push(format!("  lea rdi, {destination}"));
+            }
+        }
         if indexed_arguments {
             emit_indexed_call_arguments(
                 lines,
@@ -1607,7 +1652,9 @@ impl<'a> CodeGeneratorX86<'a> {
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
             if self.operand_is_aggregate(function, return_target) {
-                if let Some((low, high)) = self.function_call_return_pair(inst) {
+                if indirect_return {
+                    // The callee has written directly to the return target and returns it in RAX.
+                } else if let Some((low, high)) = self.function_call_return_pair(inst) {
                     self.store_aggregate_pair(
                         lines,
                         frame,
@@ -1712,6 +1759,10 @@ impl<'a> CodeGeneratorX86<'a> {
                     )
                 })
                 .collect();
+            let indirect_return_slot = self.function_return_indirect_size(function).map(|_| {
+                home_bytes += STACK_ARG_SLOT_BYTES;
+                saved_registers.len() * STACK_ARG_SLOT_BYTES + home_bytes
+            });
             let stack_size = align_to(
                 home_bytes,
                 self.target.calling_convention().stack_alignment(),
@@ -1722,11 +1773,19 @@ impl<'a> CodeGeneratorX86<'a> {
                 home_slots,
                 saved_registers,
                 stack_size,
+                indirect_return_slot,
             }
         } else {
             let fallback_slots = self.stack_slots(range);
+            let indirect_return_slot = self
+                .function_return_indirect_size(self.cfg[range.start].label.as_str())
+                .map(|_| {
+                    fallback_slots.values().copied().max().unwrap_or(0) + STACK_ARG_SLOT_BYTES
+                });
             let stack_size = align_to(
-                fallback_slots.values().copied().max().unwrap_or(0),
+                indirect_return_slot
+                    .or_else(|| fallback_slots.values().copied().max())
+                    .unwrap_or(0),
                 self.target.calling_convention().stack_alignment(),
             );
             FrameLayout {
@@ -1735,6 +1794,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 home_slots: BTreeMap::new(),
                 saved_registers: Vec::new(),
                 stack_size,
+                indirect_return_slot,
             }
         }
     }
@@ -1999,6 +2059,38 @@ impl<'a> CodeGeneratorX86<'a> {
             return;
         };
         store_aggregate_register(lines, register, &destination, size);
+    }
+
+    fn emit_indirect_aggregate_return(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        operand: &Operand,
+        size: usize,
+    ) {
+        let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(result_slot) = frame.indirect_return_slot else {
+            return;
+        };
+        lines.push(format!("  mov rax, QWORD PTR [rbp-{result_slot}]"));
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            let source = offset_assembly_operand(&source, offset);
+            if width == 4 {
+                lines.push(format!("  mov ecx, DWORD PTR {source}"));
+                lines.push(format!("  mov DWORD PTR [rax+{offset}], ecx"));
+            } else {
+                for byte in 0..width {
+                    let source = offset_assembly_operand(&source, byte);
+                    lines.push(format!("  mov cl, BYTE PTR {source}"));
+                    lines.push(format!("  mov BYTE PTR [rax+{}], cl", offset + byte));
+                }
+            }
+        }
+        lines.push(format!("  mov rax, QWORD PTR [rbp-{result_slot}]"));
     }
 
     fn load_aggregate_pair(
@@ -2338,6 +2430,7 @@ struct FrameLayout<'a> {
     home_slots: BTreeMap<String, usize>,
     saved_registers: Vec<Register>,
     stack_size: usize,
+    indirect_return_slot: Option<usize>,
 }
 
 impl<'a> FrameLayout<'a> {
