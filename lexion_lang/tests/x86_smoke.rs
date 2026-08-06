@@ -223,6 +223,13 @@ fn x86_smoke_register_pair_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_smoke_register_pair_aggregate_abi_padding() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_register_pair_aggregate_padding.lex"
+    ));
+}
+
+#[test]
 fn x86_smoke_indexed_register_pair_call_arguments() {
     let assembly = compile_x86("backend/x86_indexed_register_pair_call.lex");
     assert!(

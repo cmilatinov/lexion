@@ -246,6 +246,13 @@ fn x86_machine_code_register_pair_aggregate_abi_values() {
 }
 
 #[test]
+fn x86_machine_code_register_pair_aggregate_abi_padding() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregate_padding.lex",
+    )));
+}
+
+#[test]
 fn x86_machine_code_indexed_register_pair_call_arguments() {
     compile_machine_code("backend/x86_indexed_register_pair_call.lex");
 }

@@ -1,0 +1,110 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_register_pair_aggregate_padding.lex\")"
+---
+.intel_syntax noprefix
+.text
+.global identity
+identity:
+# fn identity(value: Padded) -> Padded {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+  push rdi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-24], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-24+4], eax
+  add rsp, 8
+  push rsi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-24+8], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-24+8+4], eax
+  add rsp, 8
+#     return value;
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-24+8]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-24+8+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov al, BYTE PTR [rbp-24]
+  mov BYTE PTR [rsp], al
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  add rsp, 32
+  pop rbp
+  ret
+.global main
+main:
+# fn main(tag: char) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 112
+#     let number = 7;
+  mov eax, 7
+  mov DWORD PTR [rbp-84], eax
+#     let padded = Padded { tag: tag, address: &number };
+  mov BYTE PTR [rbp-40], dil
+  lea rax, [rbp-84]
+  mov QWORD PTR [rbp-48], rax
+  mov rax, QWORD PTR [rbp-48]
+  mov QWORD PTR [rbp-32], rax
+  mov eax, DWORD PTR [rbp-40]
+  mov DWORD PTR [rbp-104], eax
+  mov eax, DWORD PTR [rbp-40+4]
+  mov DWORD PTR [rbp-104+4], eax
+  mov eax, DWORD PTR [rbp-40+8]
+  mov DWORD PTR [rbp-104+8], eax
+  mov eax, DWORD PTR [rbp-40+12]
+  mov DWORD PTR [rbp-104+12], eax
+#     let _returned = identity(padded);
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-104+8]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-104+8+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rdx, QWORD PTR [rsp]
+  add rsp, 8
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov al, BYTE PTR [rbp-104]
+  mov BYTE PTR [rsp], al
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  push rdx
+  push rax
+  pop rdi
+  pop rsi
+  call identity
+  push rax
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-64], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-64+4], eax
+  add rsp, 8
+  push rdx
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-64+8], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-64+8+4], eax
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-64]
+  mov DWORD PTR [rbp-80], eax
+  mov eax, DWORD PTR [rbp-64+4]
+  mov DWORD PTR [rbp-80+4], eax
+  mov eax, DWORD PTR [rbp-64+8]
+  mov DWORD PTR [rbp-80+8], eax
+  mov eax, DWORD PTR [rbp-64+12]
+  mov DWORD PTR [rbp-80+12], eax
+#     return number;
+  mov eax, DWORD PTR [rbp-84]
+  add rsp, 112
+  pop rbp
+  ret

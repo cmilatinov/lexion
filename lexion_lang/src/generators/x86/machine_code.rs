@@ -1187,45 +1187,70 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         low: Register,
         high: Register,
     ) -> Result<(), IcedError> {
-        let size = self.aggregate_size(function, operand).unwrap_or(8);
-        self.load_aggregate_operand_part(assembler, slots, function, operand, (8, size - 8), high)?;
-        self.load_aggregate_operand_part(assembler, slots, function, operand, (0, 8), low)
+        let ty = self.operand_type(function, operand).unwrap();
+        let mut member_ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut member_ranges);
+        let low_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let end = (*offset + *size).min(8);
+                (*offset < end).then(|| (*offset, end - *offset))
+            })
+            .collect::<Vec<_>>();
+        let high_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let start = (*offset).max(8);
+                let end = (*offset + *size).min(16);
+                (start < end).then(|| (start - 8, end - start))
+            })
+            .collect::<Vec<_>>();
+
+        // This materialization uses RAX as scratch, so load RDX before the RAX half.
+        self.load_aggregate_operand_part(assembler, slots, operand, 8, &high_ranges, high)?;
+        self.load_aggregate_operand_part(assembler, slots, operand, 0, &low_ranges, low)
     }
 
     fn load_aggregate_operand_part(
         &self,
         assembler: &mut CodeAssembler,
         slots: &BTreeMap<String, usize>,
-        _function: &str,
         operand: &Operand,
-        range: (usize, usize),
+        source_offset: usize,
+        member_ranges: &[(usize, usize)],
         register: Register,
     ) -> Result<(), IcedError> {
-        let (offset, size) = range;
         assembler.sub(rsp, 8)?;
         assembler.xor(rax, rax)?;
         assembler.mov(qword_ptr(rsp), rax)?;
-        for part_offset in (0..size).step_by(4) {
-            let width = (size - part_offset).min(4);
-            if width == 4 {
-                assembler.mov(
-                    eax,
-                    aggregate_stack_value(slots, operand, offset + part_offset),
-                )?;
-                assembler.mov(dword_ptr(rsp + part_offset as i32), eax)?;
-            } else {
-                for byte in 0..width {
-                    assembler.movzx(
+        for (member_offset, size) in member_ranges {
+            for offset in (0..*size).step_by(4) {
+                let width = (*size - offset).min(4);
+                if width == 4 {
+                    assembler.mov(
                         eax,
-                        byte_ptr(
-                            rbp - aggregate_stack_offset(
-                                slots,
-                                operand,
-                                offset + part_offset + byte,
-                            ),
+                        aggregate_stack_value(
+                            slots,
+                            operand,
+                            source_offset + member_offset + offset,
                         ),
                     )?;
-                    assembler.mov(byte_ptr(rsp + (part_offset + byte) as i32), al)?;
+                    assembler.mov(dword_ptr(rsp + (member_offset + offset) as i32), eax)?;
+                } else {
+                    for byte in 0..width {
+                        assembler.movzx(
+                            eax,
+                            byte_ptr(
+                                rbp - aggregate_stack_offset(
+                                    slots,
+                                    operand,
+                                    source_offset + member_offset + offset + byte,
+                                ),
+                            ),
+                        )?;
+                        assembler
+                            .mov(byte_ptr(rsp + (member_offset + offset + byte) as i32), al)?;
+                    }
                 }
             }
         }
