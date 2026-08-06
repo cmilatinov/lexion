@@ -1146,7 +1146,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     | PrimitiveType::I32
                     | PrimitiveType::U32,
                 )
-                | Type::RefType(_),
+                | Type::RefType(_)
+                | Type::FunctionType(_),
             ) => true,
             Some(Type::TupleType(tuple)) => tuple
                 .types

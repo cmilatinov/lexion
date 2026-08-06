@@ -342,8 +342,15 @@ impl<'a> CodeGeneratorX86<'a> {
                 } else if self.operand_is_function(function, &inst.src)
                     || self.operand_is_function(function, &inst.dst)
                 {
-                    load_function_operand(lines, frame, location, &inst.src, Register::RAX);
-                    store_reference_operand(lines, frame, location, &inst.dst, Register::RAX);
+                    let register = destination.register().unwrap_or(Register::RAX);
+                    let preserved = if destination.register().is_none() {
+                        preserve_register(lines, frame, location, register)
+                    } else {
+                        false
+                    };
+                    load_function_operand(lines, frame, location, &inst.src, register);
+                    store_reference_operand(lines, frame, location, &inst.dst, register);
+                    restore_register(lines, register, preserved);
                 } else if self.operand_is_reference(function, &inst.src)
                     || self.operand_is_reference(function, &inst.dst)
                 {
@@ -763,7 +770,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     | PrimitiveType::I32
                     | PrimitiveType::U32,
                 )
-                | Type::RefType(_),
+                | Type::RefType(_)
+                | Type::FunctionType(_),
             ) => true,
             Some(Type::TupleType(tuple)) => tuple
                 .types

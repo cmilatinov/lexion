@@ -38,8 +38,7 @@ main:
   push rbp
   mov rbp, rsp
 #     let callback = add_one;
-  lea rax, [add_one]
-  mov rdi, rax
+  lea rdi, [add_one]
 #     return apply(callback, 4);
   mov eax, 4
   push rax

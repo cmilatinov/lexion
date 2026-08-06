@@ -451,3 +451,10 @@ fn x86_machine_code_function_value_members() {
         "backend/x86_function_value_members.lex"
     )));
 }
+
+#[test]
+fn x86_machine_code_function_value_aggregate_abi() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_aggregate_abi.lex"
+    )));
+}
