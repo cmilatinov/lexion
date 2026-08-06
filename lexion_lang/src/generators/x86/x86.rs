@@ -131,6 +131,7 @@ impl<'a> CodeGeneratorX86<'a> {
 
         let mut emitted_return = false;
         let mut pending_param_count = 0;
+        let mut staged_indirect_target = false;
         for node in self.cfg.function_nodes(&range) {
             let block = &self.cfg[node];
             if node != range.start {
@@ -144,15 +145,36 @@ impl<'a> CodeGeneratorX86<'a> {
                     &mut source_line_range,
                 );
                 let location = CodeLocation::new(node, instruction_index);
+                if matches!(inst.instruction, Instruction::Parameter(_)) && pending_param_count == 0
+                {
+                    let next_instruction = block.instructions[instruction_index..]
+                        .iter()
+                        .find(|inst| !matches!(inst.instruction, Instruction::Parameter(_)))
+                        .map(|inst| &inst.instruction);
+                    if let Some(Instruction::FunctionCall(FunctionCallInstruction {
+                        target: FunctionCallTarget::Indirect(target),
+                        ..
+                    })) = next_instruction
+                    {
+                        load_function_operand(&mut lines, &frame, location, target, Register::R11);
+                        staged_indirect_target = true;
+                    }
+                }
                 if self.emit_instruction(
                     &mut lines,
                     &frame,
                     name.as_str(),
-                    location,
-                    &mut pending_param_count,
+                    &mut InstructionEmission {
+                        location,
+                        pending_param_count: &mut pending_param_count,
+                        staged_indirect_target,
+                    },
                     &inst.instruction,
                 ) {
                     emitted_return = true;
+                }
+                if matches!(inst.instruction, Instruction::FunctionCall(_)) {
+                    staged_indirect_target = false;
                 }
             }
         }
@@ -301,7 +323,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     .and_then(|entry| entry.var_type)
             }
             Operand::Label(name) => self
-                .global_symbol_entry(name)
+                .function_symbol_entry(function, name)
+                .or_else(|| self.global_symbol_entry(name))
                 .and_then(|entry| entry.var_type),
             Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }
@@ -312,10 +335,10 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         function: &str,
-        location: CodeLocation,
-        pending_param_count: &mut usize,
+        emission: &mut InstructionEmission<'_>,
         instruction: &Instruction,
     ) -> bool {
+        let location = emission.location;
         match instruction {
             Instruction::Borrow(inst) => {
                 self.emit_borrow(lines, frame, location, inst);
@@ -423,19 +446,12 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             Instruction::Parameter(inst) => {
                 self.emit_parameter(lines, frame, function, location, &inst.param);
-                *pending_param_count += 1;
+                *emission.pending_param_count += 1;
                 false
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    *pending_param_count,
-                    inst,
-                );
-                *pending_param_count = 0;
+                self.emit_function_call(lines, frame, function, emission, inst);
+                *emission.pending_param_count = 0;
                 false
             }
         }
@@ -1598,10 +1614,10 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         function: &str,
-        location: CodeLocation,
-        pending_param_count: usize,
+        emission: &InstructionEmission<'_>,
         inst: &FunctionCallInstruction,
     ) {
+        let location = emission.location;
         let signature = self
             .function_call_signature(inst)
             .expect("function call should reference a checked function signature");
@@ -1609,8 +1625,8 @@ impl<'a> CodeGeneratorX86<'a> {
             .target
             .calling_convention()
             .assign_args(self.types, 0, signature);
-        let arg_locations = &arg_locations[..pending_param_count];
-        let arg_types = &signature.params[..pending_param_count];
+        let arg_locations = &arg_locations[..*emission.pending_param_count];
+        let arg_types = &signature.params[..*emission.pending_param_count];
         let stack_arg_count = arg_types
             .iter()
             .zip(arg_locations.iter())
@@ -1681,8 +1697,12 @@ impl<'a> CodeGeneratorX86<'a> {
         match &inst.target {
             FunctionCallTarget::Direct(name) => lines.push(format!("  call {name}")),
             FunctionCallTarget::Indirect(target) => {
-                load_function_operand(lines, frame, location, target, Register::RAX);
-                lines.push(String::from("  call rax"));
+                if emission.staged_indirect_target {
+                    lines.push(String::from("  call r11"));
+                } else {
+                    load_function_operand(lines, frame, location, target, Register::RAX);
+                    lines.push(String::from("  call rax"));
+                }
             }
         }
         let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
@@ -2490,6 +2510,12 @@ struct FrameLayout<'a> {
     saved_registers: Vec<Register>,
     stack_size: usize,
     indirect_return_slot: Option<usize>,
+}
+
+struct InstructionEmission<'a> {
+    location: CodeLocation,
+    pending_param_count: &'a mut usize,
+    staged_indirect_target: bool,
 }
 
 impl<'a> FrameLayout<'a> {

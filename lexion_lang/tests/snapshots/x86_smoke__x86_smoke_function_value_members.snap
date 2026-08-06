@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86(\"backend/x86_function_value_members.lex\")"
-snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
@@ -34,12 +33,12 @@ main:
   mov QWORD PTR [rbp-24], rax
 #     return holder.callback(4);
   mov rbx, QWORD PTR [rbp-24]
+  mov r11, rbx
   mov eax, 4
   push rax
   pop rdi
   sub rsp, 8
-  mov rax, rbx
-  call rax
+  call r11
   add rsp, 8
   add rsp, 16
   pop rbx

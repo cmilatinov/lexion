@@ -1964,7 +1964,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     .and_then(|entry| entry.var_type)
             }
             Operand::Label(name) => self
-                .global_symbol_entry(name)
+                .function_symbol_entry(function, name)
+                .or_else(|| self.global_symbol_entry(name))
                 .and_then(|entry| entry.var_type),
             Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }

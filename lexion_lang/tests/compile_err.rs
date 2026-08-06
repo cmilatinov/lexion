@@ -91,6 +91,12 @@ fn test_borrow_is_not_assignment_target() {
 }
 
 #[test]
+fn test_function_declaration_is_not_assignment_target() {
+    let errors = common::assert_fails("errors/semantics/function_assignment.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn test_if_branch_type_mismatch() {
     let errors = common::assert_fails("errors/semantics/if_branch_type_mismatch.lex");
     insta::assert_snapshot!(errors.join("\n"));

@@ -438,6 +438,19 @@ fn x86_smoke_function_value_preserves_live_rax() {
 }
 
 #[test]
+fn x86_smoke_function_value_stages_indirect_target_before_arguments() {
+    insta::assert_snapshot!(compile_x86_with_registers(
+        "backend/x86_function_value_indirect_target.lex",
+        vec![Register::RAX],
+    ));
+}
+
+#[test]
+fn x86_smoke_nested_function_value_argument() {
+    insta::assert_snapshot!(compile_x86("backend/x86_nested_function_value.lex"));
+}
+
+#[test]
 fn x86_smoke_system_v_function_call() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_call.lex"));
 }

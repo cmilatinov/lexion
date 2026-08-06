@@ -458,3 +458,10 @@ fn x86_machine_code_function_value_aggregate_abi() {
         "backend/x86_function_value_aggregate_abi.lex"
     )));
 }
+
+#[test]
+fn x86_machine_code_nested_function_value_argument() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_nested_function_value.lex"
+    )));
+}

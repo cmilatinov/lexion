@@ -1,19 +1,9 @@
 ---
-source: lexion_lang/tests/compiler_emit.rs
-expression: assembly.as_str()
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_nested_function_value.lex\")"
 ---
 .intel_syntax noprefix
 .text
-.global add_one
-add_one:
-# fn add_one(value: i32) -> i32 {
-  push rbp
-  mov rbp, rsp
-#     return value + 1;
-  mov eax, edi
-  add eax, 1
-  pop rbp
-  ret
 .global apply
 apply:
 # fn apply(callback: fn(i32) -> i32, value: i32) -> i32 {
@@ -36,12 +26,22 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-#     let callback = add_one;
-  lea rdi, [add_one]
-#     return apply(callback, 4);
+  pop rbp
+  ret
+.global add_one
+add_one:
+  push rbp
+  mov rbp, rsp
+#     fn add_one(value: i32) -> i32 {
+#         return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+#     return apply(add_one, 4);
   mov eax, 4
   push rax
-  mov rax, rdi
+  lea rax, [add_one]
   push rax
   pop rdi
   pop rsi

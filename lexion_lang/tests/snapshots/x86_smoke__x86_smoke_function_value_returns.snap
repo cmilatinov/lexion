@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86(\"backend/x86_function_value_returns.lex\")"
-snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
@@ -63,20 +62,20 @@ main:
   call make_adder
   add rsp, 8
   mov QWORD PTR [rbp-16], rax
+  mov r11, QWORD PTR [rbp-16]
   mov eax, 4
   push rax
   pop rdi
   sub rsp, 8
-  mov rax, QWORD PTR [rbp-16]
-  call rax
+  call r11
   add rsp, 8
   mov DWORD PTR [rbp-24], eax
+  mov r11, rbx
   mov eax, 1
   push rax
   pop rdi
   sub rsp, 8
-  mov rax, rbx
-  call rax
+  call r11
   add rsp, 8
   mov ebx, DWORD PTR [rbp-24]
   add ebx, eax

@@ -1,7 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86(\"backend/x86_function_values.lex\")"
-snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
@@ -24,11 +23,11 @@ apply:
   mov QWORD PTR [rbp-8], rdi
   mov DWORD PTR [rbp-16], esi
 #     return callback(value);
+  mov r11, QWORD PTR [rbp-8]
   mov eax, DWORD PTR [rbp-16]
   push rax
   pop rdi
-  mov rax, QWORD PTR [rbp-8]
-  call rax
+  call r11
   add rsp, 16
   pop rbp
   ret
