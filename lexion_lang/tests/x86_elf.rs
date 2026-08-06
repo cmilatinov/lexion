@@ -403,7 +403,7 @@ fn x86_elf_executable_supports_register_pair_aggregate_abi_values() {
 }
 
 #[test]
-fn x86_elf_reports_unsupported_string_returns() {
+fn x86_elf_reports_unsupported_entry_point_string_returns() {
     insta::assert_snapshot!(
         compile_elf_error("backend/x86_unsupported_string_return.lex").join("\n")
     );

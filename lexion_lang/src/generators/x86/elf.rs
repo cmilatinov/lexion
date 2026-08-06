@@ -1,4 +1,4 @@
-use crate::ast::types::TypeCollection;
+use crate::ast::types::{PrimitiveType, Type, TypeCollection};
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     ControlFlowGraph, FunctionCallInstruction, Instruction,
@@ -150,6 +150,10 @@ impl<'a> CodeGeneratorX86Elf<'a> {
 
     fn validate_supported(&self, diag: &mut dyn DiagnosticConsumer) -> bool {
         let mut valid = true;
+        if let Some(message) = self.unsupported_entry_point_return_message() {
+            valid = false;
+            diag.error(elf_error(message));
+        }
         for block in self.cfg.node_weights() {
             for inst in &block.instructions {
                 if let Some(message) = self.unsupported_message(&inst.instruction) {
@@ -159,6 +163,33 @@ impl<'a> CodeGeneratorX86Elf<'a> {
             }
         }
         valid
+    }
+
+    fn unsupported_entry_point_return_message(&self) -> Option<String> {
+        let return_type = self
+            .symbols
+            .lookup_function_entry(ENTRY_SYMBOL)
+            .map(|(_, _, entry)| entry)
+            .and_then(|entry| entry.var_type)
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature.return_type),
+                _ => None,
+            })?;
+        let return_type = self.types.canonicalize(return_type);
+        let supported = match self.types.get(return_type) {
+            Some(Type::PrimitiveType(
+                PrimitiveType::I32 | PrimitiveType::U32 | PrimitiveType::BOOL | PrimitiveType::CHAR,
+            )) => true,
+            Some(Type::TupleType(tuple)) => tuple.types.is_empty(),
+            _ => false,
+        };
+        (!supported).then(|| {
+            format!(
+                "x86 ELF executable output requires `{ENTRY_SYMBOL}` to return an integer scalar or unit, found {}",
+                self.types.to_string_index(return_type)
+            )
+        })
     }
 
     fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
