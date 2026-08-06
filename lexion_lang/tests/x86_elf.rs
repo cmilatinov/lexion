@@ -359,7 +359,7 @@ fn x86_elf_executable_supports_stack_aggregate_arguments() {
 fn x86_elf_stack_aggregate_arguments_run_on_linux_x86_64() {
     assert_eq!(
         run_executable_fixture("backend/x86_stack_aggregate_arguments.lex"),
-        Some(74)
+        Some(81)
     );
 }
 

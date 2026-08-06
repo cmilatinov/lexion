@@ -1283,6 +1283,7 @@ impl<'a> CodeGeneratorX86<'a> {
                         register_name_32(target_register)
                     ));
                     lines.push(String::from("  add rsp, 8"));
+                    store_operand(lines, frame, location, &inst.target, target_register);
                     return;
                 }
                 load_operand(lines, frame, location, left, target_register);
@@ -2797,7 +2798,7 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
 fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
     let mut saw_stack_argument = false;
     arg_locations.iter().any(|location| {
-        if matches!(location, Location::Stack(_)) {
+        if stack_argument_offset(location).is_some() {
             saw_stack_argument = true;
             return false;
         }
@@ -2851,14 +2852,14 @@ fn emit_indexed_call_arguments(
     }
     lines.push(format!("  sub rsp, {outgoing_bytes}"));
     for (index, location) in arg_locations.iter().enumerate() {
-        let Location::Stack(offset) = location else {
+        let Some(offset) = stack_argument_offset(location) else {
             continue;
         };
         let source_offset =
             argument_slot_counts[..index].iter().sum::<usize>() * STACK_ARG_SLOT_BYTES;
         for slot in 0..argument_slot_counts[index] {
             let source = rsp_slot(outgoing_bytes + source_offset + slot * STACK_ARG_SLOT_BYTES);
-            let destination = rsp_slot((offset.0 + slot) * STACK_ARG_SLOT_BYTES);
+            let destination = rsp_slot((offset + slot) * STACK_ARG_SLOT_BYTES);
             lines.push(format!("  mov rax, QWORD PTR {source}"));
             lines.push(format!("  mov QWORD PTR {destination}, rax"));
         }
@@ -3156,6 +3157,16 @@ fn stack_location_offset(location: &Location) -> Option<usize> {
         Location::RegisterAndStack(_, offset) => Some(offset.0),
         Location::Pair { low, .. } => stack_location_offset(low),
         Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
+    }
+}
+
+fn stack_argument_offset(location: &Location) -> Option<usize> {
+    match location {
+        Location::Stack(_) | Location::Pair { .. } => stack_location_offset(location),
+        Location::NoStorage
+        | Location::Register(_)
+        | Location::RegisterAndStack(_, _)
+        | Location::Indirect { .. } => None,
     }
 }
 

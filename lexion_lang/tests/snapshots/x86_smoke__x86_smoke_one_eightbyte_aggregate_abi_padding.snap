@@ -55,11 +55,8 @@ main:
   mov QWORD PTR [rsp], 0
   mov eax, DWORD PTR [rbp-40]
   mov DWORD PTR [rsp], eax
-  mov al, BYTE PTR [rbp-40+4]
-  mov BYTE PTR [rsp+4], al
-  mov rax, QWORD PTR [rsp]
-  add rsp, 8
-  push rax
+  mov eax, DWORD PTR [rbp-40+4]
+  mov DWORD PTR [rsp+4], eax
   pop rdi
   call adjust
   push rax
