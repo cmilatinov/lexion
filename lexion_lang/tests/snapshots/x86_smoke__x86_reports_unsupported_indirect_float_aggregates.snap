@@ -5,7 +5,7 @@ snapshot_kind: text
 ---
   x x86 backend does not support indirect aggregate ABI values yet: Mixed
     ,-[tests/fixtures/backend/x86_unsupported_indirect_float_aggregate.lex:9:4]
-  8 | 
+  8 |
   9 | fn unsupported() -> Mixed {
     :    ^^^^^|^^^^^
     :         `-- here
