@@ -1073,7 +1073,10 @@ impl<'a> CodeGeneratorX86<'a> {
         if !self.type_is_aggregate(ty)
             || self.aggregate_is_integer_only(ty)
                 && (location.is_none()
-                    || matches!(location, Some(Location::Register(_) | Location::Stack(_)))
+                    || matches!(
+                        location,
+                        Some(Location::NoStorage | Location::Register(_) | Location::Stack(_))
+                    )
                     || location.and_then(register_pair).is_some()
                     || location.and_then(stack_location_offset).is_some())
         {
@@ -1573,7 +1576,6 @@ impl<'a> CodeGeneratorX86<'a> {
         } else {
             for abi_location in arg_locations {
                 if matches!(abi_location, Location::NoStorage) {
-                    lines.push(format!("  add rsp, {STACK_ARG_SLOT_BYTES}"));
                     continue;
                 }
                 if let Some((low, high)) = register_pair(abi_location) {

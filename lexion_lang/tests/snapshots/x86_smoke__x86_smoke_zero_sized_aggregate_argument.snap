@@ -1,0 +1,34 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_zero_sized_aggregate_argument.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global consume
+consume:
+# fn consume(empty: Empty, value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov DWORD PTR [rbp-8], edi
+#     return value;
+  mov eax, DWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     return consume(Empty {}, 7);
+  mov eax, 7
+  push rax
+  sub rsp, 0
+  pop rdi
+  call consume
+  add rsp, 16
+  pop rbp
+  ret

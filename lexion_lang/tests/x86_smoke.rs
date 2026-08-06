@@ -389,6 +389,11 @@ fn x86_smoke_unit_arguments() {
 }
 
 #[test]
+fn x86_smoke_zero_sized_aggregate_argument() {
+    insta::assert_snapshot!(compile_x86("backend/x86_zero_sized_aggregate_argument.lex"));
+}
+
+#[test]
 fn x86_smoke_branch_loop_function_call() {
     let assembly = compile_x86("backend/branch_loop_call.lex");
     assert!(
