@@ -224,9 +224,25 @@ fn x86_machine_code_nested_reference_aggregate_abi_values() {
 
 #[test]
 fn x86_machine_code_register_pair_aggregate_abi_values() {
-    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
-        "backend/x86_register_pair_aggregates.lex"
-    )));
+    let snapshot = machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregates.lex",
+    ));
+    let shift_quad = snapshot
+        .split_once("shift_quad:\n")
+        .and_then(|(_, disassembly)| disassembly.split_once("shift_tuple:\n"))
+        .map(|(disassembly, _)| disassembly)
+        .expect("missing shift_quad disassembly");
+    let high_load = shift_quad
+        .find("mov rdx,[rsp]")
+        .expect("missing RDX return-half load");
+    let low_load = shift_quad
+        .find("mov rax,[rsp]")
+        .expect("missing RAX return-half load");
+    assert!(
+        high_load < low_load,
+        "register-pair return must load RDX before RAX scratch clobbers it:\n{shift_quad}"
+    );
+    insta::assert_snapshot!(snapshot);
 }
 
 #[test]

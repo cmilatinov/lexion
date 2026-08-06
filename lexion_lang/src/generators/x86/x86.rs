@@ -1952,11 +1952,35 @@ impl<'a> CodeGeneratorX86<'a> {
         let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
             return;
         };
-        let Some(size) = self.aggregate_size(function, operand) else {
+        let Some(ty) = self.operand_type(function, operand) else {
             return;
         };
-        load_aggregate_register(lines, &offset_assembly_operand(&source, 8), high, size - 8);
-        load_aggregate_register(lines, &source, low, 8);
+        let mut member_ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut member_ranges);
+        let low_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let end = (*offset + *size).min(8);
+                (*offset < end).then(|| (*offset, end - *offset))
+            })
+            .collect::<Vec<_>>();
+        let high_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let start = (*offset).max(8);
+                let end = (*offset + *size).min(16);
+                (start < end).then(|| (start - 8, end - start))
+            })
+            .collect::<Vec<_>>();
+
+        // This materialization uses RAX as scratch, so load RDX before the RAX half.
+        load_aggregate_register(
+            lines,
+            &offset_assembly_operand(&source, 8),
+            high,
+            &high_ranges,
+        );
+        load_aggregate_register(lines, &source, low, &low_ranges);
     }
 
     fn store_aggregate_pair(
