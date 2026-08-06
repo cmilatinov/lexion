@@ -3770,16 +3770,6 @@ fn stack_location_offset(location: &Location) -> Option<usize> {
     }
 }
 
-fn stack_argument_offset(location: &Location) -> Option<usize> {
-    match location {
-        Location::Stack(_) | Location::Pair { .. } => stack_location_offset(location),
-        Location::NoStorage
-        | Location::Register(_)
-        | Location::RegisterAndStack(_, _)
-        | Location::Indirect { .. } => None,
-    }
-}
-
 fn operand_name(operand: &Operand) -> Option<String> {
     match operand {
         Operand::Variable(name) => Some(name.clone()),
