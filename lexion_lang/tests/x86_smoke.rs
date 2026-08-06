@@ -429,6 +429,13 @@ fn x86_member_borrow_preserves_live_rax() {
 }
 
 #[test]
+fn x86_string_descriptor_stores_preserve_live_rax() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_string_descriptor_preserves_rax.lex"
+    ));
+}
+
+#[test]
 fn x86_smoke_function_scoped_symbol_types() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_scoped_symbols.lex"));
 }

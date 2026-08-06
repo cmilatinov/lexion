@@ -1055,6 +1055,7 @@ impl<'a> CodeGeneratorX86<'a> {
         match source {
             Operand::Literal(Lit::String(value)) => {
                 let data = string_literal_data(value);
+                let preserved = preserve_register(lines, frame, location, Register::RAX);
                 lines.push(format!(
                     "  lea rax, [rip + {}]",
                     string_literal_label(&data)
@@ -1065,12 +1066,15 @@ impl<'a> CodeGeneratorX86<'a> {
                     offset_assembly_operand(&destination, 8),
                     data.len()
                 ));
+                restore_register(lines, Register::RAX, preserved);
             }
             _ if self.operand_is_string_value(function, source) => {
                 let Some(source) = aggregate_member_operand(frame, location, source, 0) else {
                     return;
                 };
+                let preserved = preserve_register(lines, frame, location, Register::RAX);
                 emit_memory_copy(lines, &source, &destination, 16);
+                restore_register(lines, Register::RAX, preserved);
             }
             _ => unreachable!("unsupported string copies are diagnosed before emission"),
         }
