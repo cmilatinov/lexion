@@ -121,8 +121,7 @@ main:
   mov ebx, esi
   add ebx, DWORD PTR [rbp-80]
 #         + holder.callback(0);
-  mov rax, QWORD PTR [rbp-112]
-  mov r12, rax
+  mov r12, QWORD PTR [rbp-112]
   mov eax, 0
   push rax
   pop rdi

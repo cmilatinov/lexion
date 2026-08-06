@@ -420,6 +420,11 @@ fn x86_smoke_function_value_members() {
 }
 
 #[test]
+fn x86_smoke_function_value_member_return() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_value_member_return.lex"));
+}
+
+#[test]
 fn x86_smoke_function_value_aggregate_abi() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_value_aggregate_abi.lex"));
 }

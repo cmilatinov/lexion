@@ -33,8 +33,7 @@ main:
   lea rax, [add_one]
   mov QWORD PTR [rbp-24], rax
 #     return holder.callback(4);
-  mov rax, QWORD PTR [rbp-24]
-  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-24]
   mov eax, 4
   push rax
   pop rdi

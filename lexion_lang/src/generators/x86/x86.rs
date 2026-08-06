@@ -610,10 +610,15 @@ impl<'a> CodeGeneratorX86<'a> {
                     return;
                 }
                 if self.type_is_reference(ty) || self.type_is_function(ty) {
-                    let preserved = preserve_register(lines, frame, location, Register::RAX);
-                    lines.push(format!("  mov rax, QWORD PTR {operand}"));
-                    store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
-                    restore_register(lines, Register::RAX, preserved);
+                    let target_register = allocated_target_register.unwrap_or(Register::RAX);
+                    let preserved = allocated_target_register.is_none()
+                        && preserve_register(lines, frame, location, target_register);
+                    lines.push(format!(
+                        "  mov {}, QWORD PTR {operand}",
+                        register_name(target_register)
+                    ));
+                    store_reference_operand(lines, frame, location, &inst.target, target_register);
+                    restore_register(lines, target_register, preserved);
                     return;
                 }
                 if is_f32_type(self.types, ty) {
