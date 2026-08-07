@@ -1055,8 +1055,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Place::Dereference(reference) => {
                 if self.reference_pointee_is_function(function, reference) {
-                    load_reference_operand(assembler, slots, reference, rax)?;
                     load_function_operand(assembler, labels, slots, &inst.value, rcx)?;
+                    load_reference_operand(assembler, slots, reference, rax)?;
                     assembler.mov(qword_ptr(rax), rcx)
                 } else {
                     load_reference_operand(assembler, slots, reference, rax)?;

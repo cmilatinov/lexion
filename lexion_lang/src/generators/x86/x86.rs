@@ -694,8 +694,24 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             Place::Dereference(reference) => {
                 if self.reference_pointee_is_function(function, reference) {
-                    load_reference_operand(lines, frame, location, reference, Register::RAX);
-                    load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                    let reference_register = operand_register(frame, location, reference);
+                    let value_register = operand_register(frame, location, &inst.value);
+                    if reference_register == Some(Register::RCX)
+                        && value_register == Some(Register::RAX)
+                    {
+                        // Keep the callback while RAX is used to materialize the reference.
+                        lines.push(String::from("  push rax"));
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                        lines.push(String::from("  pop rcx"));
+                    } else if reference_register == Some(Register::RCX)
+                        && value_register != Some(Register::RCX)
+                    {
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                        load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                    } else {
+                        load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    }
                     lines.push(String::from("  mov QWORD PTR [rax], rcx"));
                 } else {
                     load_operand(lines, frame, location, &inst.value, Register::RCX);
@@ -1651,6 +1667,17 @@ impl<'a> CodeGeneratorX86<'a> {
         inst: &FunctionCallInstruction,
     ) {
         let location = emission.location;
+        let indirect_return = self.function_call_indirect_return(inst);
+        let mut staged_indirect_target = emission.staged_indirect_target;
+        if !staged_indirect_target && indirect_return {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                // Zero-argument calls have no ParameterInstruction at which to stage a target.
+                lines.push(String::from("  push rax"));
+                load_function_operand(lines, frame, location, target, Register::RAX);
+                lines.push(String::from("  xchg QWORD PTR [rsp], rax"));
+                staged_indirect_target = true;
+            }
+        }
         let signature = self
             .function_call_signature(inst)
             .expect("function call should reference a checked function signature");
@@ -1675,7 +1702,6 @@ impl<'a> CodeGeneratorX86<'a> {
             })
             .max()
             .unwrap_or(0);
-        let indirect_return = self.function_call_indirect_return(inst);
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let argument_slot_counts = arg_types
             .iter()
@@ -1685,7 +1711,7 @@ impl<'a> CodeGeneratorX86<'a> {
         let staged_arg_count =
             usize::from(indexed_arguments) * argument_slot_counts.iter().sum::<usize>();
         let stack_padding = frame.call_stack_padding(
-            stack_arg_count + staged_arg_count + usize::from(emission.staged_indirect_target),
+            stack_arg_count + staged_arg_count + usize::from(staged_indirect_target),
             self.target.calling_convention().stack_alignment(),
         );
         if indirect_return {
@@ -1733,7 +1759,7 @@ impl<'a> CodeGeneratorX86<'a> {
         match &inst.target {
             FunctionCallTarget::Direct(name) => lines.push(format!("  call {name}")),
             FunctionCallTarget::Indirect(target) => {
-                if emission.staged_indirect_target {
+                if staged_indirect_target {
                     lines.push(format!("  call QWORD PTR {}", rsp_slot(stack_cleanup)));
                 } else {
                     load_function_operand(lines, frame, location, target, Register::RAX);
@@ -1744,7 +1770,7 @@ impl<'a> CodeGeneratorX86<'a> {
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
         }
-        if emission.staged_indirect_target {
+        if staged_indirect_target {
             lines.push(String::from("  add rsp, 8"));
         }
         if let Some(return_target) = &inst.return_target {

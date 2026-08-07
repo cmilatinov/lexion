@@ -31,8 +31,8 @@ main:
   mov rax, QWORD PTR [rbp-16]
   mov QWORD PTR [rbp-32], rax
 #     *callback_ref = add_one;
-  mov rax, QWORD PTR [rbp-32]
   lea rcx, [add_one]
+  mov rax, QWORD PTR [rbp-32]
   mov QWORD PTR [rax], rcx
 #     return (*callback_ref)(4);
   mov rbx, QWORD PTR [rbp-32]

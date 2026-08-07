@@ -446,6 +446,22 @@ fn x86_smoke_function_value_stages_indirect_target_before_arguments() {
 }
 
 #[test]
+fn x86_smoke_function_value_dereference_store_preserves_rax_callback() {
+    insta::assert_snapshot!(compile_x86_with_registers(
+        "backend/x86_function_value_dereference_store.lex",
+        vec![Register::RAX],
+    ));
+}
+
+#[test]
+fn x86_smoke_zero_arg_indirect_aggregate_return_stages_rdi_callback() {
+    insta::assert_snapshot!(compile_x86_with_registers(
+        "backend/x86_zero_arg_indirect_aggregate_return.lex",
+        vec![Register::RDI],
+    ));
+}
+
+#[test]
 fn x86_smoke_function_value_stages_indirect_target_without_clobbering_rax_or_r11() {
     insta::assert_snapshot!(compile_x86_with_registers(
         "backend/x86_function_value_indirect_target_register_conflict.lex",
