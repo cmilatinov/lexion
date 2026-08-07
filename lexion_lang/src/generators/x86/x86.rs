@@ -2066,9 +2066,21 @@ impl<'a> CodeGeneratorX86<'a> {
     ) {
         if self.operand_is_string_value(function, operand) {
             lines.push(format!("  sub rsp, {}", 2 * STACK_ARG_SLOT_BYTES));
+            let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+            let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
             self.load_string_operand(lines, frame, function, location, operand);
-            lines.push(String::from("  mov QWORD PTR [rsp], rax"));
-            lines.push(String::from("  mov QWORD PTR [rsp+8], rdx"));
+            let descriptor_offset =
+                STACK_ARG_SLOT_BYTES * (usize::from(preserved_rax) + usize::from(preserved_rdx));
+            lines.push(format!(
+                "  mov QWORD PTR {}, rax",
+                rsp_slot(descriptor_offset)
+            ));
+            lines.push(format!(
+                "  mov QWORD PTR {}, rdx",
+                rsp_slot(descriptor_offset + STACK_ARG_SLOT_BYTES)
+            ));
+            restore_register(lines, Register::RDX, preserved_rdx);
+            restore_register(lines, Register::RAX, preserved_rax);
             return;
         } else if self.operand_is_aggregate(function, operand) {
             let Some(size) = self.aggregate_size(function, operand) else {

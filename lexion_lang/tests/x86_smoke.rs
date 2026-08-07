@@ -310,6 +310,13 @@ fn x86_smoke_string_register_arguments() {
 }
 
 #[test]
+fn x86_smoke_string_staging_preserves_scalar_argument_registers() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_string_abi_scalar_register_preservation.lex"
+    ));
+}
+
+#[test]
 fn x86_smoke_string_stack_arguments() {
     insta::assert_snapshot!(compile_x86("backend/x86_string_abi_stack.lex"));
 }
