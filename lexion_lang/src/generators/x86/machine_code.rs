@@ -2068,7 +2068,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .find_map(|(index, ty)| {
                 self.unsupported_aggregate_type_message(*ty, locations.get(index))
             })
-            .or_else(|| self.unsupported_string_return_message(signature.return_type))
             .or_else(|| {
                 self.unsupported_aggregate_type_message(
                     signature.return_type,
@@ -2078,15 +2077,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         .as_ref(),
                 )
             })
-    }
-
-    fn unsupported_string_return_message(&self, ty: Index) -> Option<String> {
-        self.type_is_string_reference(ty).then(|| {
-            format!(
-                "x86 machine-code backend does not support string values yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {

@@ -2,7 +2,7 @@ fn make() -> &str {
     return "hello";
 }
 
-fn main() -> &str {
+fn main() -> i32 {
     let value = make();
-    return value;
+    return 0;
 }

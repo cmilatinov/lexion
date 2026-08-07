@@ -427,10 +427,11 @@ fn x86_elf_executable_supports_register_pair_aggregate_abi_values() {
 }
 
 #[test]
-fn x86_elf_reports_unsupported_entry_point_string_returns() {
-    insta::assert_snapshot!(
-        compile_elf_error("backend/x86_unsupported_string_return.lex").join("\n")
-    );
+fn x86_elf_executable_supports_string_returns() {
+    let executable = compile_elf("backend/x86_string_return.lex");
+
+    assert!(executable.symbols().contains_key("make"));
+    assert!(executable.symbols().contains_key("main"));
 }
 
 #[test]
