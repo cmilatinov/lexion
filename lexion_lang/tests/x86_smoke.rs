@@ -396,6 +396,10 @@ fn x86_aggregate_reference_copies_preserve_allocated_rax() {
             >= 2,
         "aggregate reference copies did not preserve an allocated RAX:\n{assembly}"
     );
+    assert!(
+        !assembly.contains("push rax\n  push rax\n  lea rax,"),
+        "aggregate borrows must preserve RAX at most once:\n{assembly}"
+    );
 }
 
 #[test]

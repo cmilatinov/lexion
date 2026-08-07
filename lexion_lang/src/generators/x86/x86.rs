@@ -575,12 +575,6 @@ impl<'a> CodeGeneratorX86<'a> {
         location: CodeLocation,
         inst: &BorrowInstruction,
     ) {
-        let preserved_rax =
-            if operand_register(frame, location, &inst.target) != Some(Register::RAX) {
-                preserve_register(lines, frame, location, Register::RAX)
-            } else {
-                false
-            };
         let operand = match &inst.place {
             Place::Direct(value) => {
                 let Some(AssemblyLocation::FrameStack { offset }) =
@@ -3665,7 +3659,7 @@ mod tests {
         };
         let (live_frame, location) = allocated_frame("live");
 
-        generator.emit_borrow(&mut lines, &live_frame, location, &borrow);
+        generator.emit_borrow(&mut lines, &live_frame, "test", location, &borrow);
         assert_eq!(
             lines,
             [
@@ -3678,7 +3672,7 @@ mod tests {
 
         lines.clear();
         let (target_frame, location) = allocated_frame("reference");
-        generator.emit_borrow(&mut lines, &target_frame, location, &borrow);
+        generator.emit_borrow(&mut lines, &target_frame, "test", location, &borrow);
         assert_eq!(lines, ["  lea rax, [rbp-16]"]);
     }
 }
