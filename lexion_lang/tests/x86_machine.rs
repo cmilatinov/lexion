@@ -328,6 +328,14 @@ fn x86_machine_code_string_literals() {
 }
 
 #[test]
+fn x86_machine_code_empty_string_literal() {
+    let code = compile_machine_code("backend/x86_empty_string_literal.lex");
+
+    assert_eq!(&code.as_bytes()[code.data_offset()..], b"\0");
+    insta::assert_snapshot!(string_machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_reports_unsupported_string_parameters() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_string_parameter.lex"

@@ -102,7 +102,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     .get_mut(literal)
                     .expect("missing string literal label"),
             )?;
-            assembler.db(literal)?;
+            if literal.is_empty() {
+                assembler.db(&[0])?;
+            } else {
+                assembler.db(literal)?;
+            }
         }
         let result = assembler.assemble_options(
             options.base_address,
@@ -2011,9 +2015,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ) | Type::FunctionType(_))
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32
+                ) | Type::FunctionType(_)
+            )
         ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 

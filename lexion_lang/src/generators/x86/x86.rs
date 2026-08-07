@@ -3942,7 +3942,7 @@ mod tests {
         };
         let (live_frame, location) = allocated_frame("live");
 
-        generator.emit_borrow(&mut lines, &live_frame, "test", location, &borrow);
+        generator.emit_borrow(&mut lines, &live_frame, "main", location, &borrow);
         assert_eq!(
             lines,
             [
@@ -3955,7 +3955,7 @@ mod tests {
 
         lines.clear();
         let (target_frame, location) = allocated_frame("reference");
-        generator.emit_borrow(&mut lines, &target_frame, "test", location, &borrow);
+        generator.emit_borrow(&mut lines, &target_frame, "main", location, &borrow);
         assert_eq!(lines, ["  lea rax, [rbp-16]"]);
     }
 }
