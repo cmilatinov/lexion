@@ -696,6 +696,12 @@ impl<'a> CodeGeneratorX86<'a> {
                 if self.reference_pointee_is_function(function, reference) {
                     let reference_register = operand_register(frame, location, reference);
                     let value_register = operand_register(frame, location, &inst.value);
+                    let preserve_rax = reference_register != Some(Register::RAX)
+                        && value_register != Some(Register::RAX)
+                        && preserve_register(lines, frame, location, Register::RAX);
+                    let preserve_rcx = reference_register != Some(Register::RCX)
+                        && value_register != Some(Register::RCX)
+                        && preserve_register(lines, frame, location, Register::RCX);
                     if reference_register == Some(Register::RCX)
                         && value_register == Some(Register::RAX)
                     {
@@ -713,6 +719,8 @@ impl<'a> CodeGeneratorX86<'a> {
                         load_reference_operand(lines, frame, location, reference, Register::RAX);
                     }
                     lines.push(String::from("  mov QWORD PTR [rax], rcx"));
+                    restore_register(lines, Register::RCX, preserve_rcx);
+                    restore_register(lines, Register::RAX, preserve_rax);
                 } else {
                     load_operand(lines, frame, location, &inst.value, Register::RCX);
                     load_reference_operand(lines, frame, location, reference, Register::RAX);

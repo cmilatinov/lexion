@@ -454,6 +454,14 @@ fn x86_smoke_function_value_dereference_store_preserves_rax_callback() {
 }
 
 #[test]
+fn x86_smoke_function_value_dereference_store_preserves_live_scratch_registers() {
+    insta::assert_snapshot!(compile_x86_with_registers(
+        "backend/x86_function_value_dereference_store_live_scratch.lex",
+        vec![Register::RAX, Register::RCX],
+    ));
+}
+
+#[test]
 fn x86_smoke_zero_arg_indirect_aggregate_return_stages_rdi_callback() {
     insta::assert_snapshot!(compile_x86_with_registers(
         "backend/x86_zero_arg_indirect_aggregate_return.lex",

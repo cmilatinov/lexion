@@ -198,6 +198,14 @@ impl<'a> TypeChecker<'a> {
         if expr.operator == operators::ASSIGN && !self.assign(diag, expr) {
             return None;
         }
+        if expr.operator == operators::BORROW && self.is_function_declaration(&expr.args[0]) {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: expr.args[0].span,
+                message: String::from("cannot borrow a function declaration"),
+            });
+            return None;
+        }
         match self
             .operators
             .candidate_definitions(expr.operator, types.as_slice(), self.types)
@@ -599,6 +607,23 @@ impl<'a> TypeChecker<'a> {
         self.table
             .lookup(self.current_scope, ident)
             .is_some_and(|(_, _, entry)| entry.ty != SymbolTableEntryType::Function)
+    }
+
+    fn is_function_declaration(&self, expr: &SourcedExpr) -> bool {
+        let Sourced {
+            value:
+                TypedExpr {
+                    expr: Expr::IdentExpr(IdentExpr { ident }),
+                    ..
+                },
+            ..
+        } = expr
+        else {
+            return false;
+        };
+        self.table
+            .lookup(self.current_scope, ident)
+            .is_some_and(|(_, _, entry)| entry.ty == SymbolTableEntryType::Function)
     }
 
     fn is_place_expression(expr: &SourcedExpr) -> bool {
