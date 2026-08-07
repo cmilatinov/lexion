@@ -1,6 +1,7 @@
 ---
 source: lexion_lang/tests/compiler_emit.rs
 expression: assembly.as_str()
+snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
@@ -23,11 +24,16 @@ apply:
   mov QWORD PTR [rbp-8], rdi
   mov DWORD PTR [rbp-16], esi
 #     return callback(value);
-  mov r11, QWORD PTR [rbp-8]
+  push rax
+  mov rax, QWORD PTR [rbp-8]
+  xchg QWORD PTR [rsp], rax
   mov eax, DWORD PTR [rbp-16]
   push rax
   pop rdi
-  call r11
+  sub rsp, 8
+  call QWORD PTR [rsp+8]
+  add rsp, 8
+  add rsp, 8
   add rsp, 16
   pop rbp
   ret

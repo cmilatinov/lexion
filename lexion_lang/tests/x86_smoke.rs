@@ -446,6 +446,19 @@ fn x86_smoke_function_value_stages_indirect_target_before_arguments() {
 }
 
 #[test]
+fn x86_smoke_function_value_stages_indirect_target_without_clobbering_rax_or_r11() {
+    insta::assert_snapshot!(compile_x86_with_registers(
+        "backend/x86_function_value_indirect_target_register_conflict.lex",
+        vec![Register::RAX, Register::R11],
+    ));
+}
+
+#[test]
+fn x86_smoke_function_value_dereference() {
+    insta::assert_snapshot!(compile_x86("backend/x86_function_value_dereference.lex"));
+}
+
+#[test]
 fn x86_smoke_nested_function_value_argument() {
     insta::assert_snapshot!(compile_x86("backend/x86_nested_function_value.lex"));
 }

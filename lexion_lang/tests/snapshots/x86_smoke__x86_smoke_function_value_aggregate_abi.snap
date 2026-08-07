@@ -1,6 +1,7 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86(\"backend/x86_function_value_aggregate_abi.lex\")"
+snapshot_kind: text
 ---
 .intel_syntax noprefix
 .text
@@ -121,12 +122,13 @@ main:
   add ebx, DWORD PTR [rbp-80]
 #         + holder.callback(0);
   mov r12, QWORD PTR [rbp-112]
-  mov r11, r12
+  push rax
+  mov rax, r12
+  xchg QWORD PTR [rsp], rax
   mov eax, 0
   push rax
   pop rdi
-  sub rsp, 8
-  call r11
+  call QWORD PTR [rsp]
   add rsp, 8
 #     return first + second + third + fourth + fifth + sixth + seventh + eighth + ninth + tenth
 #         + holder.callback(0);

@@ -1,6 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-expression: "compile_x86_with_registers(\"backend/x86_function_value_indirect_target.lex\",\nvec![Register::RAX],)"
+expression: "compile_x86_with_registers(\"backend/x86_function_value_indirect_target_register_conflict.lex\",\nvec![Register::RAX, Register::R11],)"
 snapshot_kind: text
 ---
 .intel_syntax noprefix
@@ -10,12 +10,10 @@ add_one:
 # fn add_one(value: i32) -> i32 {
   push rbp
   mov rbp, rsp
-  sub rsp, 16
 #     return value + 1;
-  add eax, 1
-  mov DWORD PTR [rbp-8], eax
-  mov eax, DWORD PTR [rbp-8]
-  add rsp, 16
+  mov r11d, eax
+  add r11d, 1
+  mov eax, r11d
   pop rbp
   ret
 .global main
@@ -23,21 +21,21 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-  sub rsp, 16
 #     let callback = add_one;
   lea rax, [add_one]
-#     return callback(4);
+#     let value = 4;
+  mov r11d, 4
+#     return callback(value);
   push rax
   xchg QWORD PTR [rsp], rax
-  mov eax, 4
+  mov eax, r11d
   push rax
   pop rdi
   sub rsp, 8
   call QWORD PTR [rsp+8]
   add rsp, 8
   add rsp, 8
-  mov DWORD PTR [rbp-8], eax
-  mov eax, DWORD PTR [rbp-8]
-  add rsp, 16
+  mov r11d, eax
+  mov eax, r11d
   pop rbp
   ret

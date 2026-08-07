@@ -156,7 +156,11 @@ impl<'a> CodeGeneratorX86<'a> {
                         ..
                     })) = next_instruction
                     {
-                        load_function_operand(&mut lines, &frame, location, target, Register::R11);
+                        // Keep the target below the staged arguments without reserving an
+                        // allocatable register. Exchange restores a pending RAX argument.
+                        lines.push(String::from("  push rax"));
+                        load_function_operand(&mut lines, &frame, location, target, Register::RAX);
+                        lines.push(String::from("  xchg QWORD PTR [rsp], rax"));
                         staged_indirect_target = true;
                     }
                 }
@@ -599,7 +603,16 @@ impl<'a> CodeGeneratorX86<'a> {
                         preserve_register(lines, frame, location, target_register);
                 }
                 load_reference_operand(lines, frame, location, reference, target_register);
-                if self.reference_pointee_size(function, reference) == 1 {
+                if self.reference_pointee_is_function(function, reference) {
+                    lines.push(format!(
+                        "  mov {}, QWORD PTR [{}]",
+                        register_name(target_register),
+                        register_name(target_register)
+                    ));
+                    store_reference_operand(lines, frame, location, &inst.target, target_register);
+                    restore_register(lines, target_register, preserved_target_register);
+                    return;
+                } else if self.reference_pointee_size(function, reference) == 1 {
                     lines.push(format!(
                         "  movzx {}, BYTE PTR [{}]",
                         register_name_32(target_register),
@@ -680,12 +693,18 @@ impl<'a> CodeGeneratorX86<'a> {
                 store_operand(lines, frame, location, target, Register::RAX);
             }
             Place::Dereference(reference) => {
-                load_operand(lines, frame, location, &inst.value, Register::RCX);
-                load_reference_operand(lines, frame, location, reference, Register::RAX);
-                if self.reference_pointee_size(function, reference) == 1 {
-                    lines.push(String::from("  mov BYTE PTR [rax], cl"));
+                if self.reference_pointee_is_function(function, reference) {
+                    load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                    lines.push(String::from("  mov QWORD PTR [rax], rcx"));
                 } else {
-                    lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                    load_operand(lines, frame, location, &inst.value, Register::RCX);
+                    load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    if self.reference_pointee_size(function, reference) == 1 {
+                        lines.push(String::from("  mov BYTE PTR [rax], cl"));
+                    } else {
+                        lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                    }
                 }
             }
             Place::Member { .. } => {
@@ -879,6 +898,15 @@ impl<'a> CodeGeneratorX86<'a> {
             .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
             .map(|layout| layout.size)
             .unwrap_or(4)
+    }
+
+    fn reference_pointee_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+                Some(Type::RefType(ref_ty)) => Some(ref_ty.to),
+                _ => None,
+            })
+            .is_some_and(|ty| self.type_is_function(ty))
     }
 
     fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
@@ -1115,9 +1143,14 @@ impl<'a> CodeGeneratorX86<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32,
+                ) | Type::FunctionType(_),
+            )
         )
     }
 
@@ -1652,7 +1685,7 @@ impl<'a> CodeGeneratorX86<'a> {
         let staged_arg_count =
             usize::from(indexed_arguments) * argument_slot_counts.iter().sum::<usize>();
         let stack_padding = frame.call_stack_padding(
-            stack_arg_count + staged_arg_count,
+            stack_arg_count + staged_arg_count + usize::from(emission.staged_indirect_target),
             self.target.calling_convention().stack_alignment(),
         );
         if indirect_return {
@@ -1694,22 +1727,25 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             emit_call_stack_padding(lines, stack_arg_count, stack_padding);
         }
+        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
+            + stack_padding
+            + staged_arg_count * STACK_ARG_SLOT_BYTES;
         match &inst.target {
             FunctionCallTarget::Direct(name) => lines.push(format!("  call {name}")),
             FunctionCallTarget::Indirect(target) => {
                 if emission.staged_indirect_target {
-                    lines.push(String::from("  call r11"));
+                    lines.push(format!("  call QWORD PTR {}", rsp_slot(stack_cleanup)));
                 } else {
                     load_function_operand(lines, frame, location, target, Register::RAX);
                     lines.push(String::from("  call rax"));
                 }
             }
         }
-        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
-            + stack_padding
-            + staged_arg_count * STACK_ARG_SLOT_BYTES;
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
+        }
+        if emission.staged_indirect_target {
+            lines.push(String::from("  add rsp, 8"));
         }
         if let Some(return_target) = &inst.return_target {
             let return_register = self

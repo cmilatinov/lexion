@@ -1,6 +1,6 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-expression: "compile_x86(\"backend/x86_function_value_members.lex\")"
+expression: "compile_x86(\"backend/x86_function_value_dereference.lex\")"
 snapshot_kind: text
 ---
 .intel_syntax noprefix
@@ -21,19 +21,22 @@ main:
   push rbp
   mov rbp, rsp
   push rbx
-  sub rsp, 16
-#     let holder = Holder { callback: add_one };
-  lea rax, [add_one]
-  mov QWORD PTR [rbp-16], rax
-  mov eax, DWORD PTR [rbp-16]
-  mov DWORD PTR [rbp-24], eax
-  mov eax, DWORD PTR [rbp-16+4]
-  mov DWORD PTR [rbp-24+4], eax
-#     holder.callback = add_one;
+  sub rsp, 32
+#     let callback = add_one;
   lea rax, [add_one]
   mov QWORD PTR [rbp-24], rax
-#     return holder.callback(4);
-  mov rbx, QWORD PTR [rbp-24]
+#     let callback_ref = &callback;
+  lea rax, [rbp-24]
+  mov QWORD PTR [rbp-16], rax
+  mov rax, QWORD PTR [rbp-16]
+  mov QWORD PTR [rbp-32], rax
+#     *callback_ref = add_one;
+  mov rax, QWORD PTR [rbp-32]
+  lea rcx, [add_one]
+  mov QWORD PTR [rax], rcx
+#     return (*callback_ref)(4);
+  mov rbx, QWORD PTR [rbp-32]
+  mov rbx, QWORD PTR [rbx]
   push rax
   mov rax, rbx
   xchg QWORD PTR [rsp], rax
@@ -42,7 +45,7 @@ main:
   pop rdi
   call QWORD PTR [rsp]
   add rsp, 8
-  add rsp, 16
+  add rsp, 32
   pop rbx
   pop rbp
   ret

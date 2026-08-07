@@ -991,7 +991,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Direct(value) => load_operand(assembler, slots, value, eax)?,
             Place::Dereference(reference) => {
                 load_reference_operand(assembler, slots, reference, rax)?;
-                if self.reference_pointee_size(function, reference) == 1 {
+                if self.reference_pointee_is_function(function, reference) {
+                    assembler.mov(rax, qword_ptr(rax))?;
+                    return store_reference_operand(assembler, slots, &inst.target, rax);
+                } else if self.reference_pointee_size(function, reference) == 1 {
                     assembler.movzx(eax, byte_ptr(rax))?;
                 } else {
                     assembler.mov(eax, dword_ptr(rax))?;
@@ -1051,12 +1054,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 store_operand(assembler, slots, target, eax)
             }
             Place::Dereference(reference) => {
-                load_reference_operand(assembler, slots, reference, rax)?;
-                load_operand(assembler, slots, &inst.value, ecx)?;
-                if self.reference_pointee_size(function, reference) == 1 {
-                    assembler.mov(byte_ptr(rax), cl)
+                if self.reference_pointee_is_function(function, reference) {
+                    load_reference_operand(assembler, slots, reference, rax)?;
+                    load_function_operand(assembler, labels, slots, &inst.value, rcx)?;
+                    assembler.mov(qword_ptr(rax), rcx)
                 } else {
-                    assembler.mov(dword_ptr(rax), ecx)
+                    load_reference_operand(assembler, slots, reference, rax)?;
+                    load_operand(assembler, slots, &inst.value, ecx)?;
+                    if self.reference_pointee_size(function, reference) == 1 {
+                        assembler.mov(byte_ptr(rax), cl)
+                    } else {
+                        assembler.mov(dword_ptr(rax), ecx)
+                    }
                 }
             }
             Place::Member { .. } => {
@@ -1535,6 +1544,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .unwrap_or(4)
     }
 
+    fn reference_pointee_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+                Some(Type::RefType(ref_ty)) => Some(ref_ty.to),
+                _ => None,
+            })
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
     fn type_is_reference(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
@@ -1780,9 +1798,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32,
+                ) | Type::FunctionType(_),
+            )
         )
     }
 
