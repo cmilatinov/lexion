@@ -344,11 +344,24 @@ fn x86_machine_reports_unsupported_string_parameters() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_call_string_arg() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_call_string_arg.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_string_register_arguments() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_abi_registers.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_string_stack_arguments() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_abi_stack.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_nested_string_references() {
+    insta::assert_snapshot!(
+        compile_machine_code_error("backend/x86_unsupported_string.lex").join("\n")
+    );
 }
 
 #[test]
@@ -360,11 +373,10 @@ fn x86_machine_reports_unsupported_call_tuple_arg() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_string_returns() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_string_return.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_string_returns() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_return.lex"
+    )));
 }
 
 #[test]

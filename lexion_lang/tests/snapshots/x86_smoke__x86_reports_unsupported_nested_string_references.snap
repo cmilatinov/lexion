@@ -1,0 +1,30 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_string.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support nested string references yet: &&str
+   ,-[tests/fixtures/backend/x86_unsupported_string.lex:1:4]
+ 1 | fn take(value: & &str) -> i32 {
+   :    ^^|^
+   :      `-- here
+ 2 |     return 0;
+   `----
+
+  x x86 backend does not support nested string references yet: &&str
+   ,-[tests/fixtures/backend/x86_unsupported_string.lex:7:17]
+ 6 |     let value = "hello";
+ 7 |     return take(&value);
+   :                 ^^^|^^
+   :                    `-- here
+ 8 | }
+   `----
+
+  x x86 backend does not support nested string references yet: &&str
+   ,-[tests/fixtures/backend/x86_unsupported_string.lex:7:12]
+ 6 |     let value = "hello";
+ 7 |     return take(&value);
+   :            ^^^^^^|^^^^^
+   :                  `-- here
+ 8 | }
+   `----

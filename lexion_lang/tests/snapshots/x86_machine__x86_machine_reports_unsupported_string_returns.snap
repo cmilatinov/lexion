@@ -1,6 +1,0 @@
----
-source: lexion_lang/tests/x86_machine.rs
-expression: "compile_machine_code_error(\"backend/x86_unsupported_string_return.lex\").join(\"\\n\")"
-snapshot_kind: text
----
-x86 machine-code backend does not support string values yet: &str

@@ -1111,6 +1111,23 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
+    fn store_string_operand(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        operand: &Operand,
+    ) {
+        let Some(destination) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        lines.push(format!("  mov QWORD PTR {destination}, rax"));
+        lines.push(format!(
+            "  mov QWORD PTR {}, rdx",
+            offset_assembly_operand(&destination, 8)
+        ));
+    }
+
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
         self.operand_type(function, operand)
             .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
@@ -1293,8 +1310,7 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_abi_message(*ty)
-                    .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
                     .or_else(|| self.unsupported_type_message(*ty))
             })
             .or_else(|| {
@@ -1322,17 +1338,14 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_abi_message(*ty).or_else(|| {
-                    self.unsupported_aggregate_type_message(
-                        *ty,
-                        self.target
-                            .calling_convention()
-                            .assign_args(self.types, 0, signature)
-                            .get(index),
-                    )
-                })
+                self.unsupported_aggregate_type_message(
+                    *ty,
+                    self.target
+                        .calling_convention()
+                        .assign_args(self.types, 0, signature)
+                        .get(index),
+                )
             })
-            .or_else(|| self.unsupported_string_abi_message(signature.return_type))
             .or_else(|| {
                 self.unsupported_aggregate_type_message(
                     signature.return_type,
@@ -1359,6 +1372,9 @@ impl<'a> CodeGeneratorX86<'a> {
             {
                 None
             }
+            Type::RefType(ref_ty) if self.type_is_string_reference(ref_ty.to) => Some(format!(
+                "x86 backend does not support nested string references yet: {name}"
+            )),
             Type::RefType(ref_ty) if self.reference_target_supported(ref_ty.to) => None,
             Type::RefType(_) => Some(format!(
                 "x86 backend does not support references to `{name}` values yet"
@@ -1384,15 +1400,6 @@ impl<'a> CodeGeneratorX86<'a> {
                 ) | Type::FunctionType(_)
             )
         ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
-    }
-
-    fn unsupported_string_abi_message(&self, ty: Index) -> Option<String> {
-        self.type_is_string_reference(ty).then(|| {
-            format!(
-                "x86 backend does not support string values yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
     }
 
     fn unsupported_aggregate_type_message(
@@ -2002,7 +2009,9 @@ impl<'a> CodeGeneratorX86<'a> {
             let return_register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            if self.operand_is_aggregate(function, return_target) {
+            if self.operand_is_string_value(function, return_target) {
+                self.store_string_operand(lines, frame, location, return_target);
+            } else if self.operand_is_aggregate(function, return_target) {
                 if indirect_return {
                     // The callee has written directly to the return target and returns it in RAX.
                 } else if let Some((low, high)) = self.function_call_return_pair(inst) {
@@ -2055,7 +2064,25 @@ impl<'a> CodeGeneratorX86<'a> {
         location: CodeLocation,
         operand: &Operand,
     ) {
-        if self.operand_is_aggregate(function, operand) {
+        if self.operand_is_string_value(function, operand) {
+            lines.push(format!("  sub rsp, {}", 2 * STACK_ARG_SLOT_BYTES));
+            let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+            let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
+            self.load_string_operand(lines, frame, function, location, operand);
+            let descriptor_offset =
+                STACK_ARG_SLOT_BYTES * (usize::from(preserved_rax) + usize::from(preserved_rdx));
+            lines.push(format!(
+                "  mov QWORD PTR {}, rax",
+                rsp_slot(descriptor_offset)
+            ));
+            lines.push(format!(
+                "  mov QWORD PTR {}, rdx",
+                rsp_slot(descriptor_offset + STACK_ARG_SLOT_BYTES)
+            ));
+            restore_register(lines, Register::RDX, preserved_rdx);
+            restore_register(lines, Register::RAX, preserved_rax);
+            return;
+        } else if self.operand_is_aggregate(function, operand) {
             let Some(size) = self.aggregate_size(function, operand) else {
                 return;
             };
@@ -2188,6 +2215,33 @@ impl<'a> CodeGeneratorX86<'a> {
                 else {
                     continue;
                 };
+                if self.symbol_is_string_reference(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) {
+                    let Some(destination) =
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0)
+                    else {
+                        continue;
+                    };
+                    if let Some((low, high)) = register_pair(constraint.abi_location()) {
+                        store_aggregate_register(lines, low, &destination, 8);
+                        store_aggregate_register(
+                            lines,
+                            high,
+                            &offset_assembly_operand(&destination, 8),
+                            8,
+                        );
+                    } else if let Some(offset) = stack_location_offset(constraint.abi_location()) {
+                        emit_memory_copy(
+                            lines,
+                            &format!("[rbp+{}]", 16 + offset * STACK_ARG_SLOT_BYTES),
+                            &destination,
+                            16,
+                        );
+                    }
+                    continue;
+                }
                 if self.symbol_is_aggregate(
                     &self.cfg[range.start].label,
                     &assigned.interval().variable,
@@ -2329,6 +2383,12 @@ impl<'a> CodeGeneratorX86<'a> {
                     Some(Type::RefType(_))
                 )
             })
+    }
+
+    fn symbol_is_string_reference(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_string_reference(ty))
     }
 
     fn symbol_is_function(&self, function: &str, name: &str) -> bool {
@@ -3355,7 +3415,7 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
 fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
     let mut saw_stack_argument = false;
     arg_locations.iter().any(|location| {
-        if stack_argument_offset(location).is_some() {
+        if stack_location_offset(location).is_some() {
             saw_stack_argument = true;
             return false;
         }
@@ -3424,10 +3484,15 @@ fn emit_indexed_call_arguments(
 }
 
 fn staged_argument_slot_count(location: &Location) -> usize {
-    if register_pair(location).is_some() {
-        2
-    } else {
-        1
+    match location {
+        Location::Pair { low, high } => {
+            staged_argument_slot_count(low) + staged_argument_slot_count(high)
+        }
+        Location::NoStorage
+        | Location::Register(_)
+        | Location::Stack(_)
+        | Location::RegisterAndStack(_, _)
+        | Location::Indirect { .. } => 1,
     }
 }
 
@@ -3714,16 +3779,6 @@ fn stack_location_offset(location: &Location) -> Option<usize> {
         Location::RegisterAndStack(_, offset) => Some(offset.0),
         Location::Pair { low, .. } => stack_location_offset(low),
         Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
-    }
-}
-
-fn stack_argument_offset(location: &Location) -> Option<usize> {
-    match location {
-        Location::Stack(_) | Location::Pair { .. } => stack_location_offset(location),
-        Location::NoStorage
-        | Location::Register(_)
-        | Location::RegisterAndStack(_, _)
-        | Location::Indirect { .. } => None,
     }
 }
 

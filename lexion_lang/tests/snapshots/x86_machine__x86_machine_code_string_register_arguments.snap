@@ -1,0 +1,35 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "string_machine_snapshot(&compile_machine_code(\"backend/x86_string_abi_registers.lex\"))"
+snapshot_kind: text
+---
+symbols:
+accept=0x0000
+main=0x000E
+
+code bytes:
+55 48 89 E5 B8 00 00 00 00 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 48 8D 3D 1A 00 00 00 48 BE 05 00 00 00 00 00 00 00 E8 D4 FF FF FF 89 45 FC 8B 45 FC 48 89 EC 5D C3
+
+data bytes:
+68 65 6C 6C 6F
+
+disassembly:
+accept:
+0000: push rbp
+0001: mov rbp,rsp
+0004: mov eax,0
+0009: mov rsp,rbp
+000C: pop rbp
+000D: ret
+main:
+000E: push rbp
+000F: mov rbp,rsp
+0012: sub rsp,10h
+0016: lea rdi,[37h]
+001D: mov rsi,5
+0027: call 0 <accept>
+002C: mov [rbp-4],eax
+002F: mov eax,[rbp-4]
+0032: mov rsp,rbp
+0035: pop rbp
+0036: ret

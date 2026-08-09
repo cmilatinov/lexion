@@ -1,0 +1,55 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_string_abi_scalar_register_preservation.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global accept
+accept:
+# fn accept(first: i32, second: i32, third: i32, value: &str) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  mov DWORD PTR [rbp-8], edx
+#     return third;
+  mov eax, DWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     let first = 1;
+  mov edi, 1
+#     let second = 2;
+  mov esi, 2
+#     let third = 3;
+  mov edx, 3
+#     return accept(first, second, third, "hello");
+  sub rsp, 16
+  push rdx
+  lea rax, [rip + .Lstr_68656c6c6f]
+  mov rdx, 5
+  mov QWORD PTR [rsp+8], rax
+  mov QWORD PTR [rsp+16], rdx
+  pop rdx
+  mov eax, edx
+  push rax
+  mov eax, esi
+  push rax
+  mov eax, edi
+  push rax
+  pop rdi
+  pop rsi
+  pop rdx
+  pop rcx
+  pop r8
+  call accept
+  pop rbp
+  ret
+.section .rodata
+.Lstr_68656c6c6f:
+  .byte 104, 101, 108, 108, 111

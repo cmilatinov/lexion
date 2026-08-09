@@ -305,24 +305,30 @@ fn x86_smoke_string_literals() {
 }
 
 #[test]
-fn x86_reports_unsupported_string_parameters() {
-    insta::assert_snapshot!(
-        compile_x86_error("backend/x86_unsupported_string_parameter.lex").join("\n")
-    );
+fn x86_smoke_string_register_arguments() {
+    insta::assert_snapshot!(compile_x86("backend/x86_string_abi_registers.lex"));
 }
 
 #[test]
-fn x86_reports_unsupported_string_returns() {
-    insta::assert_snapshot!(
-        compile_x86_error("backend/x86_unsupported_string_return.lex").join("\n")
-    );
+fn x86_smoke_string_staging_preserves_scalar_argument_registers() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_string_abi_scalar_register_preservation.lex"
+    ));
 }
 
 #[test]
-fn x86_reports_unsupported_call_string_arg() {
-    insta::assert_snapshot!(
-        compile_x86_error("backend/x86_unsupported_call_string_arg.lex").join("\n")
-    );
+fn x86_smoke_string_stack_arguments() {
+    insta::assert_snapshot!(compile_x86("backend/x86_string_abi_stack.lex"));
+}
+
+#[test]
+fn x86_smoke_string_stack_descriptor_before_register_argument() {
+    insta::assert_snapshot!(compile_x86("backend/x86_string_abi_indexed.lex"));
+}
+
+#[test]
+fn x86_reports_unsupported_nested_string_references() {
+    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_string.lex").join("\n"));
 }
 
 #[test]

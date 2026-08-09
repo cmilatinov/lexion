@@ -379,7 +379,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Instruction::FunctionCall(inst) => {
                 self.emit_function_call(
                     assembler,
-                    labels.blocks,
+                    labels,
                     slots,
                     context.name,
                     pending_params,
@@ -609,7 +609,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_function_call(
         &self,
         assembler: &mut CodeAssembler,
-        labels: &HashMap<String, CodeLabel>,
+        labels: MachineLabels<'_>,
         slots: &BTreeMap<String, usize>,
         function: &str,
         pending_params: &[Operand],
@@ -670,13 +670,23 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         }
 
         for (param, offset, ty) in &stack_args {
-            if self.type_is_aggregate(*ty) {
+            if self.type_is_string_reference(*ty) {
+                self.emit_string_stack_argument(
+                    assembler,
+                    labels.strings,
+                    slots,
+                    function,
+                    param,
+                    *offset,
+                )?;
+                continue;
+            } else if self.type_is_aggregate(*ty) {
                 self.emit_aggregate_stack_argument(assembler, slots, function, param, *offset)?;
                 continue;
             } else if self.type_is_reference(*ty) {
                 load_reference_operand(assembler, slots, param, rax)?;
             } else if self.type_is_function(*ty) {
-                load_function_operand(assembler, labels, slots, param, rax)?;
+                load_function_operand(assembler, labels.blocks, slots, param, rax)?;
             } else if self.operand_is_f32(function, param) {
                 load_float_operand(assembler, slots, param, xmm0)?;
                 assembler.movd(eax, xmm0)?;
@@ -693,7 +703,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .zip(locations.iter())
             .zip(signature.params.iter())
         {
-            if let Some((low, high)) = register_pair(location) {
+            if self.type_is_string_reference(*ty) {
+                if let Some((low, high)) = register_pair(location) {
+                    self.load_string_operand_into(
+                        assembler,
+                        labels.strings,
+                        slots,
+                        function,
+                        param,
+                        (asm_register64(low), asm_register64(high)),
+                    )?;
+                }
+            } else if let Some((low, high)) = register_pair(location) {
                 self.load_aggregate_pair(assembler, slots, function, param, low, high)?;
             } else if let Some(register) = outgoing_register(location) {
                 if is_xmm_register(register) {
@@ -703,7 +724,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 } else if self.type_is_function(*ty) {
                     load_function_operand(
                         assembler,
-                        labels,
+                        labels.blocks,
                         slots,
                         param,
                         asm_register64(register),
@@ -722,9 +743,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
         }
         match &inst.target {
-            FunctionCallTarget::Direct(name) => assembler.call(label_name(labels, name))?,
+            FunctionCallTarget::Direct(name) => assembler.call(label_name(labels.blocks, name))?,
             FunctionCallTarget::Indirect(target) => {
-                load_function_operand(assembler, labels, slots, target, rax)?;
+                load_function_operand(assembler, labels.blocks, slots, target, rax)?;
                 assembler.call(rax)?;
             }
         }
@@ -736,7 +757,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             let register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            if self.operand_is_aggregate(function, return_target) {
+            if self.operand_is_string_value(function, return_target) {
+                self.store_string_operand(assembler, slots, return_target, rax, rdx)?;
+            } else if self.operand_is_aggregate(function, return_target) {
                 if indirect_return {
                     // The callee has written directly to the return target and returns it in RAX.
                 } else if let Some((low, high)) = self.function_call_return_pair(inst) {
@@ -792,7 +815,24 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .zip(locations.iter())
         {
             if let Some(offset) = slots.get(param.as_str()) {
-                if is_f32_type(self.types, *ty) {
+                if self.type_is_string_reference(*ty) {
+                    if let Some((low, high)) = register_pair(location) {
+                        self.store_string_operand(
+                            assembler,
+                            slots,
+                            &Operand::Variable(param.clone()),
+                            asm_register64(low),
+                            asm_register64(high),
+                        )?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        self.store_string_stack_param(
+                            assembler,
+                            slots,
+                            &Operand::Variable(param.clone()),
+                            stack_offset,
+                        )?;
+                    }
+                } else if is_f32_type(self.types, *ty) {
                     if let Some(register) = outgoing_register(location) {
                         assembler
                             .movss(dword_ptr(rbp - *offset as i32), asm_register_xmm(register))?;
@@ -1746,27 +1786,105 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         function: &str,
         operand: &Operand,
     ) -> Result<(), IcedError> {
+        self.load_string_operand_into(
+            assembler,
+            literal_labels,
+            slots,
+            function,
+            operand,
+            (rax, rdx),
+        )
+    }
+
+    fn load_string_operand_into(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        (pointer, length): (AsmRegister64, AsmRegister64),
+    ) -> Result<(), IcedError> {
         match operand {
             Operand::Literal(Lit::String(value)) => {
                 let data = string_literal_data(value);
                 assembler.lea(
-                    rax,
+                    pointer,
                     (*literal_labels
                         .get(&data)
                         .expect("missing string literal label"))
                     .into(),
                 )?;
-                assembler.mov(rdx, data.len() as i64)
+                assembler.mov(length, data.len() as i64)
             }
             _ if self.operand_is_string_value(function, operand) => {
-                assembler.mov(rax, reference_stack_value(slots, operand))?;
+                assembler.mov(pointer, reference_stack_value(slots, operand))?;
                 assembler.mov(
-                    rdx,
+                    length,
                     qword_ptr(rbp - aggregate_stack_offset(slots, operand, 8)),
                 )
             }
             _ => unreachable!("unsupported string values are diagnosed before emission"),
         }
+    }
+
+    fn store_string_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        pointer: AsmRegister64,
+        length: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        assembler.mov(reference_stack_value(slots, operand), pointer)?;
+        assembler.mov(
+            qword_ptr(rbp - aggregate_stack_offset(slots, operand, 8)),
+            length,
+        )
+    }
+
+    fn emit_string_stack_argument(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        self.load_string_operand_into(
+            assembler,
+            literal_labels,
+            slots,
+            function,
+            operand,
+            (rax, rdx),
+        )?;
+        assembler.mov(
+            qword_ptr(rsp + (stack_offset * STACK_ARG_SLOT_BYTES) as i32),
+            rax,
+        )?;
+        assembler.mov(
+            qword_ptr(rsp + ((stack_offset + 1) * STACK_ARG_SLOT_BYTES) as i32),
+            rdx,
+        )
+    }
+
+    fn store_string_stack_param(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        let incoming = incoming_stack_arg_offset(stack_offset) as i32;
+        assembler.mov(rax, qword_ptr(rbp + incoming))?;
+        assembler.mov(reference_stack_value(slots, operand), rax)?;
+        assembler.mov(rdx, qword_ptr(rbp + incoming + STACK_ARG_SLOT_BYTES as i32))?;
+        assembler.mov(
+            qword_ptr(rbp - aggregate_stack_offset(slots, operand, 8)),
+            rdx,
+        )
     }
 
     fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
@@ -1916,8 +2034,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_abi_message(*ty)
-                    .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
                     .or_else(|| self.unsupported_type_message(*ty))
             })
             .or_else(|| {
@@ -1949,10 +2066,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_string_abi_message(*ty)
-                    .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
             })
-            .or_else(|| self.unsupported_string_abi_message(signature.return_type))
             .or_else(|| {
                 self.unsupported_aggregate_type_message(
                     signature.return_type,
@@ -1999,6 +2114,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             {
                 None
             }
+            Type::RefType(ref_ty) if self.type_is_string_reference(ref_ty.to) => Some(format!(
+                "x86 machine-code backend does not support nested string references yet: {name}"
+            )),
             Type::RefType(ref_ty) if self.reference_target_supported(ref_ty.to) => None,
             Type::RefType(_) => Some(format!(
                 "x86 machine-code backend does not support references to `{name}` values yet"
@@ -2024,15 +2142,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 ) | Type::FunctionType(_)
             )
         ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
-    }
-
-    fn unsupported_string_abi_message(&self, ty: Index) -> Option<String> {
-        self.type_is_string_reference(ty).then(|| {
-            format!(
-                "x86 machine-code backend does not support string values yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
     }
 
     fn unsupported_aggregate_type_message(
