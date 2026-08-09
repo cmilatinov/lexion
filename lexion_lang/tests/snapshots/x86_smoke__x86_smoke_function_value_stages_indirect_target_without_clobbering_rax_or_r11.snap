@@ -1,0 +1,41 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_with_registers(\"backend/x86_function_value_indirect_target_register_conflict.lex\",\nvec![Register::RAX, Register::R11],)"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov r11d, eax
+  add r11d, 1
+  mov eax, r11d
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     let callback = add_one;
+  lea rax, [add_one]
+#     let value = 4;
+  mov r11d, 4
+#     return callback(value);
+  push rax
+  xchg QWORD PTR [rsp], rax
+  mov eax, r11d
+  push rax
+  pop rdi
+  sub rsp, 8
+  call QWORD PTR [rsp+8]
+  add rsp, 8
+  add rsp, 8
+  mov r11d, eax
+  mov eax, r11d
+  pop rbp
+  ret

@@ -432,17 +432,50 @@ fn x86_machine_reports_unsupported_zero_fixed_vararg_calls() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_function_values() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_function_value.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_function_values() {
+    let code = compile_machine_code("backend/x86_function_values.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
 }
 
 #[test]
-fn x86_machine_reports_unsupported_shadowed_function_value_calls() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_shadowed_function_value.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_function_value_returns() {
+    let code = compile_machine_code("backend/x86_function_value_returns.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_function_value_members() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_members.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_function_value_dereference_store() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_dereference_store.lex",
+    )));
+}
+
+#[test]
+fn x86_machine_code_function_value_dereference() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_dereference.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_function_value_aggregate_abi() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_aggregate_abi.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_nested_function_value_argument() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_nested_function_value.lex"
+    )));
 }

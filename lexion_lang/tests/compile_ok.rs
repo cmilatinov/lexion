@@ -45,6 +45,16 @@ fn test_functions() {
 }
 
 #[test]
+fn test_function_value_types() {
+    common::assert_compiles("backend/x86_function_values.lex");
+}
+
+#[test]
+fn test_function_value_call_order_and_returns() {
+    common::assert_compiles("backend/x86_function_value_returns.lex");
+}
+
+#[test]
 fn test_control_flow() {
     common::assert_compiles("control_flow/if_else_returns.lex");
 }

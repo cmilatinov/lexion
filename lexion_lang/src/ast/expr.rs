@@ -130,6 +130,7 @@ pub enum Type {
     Path(PathType),
     Reference(ReferenceType),
     Tuple(TupleType),
+    Function(FunctionType),
 }
 
 #[derive(Debug)]
@@ -150,4 +151,10 @@ pub struct ReferenceType {
 #[derive(Debug)]
 pub struct TupleType {
     pub types: Vec<Sourced<Type>>,
+}
+
+#[derive(Debug)]
+pub struct FunctionType {
+    pub params: Vec<Sourced<Type>>,
+    pub return_type: Box<Sourced<Type>>,
 }

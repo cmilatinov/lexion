@@ -3,7 +3,7 @@ use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction,
-    FunctionRange, Instruction, Operand, Place,
+    FunctionCallTarget, FunctionRange, Instruction, Operand, Place,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::{Bitness, SizeAlign, X86Target};
@@ -197,7 +197,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::Store(inst) => {
-                self.emit_store(assembler, slots, context.name, inst)?;
+                self.emit_store(assembler, labels, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Assignment(inst) => {
@@ -207,6 +207,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Instruction::Copy(inst) => {
                 if self.operand_is_aggregate(context.name, &inst.src) {
                     self.emit_aggregate_copy(assembler, slots, context.name, inst)?;
+                } else if self.operand_is_function(context.name, &inst.src)
+                    || self.operand_is_function(context.name, &inst.dst)
+                {
+                    load_function_operand(assembler, labels, slots, &inst.src, rax)?;
+                    store_reference_operand(assembler, slots, &inst.dst, rax)?;
                 } else if self.operand_is_reference(context.name, &inst.src)
                     || self.operand_is_reference(context.name, &inst.dst)
                 {
@@ -262,6 +267,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                                 asm_register64(context.return_register),
                             )?;
                         }
+                    } else if self.function_returns_function(context.name) {
+                        load_function_operand(
+                            assembler,
+                            labels,
+                            slots,
+                            value,
+                            asm_register64(context.return_register),
+                        )?;
                     } else if self.operand_is_reference(context.name, value) {
                         load_reference_operand(
                             assembler,
@@ -591,6 +604,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 continue;
             } else if self.type_is_reference(*ty) {
                 load_reference_operand(assembler, slots, param, rax)?;
+            } else if self.type_is_function(*ty) {
+                load_function_operand(assembler, labels, slots, param, rax)?;
             } else if self.operand_is_f32(function, param) {
                 load_float_operand(assembler, slots, param, xmm0)?;
                 assembler.movd(eax, xmm0)?;
@@ -614,6 +629,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     load_float_operand(assembler, slots, param, asm_register_xmm(register))?;
                 } else if self.type_is_reference(*ty) {
                     load_reference_operand(assembler, slots, param, asm_register64(register))?;
+                } else if self.type_is_function(*ty) {
+                    load_function_operand(
+                        assembler,
+                        labels,
+                        slots,
+                        param,
+                        asm_register64(register),
+                    )?;
                 } else if self.type_is_aggregate(*ty) {
                     self.load_aggregate_operand(
                         assembler,
@@ -627,7 +650,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 }
             }
         }
-        assembler.call(label_name(labels, inst.function.as_str()))?;
+        match &inst.target {
+            FunctionCallTarget::Direct(name) => assembler.call(label_name(labels, name))?,
+            FunctionCallTarget::Indirect(target) => {
+                load_function_operand(assembler, labels, slots, target, rax)?;
+                assembler.call(rax)?;
+            }
+        }
         let stack_cleanup = reserved_stack_bytes;
         if stack_cleanup > 0 {
             assembler.add(rsp, stack_cleanup as i32)?;
@@ -657,7 +686,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         asm_register64(register),
                     )?;
                 }
-            } else if self.operand_is_reference(function, return_target) {
+            } else if self.operand_is_reference(function, return_target)
+                || self.operand_is_function(function, return_target)
+            {
                 store_reference_operand(assembler, slots, return_target, asm_register64(register))?;
             } else if self.operand_is_f32(function, return_target) {
                 store_float_operand(assembler, slots, return_target, asm_register_xmm(register))?;
@@ -726,7 +757,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                             stack_offset,
                         )?;
                     }
-                } else if self.type_is_reference(*ty) {
+                } else if self.type_is_reference(*ty) || self.type_is_function(*ty) {
                     if let Some(register) = outgoing_register(location) {
                         assembler.mov(qword_ptr(rbp - *offset as i32), asm_register64(register))?;
                     } else if let Some(stack_offset) = stack_offset(location) {
@@ -813,7 +844,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .return_target
                 .as_ref()
                 .and_then(|target| self.operand_source_span(target))
-                .or_else(|| self.symbol_span(&inst.function)),
+                .or_else(|| {
+                    inst.target
+                        .direct_name()
+                        .and_then(|name| self.symbol_span(name))
+                }),
             Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
             Instruction::Return(inst) => inst
                 .value
@@ -912,8 +947,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => self
-                .unsupported_call_target_message(inst)
-                .or_else(|| self.unsupported_extern_call_message(inst))
+                .unsupported_extern_call_message(inst)
                 .or_else(|| self.unsupported_call_signature_message(inst)),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
@@ -957,7 +991,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Direct(value) => load_operand(assembler, slots, value, eax)?,
             Place::Dereference(reference) => {
                 load_reference_operand(assembler, slots, reference, rax)?;
-                if self.reference_pointee_size(function, reference) == 1 {
+                if self.reference_pointee_is_function(function, reference) {
+                    assembler.mov(rax, qword_ptr(rax))?;
+                    return store_reference_operand(assembler, slots, &inst.target, rax);
+                } else if self.reference_pointee_size(function, reference) == 1 {
                     assembler.movzx(eax, byte_ptr(rax))?;
                 } else {
                     assembler.mov(eax, dword_ptr(rax))?;
@@ -976,7 +1013,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         size,
                     );
                 }
-                if self.type_is_reference(ty) {
+                if self.type_is_reference(ty) || self.type_is_function(ty) {
                     assembler.mov(
                         rax,
                         qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
@@ -1006,6 +1043,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_store(
         &self,
         assembler: &mut CodeAssembler,
+        labels: &HashMap<String, CodeLabel>,
         slots: &BTreeMap<String, usize>,
         function: &str,
         inst: &crate::generators::tac::instructions::StoreInstruction,
@@ -1016,12 +1054,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 store_operand(assembler, slots, target, eax)
             }
             Place::Dereference(reference) => {
-                load_reference_operand(assembler, slots, reference, rax)?;
-                load_operand(assembler, slots, &inst.value, ecx)?;
-                if self.reference_pointee_size(function, reference) == 1 {
-                    assembler.mov(byte_ptr(rax), cl)
+                if self.reference_pointee_is_function(function, reference) {
+                    load_function_operand(assembler, labels, slots, &inst.value, rcx)?;
+                    load_reference_operand(assembler, slots, reference, rax)?;
+                    assembler.mov(qword_ptr(rax), rcx)
                 } else {
-                    assembler.mov(dword_ptr(rax), ecx)
+                    load_reference_operand(assembler, slots, reference, rax)?;
+                    load_operand(assembler, slots, &inst.value, ecx)?;
+                    if self.reference_pointee_size(function, reference) == 1 {
+                        assembler.mov(byte_ptr(rax), cl)
+                    } else {
+                        assembler.mov(dword_ptr(rax), ecx)
+                    }
                 }
             }
             Place::Member { .. } => {
@@ -1036,8 +1080,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                         (&base, offset),
                         size,
                     )
-                } else if self.type_is_reference(ty) {
-                    load_reference_operand(assembler, slots, &inst.value, rax)?;
+                } else if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    if self.type_is_function(ty) {
+                        load_function_operand(assembler, labels, slots, &inst.value, rax)?;
+                    } else {
+                        load_reference_operand(assembler, slots, &inst.value, rax)?;
+                    }
                     assembler.mov(
                         qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
                         rax,
@@ -1107,7 +1155,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     | PrimitiveType::I32
                     | PrimitiveType::U32,
                 )
-                | Type::RefType(_),
+                | Type::RefType(_)
+                | Type::FunctionType(_),
             ) => true,
             Some(Type::TupleType(tuple)) => tuple
                 .types
@@ -1495,10 +1544,31 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .unwrap_or(4)
     }
 
+    fn reference_pointee_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+                Some(Type::RefType(ref_ty)) => Some(ref_ty.to),
+                _ => None,
+            })
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
     fn type_is_reference(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
             Some(Type::RefType(_))
+        )
+    }
+
+    fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn type_is_function(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::FunctionType(_))
         )
     }
 
@@ -1538,7 +1608,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     | PrimitiveType::BOOL
                     | PrimitiveType::CHAR
             ))
-        ) || (self.type_is_reference(ty) && self.types.size_align(ty, Bitness::_64).size == 8)
+        ) || ((self.type_is_reference(ty) || self.type_is_function(ty))
+            && self.types.size_align(ty, Bitness::_64).size == 8)
             || self.type_is_aggregate(ty)))
         .then(|| {
             format!(
@@ -1649,7 +1720,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         if signature.is_vararg {
             return Some(format!(
                 "x86 machine-code backend does not support calls to vararg functions yet: {}",
-                inst.function
+                inst.target
             ));
         }
         let locations = self
@@ -1675,21 +1746,12 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
-            format!(
-                "x86 machine-code backend does not support calls to extern functions yet: {}",
-                inst.function
-            )
-        })
-    }
-
-    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (!inst.is_direct_function).then(|| {
-            format!(
-                "x86 machine-code backend does not support indirect calls through function values yet: {}",
-                inst.function
-            )
-        })
+        inst.target
+            .direct_name()
+            .filter(|function| self.is_extern_function(function))
+            .map(|function| {
+                format!("x86 machine-code backend does not support calls to extern functions yet: {function}")
+            })
     }
 
     fn is_extern_function(&self, function: &str) -> bool {
@@ -1724,9 +1786,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Type::RefType(_) => Some(format!(
                 "x86 machine-code backend does not support references to `{name}` values yet"
             )),
-            Type::FunctionType(_) => Some(format!(
-                "x86 machine-code backend does not support function values yet: {name}"
-            )),
+            Type::FunctionType(_) => None,
             Type::TupleType(_)
             | Type::StructType(_)
             | Type::TypeDefType(_)
@@ -1738,9 +1798,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32,
+                ) | Type::FunctionType(_),
+            )
         )
     }
 
@@ -1921,7 +1986,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
             }
-            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+            Operand::Label(name) => self
+                .function_symbol_entry(function, name)
+                .or_else(|| self.global_symbol_entry(name))
+                .and_then(|entry| entry.var_type),
+            Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }
     }
 
@@ -1962,6 +2031,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(register_pair)
+    }
+
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
     }
 
     fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
@@ -2114,6 +2188,25 @@ fn load_reference_operand(
         Operand::Placeholder => assembler.xor(register, register),
         Operand::Literal(_) | Operand::Label(_) => {
             unreachable!("references must be stored in variables or temporaries: {operand:?}")
+        }
+    }
+}
+
+fn load_function_operand(
+    assembler: &mut CodeAssembler,
+    labels: &HashMap<String, CodeLabel>,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    register: AsmRegister64,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Label(name) => assembler.lea(register, label_name(labels, name).into()),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.mov(register, reference_stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xor(register, register),
+        Operand::Literal(_) => {
+            unreachable!("function values must be stored or declared functions")
         }
     }
 }
@@ -2695,6 +2788,9 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
             }
         }
         Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand(target, names);
+            }
             if let Some(target) = &inst.return_target {
                 collect_operand(target, names);
             }

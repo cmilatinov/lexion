@@ -1431,6 +1431,16 @@
       }
     },
     {
+      "left": "Type",
+      "right": [
+        "FunctionType"
+      ],
+      "reduction": {
+        "ty": "Sourced<Type>",
+        "code": "$$ = $1;"
+      }
+    },
+    {
       "left": "PathType",
       "right": [
         "Path"
@@ -1494,6 +1504,35 @@
       "reduction": {
         "ty": "Sourced<Type>",
         "code": "$$ = (\n        SpanBuilder::merge($1.span, $2.span),\n        Type::Tuple(TupleType {\n            types: vec![]\n        })\n    ).into();"
+      }
+    },
+    {
+      "left": "FunctionType",
+      "right": [
+        "'fn'",
+        "'('",
+        "TypeList",
+        "')'",
+        "'->'",
+        "Type"
+      ],
+      "reduction": {
+        "ty": "Sourced<Type>",
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $6.span),\n        Type::Function(FunctionType {\n            params: $3,\n            return_type: Box::new($6),\n        })\n    ).into();"
+      }
+    },
+    {
+      "left": "FunctionType",
+      "right": [
+        "'fn'",
+        "'('",
+        "')'",
+        "'->'",
+        "Type"
+      ],
+      "reduction": {
+        "ty": "Sourced<Type>",
+        "code": "$$ = (\n        SpanBuilder::merge($1.span, $5.span),\n        Type::Function(FunctionType {\n            params: vec![],\n            return_type: Box::new($5),\n        })\n    ).into();"
       }
     },
     {

@@ -1,0 +1,148 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_function_value_aggregate_abi.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global relay
+relay:
+# fn relay(holder: Holder) -> Holder {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  push rdi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-16], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-16+4], eax
+  add rsp, 8
+#     return holder;
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-16]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-16+4]
+  mov DWORD PTR [rsp+4], eax
+  mov rax, QWORD PTR [rsp]
+  add rsp, 8
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  push r12
+  push r13
+  push r14
+  push r15
+  sub rsp, 80
+#     let first = 1;
+  mov ebx, 1
+#     let second = 2;
+  mov r12d, 2
+#     let third = 3;
+  mov r13d, 3
+#     let fourth = 4;
+  mov r14d, 4
+#     let fifth = 5;
+  mov r15d, 5
+#     let sixth = 6;
+  mov eax, 6
+  mov DWORD PTR [rbp-48], eax
+#     let seventh = 7;
+  mov eax, 7
+  mov DWORD PTR [rbp-56], eax
+#     let eighth = 8;
+  mov eax, 8
+  mov DWORD PTR [rbp-64], eax
+#     let ninth = 9;
+  mov eax, 9
+  mov DWORD PTR [rbp-72], eax
+#     let tenth = 10;
+  mov eax, 10
+  mov DWORD PTR [rbp-80], eax
+#     let callback = add_one;
+  lea rax, [add_one]
+#     let holder = relay(Holder { callback: callback });
+  push rax
+  mov QWORD PTR [rbp-104], rax
+  pop rax
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-104]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-104+4]
+  mov DWORD PTR [rsp+4], eax
+  pop rdi
+  sub rsp, 8
+  call relay
+  add rsp, 8
+  push rax
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-96], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-96+4], eax
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-96]
+  mov DWORD PTR [rbp-112], eax
+  mov eax, DWORD PTR [rbp-96+4]
+  mov DWORD PTR [rbp-112+4], eax
+#     return first + second + third + fourth + fifth + sixth + seventh + eighth + ninth + tenth
+  mov eax, ebx
+  add eax, r12d
+  mov esi, eax
+  add esi, r13d
+  mov eax, esi
+  add eax, r14d
+  mov esi, eax
+  add esi, r15d
+  mov eax, esi
+  add eax, DWORD PTR [rbp-48]
+  mov esi, eax
+  add esi, DWORD PTR [rbp-56]
+  mov eax, esi
+  add eax, DWORD PTR [rbp-64]
+  mov esi, eax
+  add esi, DWORD PTR [rbp-72]
+  mov ebx, esi
+  add ebx, DWORD PTR [rbp-80]
+#         + holder.callback(0);
+  mov r12, QWORD PTR [rbp-112]
+  push rax
+  mov rax, r12
+  xchg QWORD PTR [rsp], rax
+  mov eax, 0
+  push rax
+  pop rdi
+  call QWORD PTR [rsp]
+  add rsp, 8
+#     return first + second + third + fourth + fifth + sixth + seventh + eighth + ninth + tenth
+#         + holder.callback(0);
+  push rax
+  mov eax, ebx
+  add eax, DWORD PTR [rsp]
+  add rsp, 8
+  mov DWORD PTR [rbp-88], eax
+  mov eax, DWORD PTR [rbp-88]
+  add rsp, 80
+  pop r15
+  pop r14
+  pop r13
+  pop r12
+  pop rbx
+  pop rbp
+  ret

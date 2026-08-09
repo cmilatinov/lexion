@@ -572,7 +572,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                                     .push(AbiLocationConstraint {
                                         location: *location,
                                         role: AbiLocationRole::CallArgument {
-                                            function: call.function.clone(),
+                                            function: call.target.to_string(),
                                             index,
                                         },
                                         abi_location,
@@ -593,7 +593,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                                     .push(AbiLocationConstraint {
                                         location: CodeLocation::new(block, instruction_index),
                                         role: AbiLocationRole::CallReturn {
-                                            function: call.function.clone(),
+                                            function: call.target.to_string(),
                                         },
                                         abi_location,
                                     });

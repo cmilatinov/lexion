@@ -3,8 +3,9 @@ use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, BaseInstruction, BorrowInstruction, CodeLocation,
-    ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction, FunctionRange,
-    Instruction, InstructionInstance, LoadInstruction, Operand, Place, StoreInstruction,
+    ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction, FunctionCallTarget,
+    FunctionRange, Instruction, InstructionInstance, LoadInstruction, Operand, Place,
+    StoreInstruction,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
 use crate::generators::x86::{
@@ -130,6 +131,7 @@ impl<'a> CodeGeneratorX86<'a> {
 
         let mut emitted_return = false;
         let mut pending_param_count = 0;
+        let mut staged_indirect_target = false;
         for node in self.cfg.function_nodes(&range) {
             let block = &self.cfg[node];
             if node != range.start {
@@ -143,15 +145,40 @@ impl<'a> CodeGeneratorX86<'a> {
                     &mut source_line_range,
                 );
                 let location = CodeLocation::new(node, instruction_index);
+                if matches!(inst.instruction, Instruction::Parameter(_)) && pending_param_count == 0
+                {
+                    let next_instruction = block.instructions[instruction_index..]
+                        .iter()
+                        .find(|inst| !matches!(inst.instruction, Instruction::Parameter(_)))
+                        .map(|inst| &inst.instruction);
+                    if let Some(Instruction::FunctionCall(FunctionCallInstruction {
+                        target: FunctionCallTarget::Indirect(target),
+                        ..
+                    })) = next_instruction
+                    {
+                        // Keep the target below the staged arguments without reserving an
+                        // allocatable register. Exchange restores a pending RAX argument.
+                        lines.push(String::from("  push rax"));
+                        load_function_operand(&mut lines, &frame, location, target, Register::RAX);
+                        lines.push(String::from("  xchg QWORD PTR [rsp], rax"));
+                        staged_indirect_target = true;
+                    }
+                }
                 if self.emit_instruction(
                     &mut lines,
                     &frame,
                     name.as_str(),
-                    location,
-                    &mut pending_param_count,
+                    &mut InstructionEmission {
+                        location,
+                        pending_param_count: &mut pending_param_count,
+                        staged_indirect_target,
+                    },
                     &inst.instruction,
                 ) {
                     emitted_return = true;
+                }
+                if matches!(inst.instruction, Instruction::FunctionCall(_)) {
+                    staged_indirect_target = false;
                 }
             }
         }
@@ -237,7 +264,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 .return_target
                 .as_ref()
                 .and_then(|target| self.operand_source_span(target))
-                .or_else(|| self.symbol_span(&inst.function)),
+                .or_else(|| {
+                    inst.target
+                        .direct_name()
+                        .and_then(|name| self.symbol_span(name))
+                }),
             Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
             Instruction::Return(inst) => inst
                 .value
@@ -295,7 +326,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
             }
-            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+            Operand::Label(name) => self
+                .function_symbol_entry(function, name)
+                .or_else(|| self.global_symbol_entry(name))
+                .and_then(|entry| entry.var_type),
+            Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }
     }
 
@@ -304,10 +339,10 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         function: &str,
-        location: CodeLocation,
-        pending_param_count: &mut usize,
+        emission: &mut InstructionEmission<'_>,
         instruction: &Instruction,
     ) -> bool {
+        let location = emission.location;
         match instruction {
             Instruction::Borrow(inst) => {
                 self.emit_borrow(lines, frame, location, inst);
@@ -331,6 +366,18 @@ impl<'a> CodeGeneratorX86<'a> {
                 };
                 if self.operand_is_aggregate(function, &inst.src) {
                     self.emit_aggregate_copy(lines, frame, function, location, inst);
+                } else if self.operand_is_function(function, &inst.src)
+                    || self.operand_is_function(function, &inst.dst)
+                {
+                    let register = destination.register().unwrap_or(Register::RAX);
+                    let preserved = if destination.register().is_none() {
+                        preserve_register(lines, frame, location, register)
+                    } else {
+                        false
+                    };
+                    load_function_operand(lines, frame, location, &inst.src, register);
+                    store_reference_operand(lines, frame, location, &inst.dst, register);
+                    restore_register(lines, register, preserved);
                 } else if self.operand_is_reference(function, &inst.src)
                     || self.operand_is_reference(function, &inst.dst)
                 {
@@ -385,6 +432,8 @@ impl<'a> CodeGeneratorX86<'a> {
                                 return_register,
                             );
                         }
+                    } else if self.function_returns_function(function) {
+                        load_function_operand(lines, frame, location, value, return_register);
                     } else if self.operand_is_reference(function, value) {
                         load_reference_operand(lines, frame, location, value, return_register);
                     } else if self.operand_is_f32(function, value) {
@@ -401,19 +450,12 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             Instruction::Parameter(inst) => {
                 self.emit_parameter(lines, frame, function, location, &inst.param);
-                *pending_param_count += 1;
+                *emission.pending_param_count += 1;
                 false
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(
-                    lines,
-                    frame,
-                    function,
-                    location,
-                    *pending_param_count,
-                    inst,
-                );
-                *pending_param_count = 0;
+                self.emit_function_call(lines, frame, function, emission, inst);
+                *emission.pending_param_count = 0;
                 false
             }
         }
@@ -476,14 +518,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::FunctionCall(inst) => self
-                .unsupported_call_target_message(inst)
-                .or_else(|| self.unsupported_call_signature_message(inst))
-                .or_else(|| {
+            Instruction::FunctionCall(inst) => {
+                self.unsupported_call_signature_message(inst).or_else(|| {
                     inst.return_target
                         .as_ref()
                         .and_then(|target| self.unsupported_operand_message(function, target))
-                }),
+                })
+            }
             Instruction::Extern(_) => None,
             Instruction::Copy(inst) => self.unsupported_copy_message(function, inst),
             Instruction::ConditionalJump(inst) => inst
@@ -562,7 +603,16 @@ impl<'a> CodeGeneratorX86<'a> {
                         preserve_register(lines, frame, location, target_register);
                 }
                 load_reference_operand(lines, frame, location, reference, target_register);
-                if self.reference_pointee_size(function, reference) == 1 {
+                if self.reference_pointee_is_function(function, reference) {
+                    lines.push(format!(
+                        "  mov {}, QWORD PTR [{}]",
+                        register_name(target_register),
+                        register_name(target_register)
+                    ));
+                    store_reference_operand(lines, frame, location, &inst.target, target_register);
+                    restore_register(lines, target_register, preserved_target_register);
+                    return;
+                } else if self.reference_pointee_size(function, reference) == 1 {
                     lines.push(format!(
                         "  movzx {}, BYTE PTR [{}]",
                         register_name_32(target_register),
@@ -588,11 +638,16 @@ impl<'a> CodeGeneratorX86<'a> {
                     restore_register(lines, Register::RAX, preserved);
                     return;
                 }
-                if self.type_is_reference(ty) {
-                    let preserved = preserve_register(lines, frame, location, Register::RAX);
-                    lines.push(format!("  mov rax, QWORD PTR {operand}"));
-                    store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
-                    restore_register(lines, Register::RAX, preserved);
+                if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    let target_register = allocated_target_register.unwrap_or(Register::RAX);
+                    let preserved = allocated_target_register.is_none()
+                        && preserve_register(lines, frame, location, target_register);
+                    lines.push(format!(
+                        "  mov {}, QWORD PTR {operand}",
+                        register_name(target_register)
+                    ));
+                    store_reference_operand(lines, frame, location, &inst.target, target_register);
+                    restore_register(lines, target_register, preserved);
                     return;
                 }
                 if is_f32_type(self.types, ty) {
@@ -638,12 +693,42 @@ impl<'a> CodeGeneratorX86<'a> {
                 store_operand(lines, frame, location, target, Register::RAX);
             }
             Place::Dereference(reference) => {
-                load_operand(lines, frame, location, &inst.value, Register::RCX);
-                load_reference_operand(lines, frame, location, reference, Register::RAX);
-                if self.reference_pointee_size(function, reference) == 1 {
-                    lines.push(String::from("  mov BYTE PTR [rax], cl"));
+                if self.reference_pointee_is_function(function, reference) {
+                    let reference_register = operand_register(frame, location, reference);
+                    let value_register = operand_register(frame, location, &inst.value);
+                    let preserve_rax = reference_register != Some(Register::RAX)
+                        && value_register != Some(Register::RAX)
+                        && preserve_register(lines, frame, location, Register::RAX);
+                    let preserve_rcx = reference_register != Some(Register::RCX)
+                        && value_register != Some(Register::RCX)
+                        && preserve_register(lines, frame, location, Register::RCX);
+                    if reference_register == Some(Register::RCX)
+                        && value_register == Some(Register::RAX)
+                    {
+                        // Keep the callback while RAX is used to materialize the reference.
+                        lines.push(String::from("  push rax"));
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                        lines.push(String::from("  pop rcx"));
+                    } else if reference_register == Some(Register::RCX)
+                        && value_register != Some(Register::RCX)
+                    {
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                        load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                    } else {
+                        load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    }
+                    lines.push(String::from("  mov QWORD PTR [rax], rcx"));
+                    restore_register(lines, Register::RCX, preserve_rcx);
+                    restore_register(lines, Register::RAX, preserve_rax);
                 } else {
-                    lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                    load_operand(lines, frame, location, &inst.value, Register::RCX);
+                    load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    if self.reference_pointee_size(function, reference) == 1 {
+                        lines.push(String::from("  mov BYTE PTR [rax], cl"));
+                    } else {
+                        lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                    }
                 }
             }
             Place::Member { .. } => {
@@ -655,9 +740,13 @@ impl<'a> CodeGeneratorX86<'a> {
                     let preserved = preserve_register(lines, frame, location, Register::RAX);
                     emit_memory_copy(lines, &source, &operand, size);
                     restore_register(lines, Register::RAX, preserved);
-                } else if self.type_is_reference(ty) {
+                } else if self.type_is_reference(ty) || self.type_is_function(ty) {
                     let preserved = preserve_register(lines, frame, location, Register::RAX);
-                    load_reference_operand(lines, frame, location, &inst.value, Register::RAX);
+                    if self.type_is_function(ty) {
+                        load_function_operand(lines, frame, location, &inst.value, Register::RAX);
+                    } else {
+                        load_reference_operand(lines, frame, location, &inst.value, Register::RAX);
+                    }
                     lines.push(format!("  mov QWORD PTR {operand}, rax"));
                     restore_register(lines, Register::RAX, preserved);
                 } else if is_f32_type(self.types, ty) {
@@ -701,6 +790,11 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
+    fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
     fn operand_is_aggregate(&self, function: &str, operand: &Operand) -> bool {
         self.operand_type(function, operand)
             .is_some_and(|ty| self.type_is_aggregate(ty))
@@ -740,7 +834,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     | PrimitiveType::I32
                     | PrimitiveType::U32,
                 )
-                | Type::RefType(_),
+                | Type::RefType(_)
+                | Type::FunctionType(_),
             ) => true,
             Some(Type::TupleType(tuple)) => tuple
                 .types
@@ -758,6 +853,13 @@ impl<'a> CodeGeneratorX86<'a> {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
             Some(Type::RefType(_))
+        )
+    }
+
+    fn type_is_function(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::FunctionType(_))
         )
     }
 
@@ -822,6 +924,15 @@ impl<'a> CodeGeneratorX86<'a> {
             .unwrap_or(4)
     }
 
+    fn reference_pointee_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+                Some(Type::RefType(ref_ty)) => Some(ref_ty.to),
+                _ => None,
+            })
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
     fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Member { .. } => self.unsupported_member_message(function, place),
@@ -858,7 +969,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     | PrimitiveType::BOOL
                     | PrimitiveType::CHAR
             ))
-        ) || (self.type_is_reference(ty) && self.types.size_align(ty, Bitness::_64).size == 8)
+        ) || ((self.type_is_reference(ty) || self.type_is_function(ty))
+            && self.types.size_align(ty, Bitness::_64).size == 8)
             || self.type_is_aggregate(ty)))
         .then(|| {
             format!(
@@ -995,7 +1107,7 @@ impl<'a> CodeGeneratorX86<'a> {
         if signature.is_vararg {
             return Some(format!(
                 "x86 backend does not support calls to vararg functions yet: {}",
-                inst.function
+                inst.target
             ));
         }
         signature
@@ -1022,15 +1134,6 @@ impl<'a> CodeGeneratorX86<'a> {
             })
     }
 
-    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (!inst.is_direct_function).then(|| {
-            format!(
-                "x86 backend does not support indirect calls through function values yet: {}",
-                inst.function
-            )
-        })
-    }
-
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
         let ty = self.types.canonicalize(ty);
         let name = self.types.to_string_index(ty);
@@ -1052,9 +1155,7 @@ impl<'a> CodeGeneratorX86<'a> {
             Type::RefType(_) => Some(format!(
                 "x86 backend does not support references to `{name}` values yet"
             )),
-            Type::FunctionType(_) => Some(format!(
-                "x86 backend does not support function values yet: {name}"
-            )),
+            Type::FunctionType(_) => None,
             Type::TupleType(_)
             | Type::StructType(_)
             | Type::TypeDefType(_)
@@ -1066,9 +1167,14 @@ impl<'a> CodeGeneratorX86<'a> {
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32,
+                ) | Type::FunctionType(_),
+            )
         )
     }
 
@@ -1196,6 +1302,11 @@ impl<'a> CodeGeneratorX86<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(register_pair)
+    }
+
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
     }
 
     fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
@@ -1560,10 +1671,21 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         function: &str,
-        location: CodeLocation,
-        pending_param_count: usize,
+        emission: &InstructionEmission<'_>,
         inst: &FunctionCallInstruction,
     ) {
+        let location = emission.location;
+        let indirect_return = self.function_call_indirect_return(inst);
+        let mut staged_indirect_target = emission.staged_indirect_target;
+        if !staged_indirect_target && indirect_return {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                // Zero-argument calls have no ParameterInstruction at which to stage a target.
+                lines.push(String::from("  push rax"));
+                load_function_operand(lines, frame, location, target, Register::RAX);
+                lines.push(String::from("  xchg QWORD PTR [rsp], rax"));
+                staged_indirect_target = true;
+            }
+        }
         let signature = self
             .function_call_signature(inst)
             .expect("function call should reference a checked function signature");
@@ -1571,8 +1693,8 @@ impl<'a> CodeGeneratorX86<'a> {
             .target
             .calling_convention()
             .assign_args(self.types, 0, signature);
-        let arg_locations = &arg_locations[..pending_param_count];
-        let arg_types = &signature.params[..pending_param_count];
+        let arg_locations = &arg_locations[..*emission.pending_param_count];
+        let arg_types = &signature.params[..*emission.pending_param_count];
         let stack_arg_count = arg_types
             .iter()
             .zip(arg_locations.iter())
@@ -1588,7 +1710,6 @@ impl<'a> CodeGeneratorX86<'a> {
             })
             .max()
             .unwrap_or(0);
-        let indirect_return = self.function_call_indirect_return(inst);
         let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
         let argument_slot_counts = arg_types
             .iter()
@@ -1598,7 +1719,7 @@ impl<'a> CodeGeneratorX86<'a> {
         let staged_arg_count =
             usize::from(indexed_arguments) * argument_slot_counts.iter().sum::<usize>();
         let stack_padding = frame.call_stack_padding(
-            stack_arg_count + staged_arg_count,
+            stack_arg_count + staged_arg_count + usize::from(staged_indirect_target),
             self.target.calling_convention().stack_alignment(),
         );
         if indirect_return {
@@ -1640,12 +1761,25 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             emit_call_stack_padding(lines, stack_arg_count, stack_padding);
         }
-        lines.push(format!("  call {}", inst.function));
         let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
             + stack_padding
             + staged_arg_count * STACK_ARG_SLOT_BYTES;
+        match &inst.target {
+            FunctionCallTarget::Direct(name) => lines.push(format!("  call {name}")),
+            FunctionCallTarget::Indirect(target) => {
+                if staged_indirect_target {
+                    lines.push(format!("  call QWORD PTR {}", rsp_slot(stack_cleanup)));
+                } else {
+                    load_function_operand(lines, frame, location, target, Register::RAX);
+                    lines.push(String::from("  call rax"));
+                }
+            }
+        }
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
+        }
+        if staged_indirect_target {
+            lines.push(String::from("  add rsp, 8"));
         }
         if let Some(return_target) = &inst.return_target {
             let return_register = self
@@ -1673,7 +1807,9 @@ impl<'a> CodeGeneratorX86<'a> {
                         return_register,
                     );
                 }
-            } else if self.operand_is_reference(function, return_target) {
+            } else if self.operand_is_reference(function, return_target)
+                || self.operand_is_function(function, return_target)
+            {
                 store_reference_operand(lines, frame, location, return_target, return_register);
             } else if self.operand_is_f32(function, return_target) {
                 store_float_operand(lines, frame, location, return_target, return_register);
@@ -1725,6 +1861,8 @@ impl<'a> CodeGeneratorX86<'a> {
         }
         if self.operand_is_reference(function, operand) {
             load_reference_operand(lines, frame, location, operand, Register::RAX);
+        } else if self.operand_is_function(function, operand) {
+            load_function_operand(lines, frame, location, operand, Register::RAX);
         } else {
             load_operand(lines, frame, location, operand, Register::RAX);
         }
@@ -1896,7 +2034,9 @@ impl<'a> CodeGeneratorX86<'a> {
                 } else if self.symbol_is_reference(
                     &self.cfg[range.start].label,
                     &assigned.interval().variable,
-                ) {
+                ) || self
+                    .symbol_is_function(&self.cfg[range.start].label, &assigned.interval().variable)
+                {
                     let Some(destination) = frame.variable_location(
                         assigned.interval().variable.as_str(),
                         assigned.location(),
@@ -1972,6 +2112,12 @@ impl<'a> CodeGeneratorX86<'a> {
                     Some(Type::RefType(_))
                 )
             })
+    }
+
+    fn symbol_is_function(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_function(ty))
     }
 
     fn symbol_frame_size_align(&self, function: &str, name: &str) -> SizeAlign {
@@ -2361,6 +2507,9 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
             }
         }
         Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand(target, names);
+            }
             if let Some(target) = &inst.return_target {
                 collect_operand(target, names);
             }
@@ -2431,6 +2580,12 @@ struct FrameLayout<'a> {
     saved_registers: Vec<Register>,
     stack_size: usize,
     indirect_return_slot: Option<usize>,
+}
+
+struct InstructionEmission<'a> {
+    location: CodeLocation,
+    pending_param_count: &'a mut usize,
+    staged_indirect_target: bool,
 }
 
 impl<'a> FrameLayout<'a> {
@@ -2612,6 +2767,25 @@ fn load_operand(
             register_name_32(register)
         )),
         Operand::Label(_) => lines.push(format!("  lea {}, [{operand}]", register_name(register))),
+    }
+}
+
+fn load_function_operand(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    register: Register,
+) {
+    match operand {
+        Operand::Label(name) => lines.push(format!("  lea {}, [{name}]", register_name(register))),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            load_reference_operand(lines, frame, location, operand, register)
+        }
+        Operand::Placeholder => lines.push(format!("  xor {0}, {0}", register_name(register))),
+        Operand::Literal(_) => {
+            unreachable!("function values must be stored or declared functions")
+        }
     }
 }
 
@@ -2947,7 +3121,7 @@ fn emit_indexed_call_arguments(
     }
     lines.push(format!("  sub rsp, {outgoing_bytes}"));
     for (index, location) in arg_locations.iter().enumerate() {
-        let Some(offset) = stack_argument_offset(location) else {
+        let Some(offset) = stack_location_offset(location) else {
             continue;
         };
         let source_offset =

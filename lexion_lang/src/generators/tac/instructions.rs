@@ -278,10 +278,42 @@ impl BaseInstruction for ParameterInstruction {
 }
 
 #[derive(Clone)]
+pub enum FunctionCallTarget {
+    Direct(String),
+    Indirect(Operand),
+}
+
+impl Display for FunctionCallTarget {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FunctionCallTarget::Direct(function) => write!(f, "{function}"),
+            FunctionCallTarget::Indirect(function) => write!(f, "*{function}"),
+        }
+    }
+}
+
+impl FunctionCallTarget {
+    pub fn direct_name(&self) -> Option<&str> {
+        match self {
+            FunctionCallTarget::Direct(name) => Some(name),
+            FunctionCallTarget::Indirect(_) => None,
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = String> {
+        match self {
+            FunctionCallTarget::Direct(_) => None,
+            FunctionCallTarget::Indirect(operand) => Some(operand.iter()),
+        }
+        .into_iter()
+        .flatten()
+    }
+}
+
+#[derive(Clone)]
 pub struct FunctionCallInstruction {
-    pub function: String,
+    pub target: FunctionCallTarget,
     pub function_type: Option<Index>,
-    pub is_direct_function: bool,
     pub return_target: Option<Operand>,
 }
 
@@ -295,12 +327,16 @@ impl Display for FunctionCallInstruction {
             } else {
                 String::from("")
             },
-            self.function
+            self.target
         )
     }
 }
 
 impl BaseInstruction for FunctionCallInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.target.iter())
+    }
+
     fn variables_written(&self) -> HashSet<String> {
         HashSet::from_iter(self.return_target.iter().map(|target| target.to_string()))
     }

@@ -1,0 +1,44 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_with_registers(\"backend/x86_function_value_live_rax.lex\",\nvec![Register::RAX],)"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     return value + 1;
+  add eax, 1
+  mov DWORD PTR [rbp-8], eax
+  mov eax, DWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+#     let value = 4;
+  mov eax, 4
+  mov DWORD PTR [rbp-8], eax
+#     let callback = add_one;
+  lea rax, [add_one]
+#     let holder = Holder { callback: callback };
+  push rax
+  mov QWORD PTR [rbp-24], rax
+  pop rax
+  mov eax, DWORD PTR [rbp-24]
+  mov DWORD PTR [rbp-32], eax
+  mov eax, DWORD PTR [rbp-24+4]
+  mov DWORD PTR [rbp-32+4], eax
+#     return value;
+  mov eax, DWORD PTR [rbp-8]
+  add rsp, 32
+  pop rbp
+  ret

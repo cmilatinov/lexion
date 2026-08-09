@@ -167,10 +167,12 @@ impl<'a> CodeGeneratorX86Elf<'a> {
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
+        inst.target
+            .direct_name()
+            .filter(|function| self.is_extern_function(function))
+            .map(|function| {
             format!(
-                "x86 ELF executable output does not support calls to extern functions until relocations are implemented: {}",
-                inst.function
+                "x86 ELF executable output does not support calls to extern functions until relocations are implemented: {function}"
             )
         })
     }
