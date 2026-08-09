@@ -574,8 +574,11 @@ impl<'a> CodeGeneratorX86<'a> {
         else {
             unreachable!("borrowed values must have stable frame locations")
         };
+        let preserved_rax = operand_register(frame, location, &inst.target) != Some(Register::RAX)
+            && preserve_register(lines, frame, location, Register::RAX);
         lines.push(format!("  lea rax, [rbp-{offset}]"));
         store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
+        restore_register(lines, Register::RAX, preserved_rax);
     }
 
     fn emit_load(
@@ -598,6 +601,20 @@ impl<'a> CodeGeneratorX86<'a> {
                 load_operand(lines, frame, location, value, target_register);
             }
             Place::Dereference(reference) => {
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    let Some(destination) =
+                        aggregate_member_operand(frame, location, &inst.target, 0)
+                    else {
+                        return;
+                    };
+                    let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+                    let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
+                    load_reference_operand(lines, frame, location, reference, Register::RDX);
+                    emit_memory_copy(lines, "[rdx]", &destination, size);
+                    restore_register(lines, Register::RDX, preserved_rdx);
+                    restore_register(lines, Register::RAX, preserved_rax);
+                    return;
+                }
                 if allocated_target_register.is_none() {
                     preserved_target_register =
                         preserve_register(lines, frame, location, target_register);
@@ -693,6 +710,19 @@ impl<'a> CodeGeneratorX86<'a> {
                 store_operand(lines, frame, location, target, Register::RAX);
             }
             Place::Dereference(reference) => {
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    let Some(source) = aggregate_member_operand(frame, location, &inst.value, 0)
+                    else {
+                        return;
+                    };
+                    let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+                    let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
+                    load_reference_operand(lines, frame, location, reference, Register::RDX);
+                    emit_memory_copy(lines, &source, "[rdx]", size);
+                    restore_register(lines, Register::RDX, preserved_rdx);
+                    restore_register(lines, Register::RAX, preserved_rax);
+                    return;
+                }
                 if self.reference_pointee_is_function(function, reference) {
                     let reference_register = operand_register(frame, location, reference);
                     let value_register = operand_register(frame, location, &inst.value);
@@ -931,6 +961,15 @@ impl<'a> CodeGeneratorX86<'a> {
                 _ => None,
             })
             .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn reference_pointee_aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        let ty = self.operand_type(function, operand)?;
+        let Type::RefType(reference) = self.types.get(self.types.canonicalize(ty))? else {
+            return None;
+        };
+        self.type_is_aggregate(reference.to)
+            .then(|| self.types.size_align(reference.to, Bitness::_64).size)
     }
 
     fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
@@ -1172,10 +1211,10 @@ impl<'a> CodeGeneratorX86<'a> {
                     PrimitiveType::BOOL
                         | PrimitiveType::CHAR
                         | PrimitiveType::I32
-                        | PrimitiveType::U32,
-                ) | Type::FunctionType(_),
+                        | PrimitiveType::U32
+                ) | Type::FunctionType(_)
             )
-        )
+        ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
     fn unsupported_aggregate_type_message(
@@ -1295,6 +1334,11 @@ impl<'a> CodeGeneratorX86<'a> {
             .and_then(outgoing_register)
     }
 
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
+    }
+
     fn function_return_pair(&self, function: &str) -> Option<(Register, Register)> {
         let signature = self.function_signature(function)?;
         self.target
@@ -1302,11 +1346,6 @@ impl<'a> CodeGeneratorX86<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(register_pair)
-    }
-
-    fn function_returns_function(&self, function: &str) -> bool {
-        self.function_signature(function)
-            .is_some_and(|signature| self.type_is_function(signature.return_type))
     }
 
     fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
@@ -3538,5 +3577,83 @@ fn align_to(value: usize, align: usize) -> usize {
         0
     } else {
         value.div_ceil(align) * align
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::LexionDiagnosticList;
+    use crate::generators::tac::instructions::{CodeSpan, LivenessInterval};
+    use crate::generators::x86::LinearRegisterAllocator;
+    use std::collections::HashMap;
+
+    fn allocated_frame(variable: &str) -> (FrameLayout<'static>, CodeLocation) {
+        let mut cfg = Box::new(ControlFlowGraph::new());
+        let block = cfg.block(String::from("test"), true);
+        let range = cfg.functions[0];
+        let location = CodeLocation::new(block, 0);
+        let intervals = HashMap::from([(
+            range,
+            vec![LivenessInterval {
+                variable: String::from(variable),
+                span: CodeSpan::new(location, CodeLocation::new(block, 1)),
+                uses: vec![],
+            }],
+        )]);
+        let mut diagnostics = LexionDiagnosticList::default();
+        let mut allocations = LinearRegisterAllocator::new((&cfg, vec![Register::RAX]))
+            .exec(&mut diagnostics, intervals)
+            .unwrap();
+        let allocations = allocations.remove(&range).unwrap();
+
+        (
+            FrameLayout {
+                allocations: Some(Box::leak(allocations.into_boxed_slice())),
+                fallback_slots: BTreeMap::new(),
+                home_slots: BTreeMap::from_iter(
+                    [(String::from("value"), 16)]
+                        .into_iter()
+                        .chain((variable != "reference").then(|| (String::from("reference"), 8))),
+                ),
+                saved_registers: Vec::new(),
+                stack_size: 0,
+                indirect_return_slot: None,
+            },
+            location,
+        )
+    }
+
+    #[test]
+    fn aggregate_borrow_preserves_live_rax_unless_target_owns_it() {
+        let mut lines = Vec::new();
+        let borrow = BorrowInstruction {
+            target: Operand::Variable(String::from("reference")),
+            place: Place::Direct(Operand::Variable(String::from("value"))),
+        };
+        let generator = CodeGeneratorX86 {
+            cfg: Box::leak(Box::new(ControlFlowGraph::new())),
+            types: Box::leak(Box::new(TypeCollection::default())),
+            symbols: Box::leak(Box::new(SymbolTableGraph::default())),
+            target: X86Target::system_v64(),
+            allocations: None,
+        };
+        let (live_frame, location) = allocated_frame("live");
+
+        generator.emit_borrow(&mut lines, &live_frame, location, &borrow);
+        assert_eq!(
+            lines,
+            [
+                "  push rax",
+                "  lea rax, [rbp-16]",
+                "  mov QWORD PTR [rbp-8], rax",
+                "  pop rax"
+            ]
+        );
+
+        lines.clear();
+        let (target_frame, location) = allocated_frame("reference");
+        generator.emit_borrow(&mut lines, &target_frame, location, &borrow);
+        assert_eq!(lines, ["  lea rax, [rbp-16]"]);
     }
 }

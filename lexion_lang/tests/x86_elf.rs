@@ -346,6 +346,15 @@ fn x86_elf_reference_stack_arguments_run_on_linux_x86_64() {
     );
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_aggregate_reference_places_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_aggregate_reference_places.lex"),
+        Some(22)
+    );
+}
+
 #[test]
 fn x86_elf_executable_supports_local_aggregate_values() {
     let executable = compile_elf("backend/x86_local_aggregates.lex");
@@ -356,6 +365,13 @@ fn x86_elf_executable_supports_local_aggregate_values() {
 #[test]
 fn x86_elf_executable_supports_aggregate_member_values() {
     let executable = compile_elf("backend/x86_aggregate_members.lex");
+
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[test]
+fn x86_elf_executable_supports_aggregate_reference_places() {
+    let executable = compile_elf("backend/x86_aggregate_reference_places.lex");
 
     assert!(executable.symbols().contains_key("main"));
 }

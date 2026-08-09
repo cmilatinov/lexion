@@ -451,6 +451,13 @@ fn backend_aggregate_member_values_tac_snapshot() {
 }
 
 #[test]
+fn backend_aggregate_reference_places_tac_snapshot() {
+    let cfg = compile_cfg("backend/x86_aggregate_reference_places.lex");
+
+    insta::assert_snapshot!(tac_snapshot(&cfg));
+}
+
+#[test]
 fn backend_ternary_struct_literal_tac_snapshot() {
     let cfg = compile_cfg("backend/ternary_struct_literal.lex");
 
