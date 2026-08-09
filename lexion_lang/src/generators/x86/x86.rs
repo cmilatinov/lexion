@@ -345,7 +345,7 @@ impl<'a> CodeGeneratorX86<'a> {
         let location = emission.location;
         match instruction {
             Instruction::Borrow(inst) => {
-                self.emit_borrow(lines, frame, location, inst);
+                self.emit_borrow(lines, frame, function, location, inst);
                 false
             }
             Instruction::Load(inst) => {
@@ -492,7 +492,7 @@ impl<'a> CodeGeneratorX86<'a> {
     fn unsupported_message(&self, function: &str, instruction: &Instruction) -> Option<String> {
         match instruction {
             Instruction::Borrow(inst) => self
-                .unsupported_borrow_message(&inst.place)
+                .unsupported_borrow_message(function, &inst.place)
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
                 .unsupported_load_message(function, &inst.place)
@@ -550,13 +550,20 @@ impl<'a> CodeGeneratorX86<'a> {
         }
     }
 
-    fn unsupported_borrow_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_borrow_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Direct(value) if operand_name(value).is_some() => None,
             Place::Direct(_) => Some(String::from("x86 backend can only borrow stored values")),
-            Place::Member { .. } | Place::Index { .. } | Place::Dereference(_) => Some(
-                String::from("x86 backend does not support references to projected places yet"),
-            ),
+            Place::Member { .. } if self.member_place(function, place).is_some() => None,
+            Place::Member { .. } => Some(String::from(
+                "x86 backend does not support references through projected places yet",
+            )),
+            Place::Index { .. } => Some(String::from(
+                "x86 backend does not support references to indexed places yet",
+            )),
+            Place::Dereference(_) => Some(String::from(
+                "x86 backend does not support references to dereferenced places yet",
+            )),
         }
     }
 
@@ -564,19 +571,31 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &BorrowInstruction,
     ) {
-        let Place::Direct(value) = &inst.place else {
-            unreachable!("unsupported borrow places are diagnosed before emission")
-        };
-        let Some(AssemblyLocation::FrameStack { offset }) = frame.operand_location(location, value)
-        else {
-            unreachable!("borrowed values must have stable frame locations")
+        let operand = match &inst.place {
+            Place::Direct(value) => {
+                let Some(AssemblyLocation::FrameStack { offset }) =
+                    frame.operand_location(location, value)
+                else {
+                    unreachable!("borrowed values must have stable frame locations")
+                };
+                format!("[rbp-{offset}]")
+            }
+            Place::Member { .. } => {
+                let (base, offset, _) = self.member_place(function, &inst.place).unwrap();
+                aggregate_member_operand(frame, location, &base, offset)
+                    .expect("borrowed aggregate members must have stable frame locations")
+            }
+            Place::Index { .. } | Place::Dereference(_) => {
+                unreachable!("unsupported borrow places are diagnosed before emission")
+            }
         };
         let preserved_rax = operand_register(frame, location, &inst.target) != Some(Register::RAX)
             && preserve_register(lines, frame, location, Register::RAX);
-        lines.push(format!("  lea rax, [rbp-{offset}]"));
+        lines.push(format!("  lea rax, {operand}"));
         store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
         restore_register(lines, Register::RAX, preserved_rax);
     }
@@ -3640,7 +3659,7 @@ mod tests {
         };
         let (live_frame, location) = allocated_frame("live");
 
-        generator.emit_borrow(&mut lines, &live_frame, location, &borrow);
+        generator.emit_borrow(&mut lines, &live_frame, "test", location, &borrow);
         assert_eq!(
             lines,
             [
@@ -3653,7 +3672,7 @@ mod tests {
 
         lines.clear();
         let (target_frame, location) = allocated_frame("reference");
-        generator.emit_borrow(&mut lines, &target_frame, location, &borrow);
+        generator.emit_borrow(&mut lines, &target_frame, "test", location, &borrow);
         assert_eq!(lines, ["  lea rax, [rbp-16]"]);
     }
 }

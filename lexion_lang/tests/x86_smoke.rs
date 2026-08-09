@@ -396,6 +396,22 @@ fn x86_aggregate_reference_copies_preserve_allocated_rax() {
             >= 2,
         "aggregate reference copies did not preserve an allocated RAX:\n{assembly}"
     );
+    assert!(
+        !assembly.contains("push rax\n  push rax\n  lea rax,"),
+        "aggregate borrows must preserve RAX at most once:\n{assembly}"
+    );
+}
+
+#[test]
+fn x86_smoke_projected_aggregate_references() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_projected_aggregate_references.lex"
+    ));
+}
+
+#[test]
+fn x86_member_borrow_preserves_live_rax() {
+    insta::assert_snapshot!(compile_x86("backend/x86_member_borrow_preserves_rax.lex"));
 }
 
 #[test]
