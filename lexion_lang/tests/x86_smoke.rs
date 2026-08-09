@@ -300,8 +300,22 @@ fn x86_reports_unsupported_float_casts() {
 }
 
 #[test]
-fn x86_reports_unsupported_string_values() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_string.lex").join("\n"));
+fn x86_smoke_string_literals() {
+    insta::assert_snapshot!(compile_x86("backend/x86_string_literals.lex"));
+}
+
+#[test]
+fn x86_reports_unsupported_string_parameters() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_string_parameter.lex").join("\n")
+    );
+}
+
+#[test]
+fn x86_reports_unsupported_string_returns() {
+    insta::assert_snapshot!(
+        compile_x86_error("backend/x86_unsupported_string_return.lex").join("\n")
+    );
 }
 
 #[test]
@@ -412,6 +426,13 @@ fn x86_smoke_projected_aggregate_references() {
 #[test]
 fn x86_member_borrow_preserves_live_rax() {
     insta::assert_snapshot!(compile_x86("backend/x86_member_borrow_preserves_rax.lex"));
+}
+
+#[test]
+fn x86_string_descriptor_stores_preserve_live_rax() {
+    insta::assert_snapshot!(compile_x86(
+        "backend/x86_string_descriptor_preserves_rax.lex"
+    ));
 }
 
 #[test]

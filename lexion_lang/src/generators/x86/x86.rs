@@ -98,7 +98,33 @@ impl<'a> CodeGeneratorX86<'a> {
                 lines.extend(self.emit_function(*range, options));
             }
         }
+        let literals = self.string_literals();
+        if !literals.is_empty() {
+            lines.push(String::from(".section .rodata"));
+            for literal in literals {
+                lines.push(format!("{}:", string_literal_label(&literal)));
+                lines.push(format!("  .byte {}", string_literal_bytes(&literal)));
+            }
+        }
         X86Assembly::new(lines.join("\n"))
+    }
+
+    fn string_literals(&self) -> BTreeSet<Vec<u8>> {
+        let mut source_literals = BTreeSet::new();
+        for range in &self.cfg.functions {
+            for node in self.cfg.function_nodes(range) {
+                for instruction in &self.cfg[node].instructions {
+                    collect_instruction_string_literals(
+                        &instruction.instruction,
+                        &mut source_literals,
+                    );
+                }
+            }
+        }
+        source_literals
+            .into_iter()
+            .map(|literal| string_literal_data(&literal))
+            .collect()
     }
 
     fn extern_label(&self, range: FunctionRange) -> Option<&str> {
@@ -364,7 +390,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 let Some(destination) = frame.operand_location(location, &inst.dst) else {
                     return false;
                 };
-                if self.operand_is_aggregate(function, &inst.src) {
+                if self.operand_is_string_value(function, &inst.src)
+                    || self.operand_is_string_value(function, &inst.dst)
+                {
+                    self.emit_string_copy(lines, frame, function, location, inst);
+                } else if self.operand_is_aggregate(function, &inst.src) {
                     self.emit_aggregate_copy(lines, frame, function, location, inst);
                 } else if self.operand_is_function(function, &inst.src)
                     || self.operand_is_function(function, &inst.dst)
@@ -432,6 +462,8 @@ impl<'a> CodeGeneratorX86<'a> {
                                 return_register,
                             );
                         }
+                    } else if self.operand_is_string_value(function, value) {
+                        self.load_string_operand(lines, frame, function, location, value);
                     } else if self.function_returns_function(function) {
                         load_function_operand(lines, frame, location, value, return_register);
                     } else if self.operand_is_reference(function, value) {
@@ -725,6 +757,19 @@ impl<'a> CodeGeneratorX86<'a> {
     ) {
         match &inst.place {
             Place::Direct(target) => {
+                if self.operand_is_string_value(function, target)
+                    || self.operand_is_string_value(function, &inst.value)
+                {
+                    self.emit_string_value_store(
+                        lines,
+                        frame,
+                        function,
+                        location,
+                        target,
+                        &inst.value,
+                    );
+                    return;
+                }
                 load_operand(lines, frame, location, &inst.value, Register::RAX);
                 store_operand(lines, frame, location, target, Register::RAX);
             }
@@ -839,6 +884,13 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
+    fn operand_is_string_value(&self, function: &str, operand: &Operand) -> bool {
+        matches!(operand, Operand::Literal(Lit::String(_)))
+            || self
+                .operand_type(function, operand)
+                .is_some_and(|ty| self.type_is_string_reference(ty))
+    }
+
     fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
         self.operand_type(function, operand)
             .is_some_and(|ty| self.type_is_function(ty))
@@ -905,6 +957,16 @@ impl<'a> CodeGeneratorX86<'a> {
         )
     }
 
+    fn type_is_string_reference(&self, ty: Index) -> bool {
+        let Some(Type::RefType(reference)) = self.types.get(self.types.canonicalize(ty)) else {
+            return false;
+        };
+        matches!(
+            self.types.get(self.types.canonicalize(reference.to)),
+            Some(Type::PrimitiveType(PrimitiveType::STR))
+        )
+    }
+
     fn type_is_function(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
@@ -966,6 +1028,89 @@ impl<'a> CodeGeneratorX86<'a> {
         restore_register(lines, Register::RAX, preserved);
     }
 
+    fn emit_string_copy(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) {
+        self.emit_string_value_store(lines, frame, function, location, &inst.dst, &inst.src);
+    }
+
+    fn emit_string_value_store(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        destination: &Operand,
+        source: &Operand,
+    ) {
+        let Some(destination) = aggregate_member_operand(frame, location, destination, 0) else {
+            return;
+        };
+        // Local values copy the descriptor; literal bytes remain immutable in .rodata.
+        match source {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                let preserved = preserve_register(lines, frame, location, Register::RAX);
+                lines.push(format!(
+                    "  lea rax, [rip + {}]",
+                    string_literal_label(&data)
+                ));
+                lines.push(format!("  mov QWORD PTR {destination}, rax"));
+                lines.push(format!(
+                    "  mov QWORD PTR {}, {}",
+                    offset_assembly_operand(&destination, 8),
+                    data.len()
+                ));
+                restore_register(lines, Register::RAX, preserved);
+            }
+            _ if self.operand_is_string_value(function, source) => {
+                let Some(source) = aggregate_member_operand(frame, location, source, 0) else {
+                    return;
+                };
+                let preserved = preserve_register(lines, frame, location, Register::RAX);
+                emit_memory_copy(lines, &source, &destination, 16);
+                restore_register(lines, Register::RAX, preserved);
+            }
+            _ => unreachable!("unsupported string copies are diagnosed before emission"),
+        }
+    }
+
+    fn load_string_operand(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+    ) {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                lines.push(format!(
+                    "  lea rax, [rip + {}]",
+                    string_literal_label(&data)
+                ));
+                lines.push(format!("  mov rdx, {}", data.len()));
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+                    return;
+                };
+                lines.push(format!("  mov rax, QWORD PTR {source}"));
+                lines.push(format!(
+                    "  mov rdx, QWORD PTR {}",
+                    offset_assembly_operand(&source, 8)
+                ));
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
+    }
+
     fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
         self.operand_type(function, operand)
             .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
@@ -997,6 +1142,9 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support indexed access yet",
             )),
+            Place::Dereference(value) if self.operand_is_string_value(function, value) => Some(
+                String::from("x86 backend does not support dereferencing string values yet"),
+            ),
             Place::Dereference(_) | Place::Direct(_) => None,
         }
     }
@@ -1007,6 +1155,9 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support stores through indexed access yet",
             )),
+            Place::Dereference(value) if self.operand_is_string_value(function, value) => Some(
+                String::from("x86 backend does not support stores through string values yet"),
+            ),
             Place::Dereference(_) | Place::Direct(_) => None,
         }
     }
@@ -1102,9 +1253,6 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
-            Operand::Literal(Lit::String(_)) => Some(String::from(
-                "x86 backend does not support string values yet: &str",
-            )),
             Operand::Variable(name) => self
                 .function_symbol_entry(function, name)
                 .and_then(|entry| entry.var_type)
@@ -1145,7 +1293,8 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_aggregate_type_message(*ty, locations.get(index))
+                self.unsupported_string_abi_message(*ty)
+                    .or_else(|| self.unsupported_aggregate_type_message(*ty, locations.get(index)))
                     .or_else(|| self.unsupported_type_message(*ty))
             })
             .or_else(|| {
@@ -1173,14 +1322,17 @@ impl<'a> CodeGeneratorX86<'a> {
             .iter()
             .enumerate()
             .find_map(|(index, ty)| {
-                self.unsupported_aggregate_type_message(
-                    *ty,
-                    self.target
-                        .calling_convention()
-                        .assign_args(self.types, 0, signature)
-                        .get(index),
-                )
+                self.unsupported_string_abi_message(*ty).or_else(|| {
+                    self.unsupported_aggregate_type_message(
+                        *ty,
+                        self.target
+                            .calling_convention()
+                            .assign_args(self.types, 0, signature)
+                            .get(index),
+                    )
+                })
             })
+            .or_else(|| self.unsupported_string_abi_message(signature.return_type))
             .or_else(|| {
                 self.unsupported_aggregate_type_message(
                     signature.return_type,
@@ -1205,9 +1357,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     Some(Type::PrimitiveType(PrimitiveType::STR))
                 ) =>
             {
-                Some(format!(
-                    "x86 backend does not support string values yet: {name}"
-                ))
+                None
             }
             Type::RefType(ref_ty) if self.reference_target_supported(ref_ty.to) => None,
             Type::RefType(_) => Some(format!(
@@ -1234,6 +1384,15 @@ impl<'a> CodeGeneratorX86<'a> {
                 ) | Type::FunctionType(_)
             )
         ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
+    }
+
+    fn unsupported_string_abi_message(&self, ty: Index) -> Option<String> {
+        self.type_is_string_reference(ty).then(|| {
+            format!(
+                "x86 backend does not support string values yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
     }
 
     fn unsupported_aggregate_type_message(
@@ -2579,6 +2738,58 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
     }
 }
 
+fn collect_instruction_string_literals(instruction: &Instruction, literals: &mut BTreeSet<String>) {
+    match instruction {
+        Instruction::Borrow(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.target, literals);
+        }
+        Instruction::Load(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.target, literals);
+        }
+        Instruction::Store(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.value, literals);
+        }
+        Instruction::Assignment(inst) => {
+            collect_operand_string_literal(&inst.target, literals);
+            if let Some(left) = &inst.left {
+                collect_operand_string_literal(left, literals);
+            }
+            collect_operand_string_literal(&inst.right, literals);
+        }
+        Instruction::Copy(inst) => {
+            collect_operand_string_literal(&inst.src, literals);
+            collect_operand_string_literal(&inst.dst, literals);
+        }
+        Instruction::ConditionalJump(inst) => {
+            if let Some(left) = &inst.left {
+                collect_operand_string_literal(left, literals);
+            }
+            collect_operand_string_literal(&inst.right, literals);
+        }
+        Instruction::Parameter(inst) => collect_operand_string_literal(&inst.param, literals),
+        Instruction::Return(inst) => {
+            if let Some(value) = &inst.value {
+                collect_operand_string_literal(value, literals);
+            }
+        }
+        Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand_string_literal(target, literals);
+            }
+            if let Some(target) = &inst.return_target {
+                collect_operand_string_literal(target, literals);
+            }
+        }
+        Instruction::Jump(_)
+        | Instruction::Function(_)
+        | Instruction::EndFunction(_)
+        | Instruction::Extern(_) => {}
+    }
+}
+
 fn collect_place_operands(place: &Place, names: &mut BTreeSet<String>) {
     match place {
         Place::Direct(value) | Place::Dereference(value) => collect_operand(value, names),
@@ -2586,6 +2797,19 @@ fn collect_place_operands(place: &Place, names: &mut BTreeSet<String>) {
         Place::Index { base, index } => {
             collect_place_operands(base, names);
             collect_operand(index, names);
+        }
+    }
+}
+
+fn collect_place_string_literals(place: &Place, literals: &mut BTreeSet<String>) {
+    match place {
+        Place::Direct(value) | Place::Dereference(value) => {
+            collect_operand_string_literal(value, literals)
+        }
+        Place::Member { base, .. } => collect_place_string_literals(base, literals),
+        Place::Index { base, index } => {
+            collect_place_string_literals(base, literals);
+            collect_operand_string_literal(index, literals);
         }
     }
 }
@@ -2599,6 +2823,12 @@ fn collect_operand(operand: &Operand, names: &mut BTreeSet<String>) {
             names.insert(label.to_string());
         }
         Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => {}
+    }
+}
+
+fn collect_operand_string_literal(operand: &Operand, literals: &mut BTreeSet<String>) {
+    if let Operand::Literal(Lit::String(value)) = operand {
+        literals.insert(value.clone());
     }
 }
 
@@ -3558,6 +3788,59 @@ fn is_xmm_register(register: Register) -> bool {
             | Register::XMM14
             | Register::XMM15
     )
+}
+
+fn string_literal_data(value: &str) -> Vec<u8> {
+    let content = if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    };
+    let mut bytes = Vec::new();
+    let mut chars = content.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            let mut encoded = [0; 4];
+            bytes.extend(character.encode_utf8(&mut encoded).as_bytes());
+            continue;
+        }
+        let escaped = chars.next().unwrap_or('\\');
+        match escaped {
+            '0' => bytes.push(0),
+            'n' => bytes.push(b'\n'),
+            'r' => bytes.push(b'\r'),
+            't' => bytes.push(b'\t'),
+            other => {
+                let mut encoded = [0; 4];
+                bytes.extend(other.encode_utf8(&mut encoded).as_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+fn string_literal_label(value: &[u8]) -> String {
+    let suffix = if value.is_empty() {
+        String::from("empty")
+    } else {
+        value.iter().map(|byte| format!("{byte:02x}")).collect()
+    };
+    format!(".Lstr_{suffix}")
+}
+
+fn string_literal_bytes(value: &[u8]) -> String {
+    if value.is_empty() {
+        String::from("0")
+    } else {
+        value
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn literal_value(operand: &Operand) -> String {
