@@ -1,4 +1,4 @@
-use crate::ast::types::TypeCollection;
+use crate::ast::types::{PrimitiveType, Type, TypeCollection};
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     ControlFlowGraph, FunctionCallInstruction, Instruction,
@@ -25,6 +25,7 @@ pub struct X86ElfExecutable {
     entry_point: u64,
     text_offset: usize,
     runtime_size: usize,
+    data_offset: usize,
     symbols: BTreeMap<String, u64>,
 }
 
@@ -43,6 +44,10 @@ impl X86ElfExecutable {
 
     pub fn runtime_size(&self) -> usize {
         self.runtime_size
+    }
+
+    pub fn data_offset(&self) -> usize {
+        self.data_offset
     }
 
     pub fn symbols(&self) -> &BTreeMap<String, u64> {
@@ -138,12 +143,17 @@ impl<'a> CodeGeneratorX86Elf<'a> {
             entry_point,
             text_offset: options.text_offset as usize,
             runtime_size: runtime.len(),
+            data_offset: options.text_offset as usize + runtime.len() + code.data_offset(),
             symbols,
         })
     }
 
     fn validate_supported(&self, diag: &mut dyn DiagnosticConsumer) -> bool {
         let mut valid = true;
+        if let Some(message) = self.unsupported_entry_point_return_message() {
+            valid = false;
+            diag.error(elf_error(message));
+        }
         for block in self.cfg.node_weights() {
             for inst in &block.instructions {
                 if let Some(message) = self.unsupported_message(&inst.instruction) {
@@ -153,6 +163,33 @@ impl<'a> CodeGeneratorX86Elf<'a> {
             }
         }
         valid
+    }
+
+    fn unsupported_entry_point_return_message(&self) -> Option<String> {
+        let return_type = self
+            .symbols
+            .lookup_function_entry(ENTRY_SYMBOL)
+            .map(|(_, _, entry)| entry)
+            .and_then(|entry| entry.var_type)
+            .and_then(|ty| self.types.get(self.types.canonicalize(ty)))
+            .and_then(|ty| match ty {
+                Type::FunctionType(signature) => Some(signature.return_type),
+                _ => None,
+            })?;
+        let return_type = self.types.canonicalize(return_type);
+        let supported = match self.types.get(return_type) {
+            Some(Type::PrimitiveType(
+                PrimitiveType::I32 | PrimitiveType::U32 | PrimitiveType::BOOL | PrimitiveType::CHAR,
+            )) => true,
+            Some(Type::TupleType(tuple)) => tuple.types.is_empty(),
+            _ => false,
+        };
+        (!supported).then(|| {
+            format!(
+                "x86 ELF executable output requires `{ENTRY_SYMBOL}` to return an integer scalar or unit, found {}",
+                self.types.to_string_index(return_type)
+            )
+        })
     }
 
     fn unsupported_message(&self, instruction: &Instruction) -> Option<String> {
