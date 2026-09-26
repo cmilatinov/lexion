@@ -490,6 +490,16 @@ fn x86_smoke_loads_string_indexes() {
 }
 
 #[test]
+fn x86_smoke_loads_string_indexes_with_rax_index() {
+    let assembly = compile_x86_with_registers("backend/x86_string_index.lex", vec![Register::RAX]);
+
+    assert!(
+        assembly.contains("push rax\n  mov edx, eax\n  mov rax, QWORD PTR [rbp-32]"),
+        "{assembly}"
+    );
+}
+
+#[test]
 fn x86_smoke_function_value_members() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_value_members.lex"));
 }

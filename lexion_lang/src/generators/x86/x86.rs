@@ -629,8 +629,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     && preserve_register(lines, frame, location, Register::RAX);
                 let preserved_rdx = target_register != Some(Register::RDX)
                     && preserve_register(lines, frame, location, Register::RDX);
-                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
                 load_operand(lines, frame, location, index, Register::RDX);
+                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
                 lines.push(String::from("  add rax, rdx"));
                 store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
                 restore_register(lines, Register::RDX, preserved_rdx);
@@ -764,8 +764,8 @@ impl<'a> CodeGeneratorX86<'a> {
                     && preserve_register(lines, frame, location, Register::RAX);
                 let preserved_rdx = target_register != Register::RDX
                     && preserve_register(lines, frame, location, Register::RDX);
-                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
                 load_operand(lines, frame, location, index, Register::RDX);
+                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
                 lines.push(format!(
                     "  movzx {}, BYTE PTR [rax+rdx]",
                     register_name_32(target_register)

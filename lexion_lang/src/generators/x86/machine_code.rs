@@ -1105,8 +1105,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Place::Index { .. } => {
                 let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
-                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
                 load_operand(assembler, slots, index, edx)?;
+                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
                 assembler.add(rax, rdx)?;
             }
             Place::Dereference(_) => {
@@ -1182,8 +1182,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Place::Index { .. } => {
                 let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
-                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
                 load_operand(assembler, slots, index, edx)?;
+                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
                 assembler.movzx(eax, byte_ptr(rax + rdx))?;
             }
         }
