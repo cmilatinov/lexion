@@ -590,6 +590,7 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Member { .. } => Some(String::from(
                 "x86 backend does not support references through projected places yet",
             )),
+            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support references to indexed places yet",
             )),
@@ -621,7 +622,22 @@ impl<'a> CodeGeneratorX86<'a> {
                 aggregate_member_operand(frame, location, &base, offset)
                     .expect("borrowed aggregate members must have stable frame locations")
             }
-            Place::Index { .. } | Place::Dereference(_) => {
+            Place::Index { .. } => {
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                let target_register = operand_register(frame, location, &inst.target);
+                let preserved_rax = target_register != Some(Register::RAX)
+                    && preserve_register(lines, frame, location, Register::RAX);
+                let preserved_rdx = target_register != Some(Register::RDX)
+                    && preserve_register(lines, frame, location, Register::RDX);
+                load_operand(lines, frame, location, index, Register::RDX);
+                load_reference_operand(lines, frame, location, base, Register::RAX);
+                lines.push(String::from("  add rax, rdx"));
+                store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
+                restore_register(lines, Register::RDX, preserved_rdx);
+                restore_register(lines, Register::RAX, preserved_rax);
+                return;
+            }
+            Place::Dereference(_) => {
                 unreachable!("unsupported borrow places are diagnosed before emission")
             }
         };
@@ -965,6 +981,21 @@ impl<'a> CodeGeneratorX86<'a> {
             self.types.get(self.types.canonicalize(reference.to)),
             Some(Type::PrimitiveType(PrimitiveType::STR))
         )
+    }
+
+    fn indexed_string_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        let Place::Index { base, index } = place else {
+            return None;
+        };
+        let Place::Direct(base) = base.as_ref() else {
+            return None;
+        };
+        (operand_name(base).is_some() && self.operand_is_string_value(function, base))
+            .then_some((base, index))
     }
 
     fn type_is_function(&self, ty: Index) -> bool {
