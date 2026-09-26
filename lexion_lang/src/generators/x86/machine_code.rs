@@ -1074,7 +1074,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Member { .. } => Some(String::from(
                 "x86 machine-code backend does not support references through projected places yet",
             )),
-            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
+            Place::Index { .. } if self.indexed_string_borrow_place(function, place).is_some() => {
+                None
+            }
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support references to indexed places yet",
             )),
@@ -1771,6 +1773,15 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         };
         self.operand_is_string_value(function, base)
             .then_some((base, index))
+    }
+
+    fn indexed_string_borrow_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        self.indexed_string_place(function, place)
+            .and_then(|(base, index)| operand_name(base).is_some().then_some((base, index)))
     }
 
     fn load_string_pointer(

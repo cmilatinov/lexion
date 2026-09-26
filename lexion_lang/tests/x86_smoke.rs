@@ -511,11 +511,12 @@ fn x86_smoke_stages_index_before_string_base() {
 }
 
 #[test]
-fn x86_smoke_borrows_literal_indexed_string_elements() {
-    let assembly = compile_x86("backend/x86_literal_index_borrow.lex");
-
-    assert!(assembly.contains("lea rax, [rip + .Lstr_616263]"));
-    assert!(assembly.contains("add rax, rdx"));
+fn x86_rejects_literal_index_borrows() {
+    assert!(
+        compile_x86_error("backend/x86_unsupported_literal_index_borrow.lex")
+            .join("\n")
+            .contains("x86 backend does not support references to indexed places yet")
+    );
 }
 
 #[test]

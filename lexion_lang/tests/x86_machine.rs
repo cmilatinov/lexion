@@ -467,10 +467,12 @@ fn x86_machine_code_loads_string_indexes() {
 }
 
 #[test]
-fn x86_machine_code_borrows_literal_indexed_string_elements() {
-    let code = compile_machine_code("backend/x86_literal_index_borrow.lex");
-
-    assert!(!code.as_bytes().is_empty());
+fn x86_machine_rejects_literal_index_borrows() {
+    assert!(
+        compile_machine_code_error("backend/x86_unsupported_literal_index_borrow.lex")
+            .join("\n")
+            .contains("x86 machine-code backend does not support references to indexed places yet")
+    );
 }
 
 #[test]
