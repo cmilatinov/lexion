@@ -234,11 +234,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> Result<bool, IcedError> {
         match instruction {
             Instruction::Borrow(inst) => {
-                self.emit_borrow(assembler, slots, context.name, inst)?;
+                self.emit_borrow(assembler, labels.strings, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Load(inst) => {
-                self.emit_load(assembler, slots, context.name, inst)?;
+                self.emit_load(assembler, labels.strings, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Store(inst) => {
@@ -1087,6 +1087,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_borrow(
         &self,
         assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
         slots: &BTreeMap<String, usize>,
         function: &str,
         inst: &crate::generators::tac::instructions::BorrowInstruction,
@@ -1104,7 +1105,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Place::Index { .. } => {
                 let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
-                load_reference_operand(assembler, slots, base, rax)?;
+                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
                 load_operand(assembler, slots, index, edx)?;
                 assembler.add(rax, rdx)?;
             }
@@ -1118,6 +1119,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_load(
         &self,
         assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
         slots: &BTreeMap<String, usize>,
         function: &str,
         inst: &crate::generators::tac::instructions::LoadInstruction,
@@ -1179,7 +1181,10 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 }
             }
             Place::Index { .. } => {
-                unreachable!("unsupported load places are diagnosed before emission")
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
+                load_operand(assembler, slots, index, edx)?;
+                assembler.movzx(eax, byte_ptr(rax + rdx))?;
             }
         }
         store_operand(assembler, slots, &inst.target, eax)
@@ -1768,6 +1773,33 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .then_some((base, index))
     }
 
+    fn load_string_pointer(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        register: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                assembler.lea(
+                    register,
+                    (*literal_labels
+                        .get(&data)
+                        .expect("missing string literal label"))
+                    .into(),
+                )
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                assembler.mov(register, reference_stack_value(slots, operand))
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
+    }
+
     fn emit_string_value_store(
         &self,
         assembler: &mut CodeAssembler,
@@ -1924,6 +1956,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Member { .. } => self.unsupported_member_message(function, place),
+            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support indexed access yet",
             )),

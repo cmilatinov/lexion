@@ -483,6 +483,13 @@ fn x86_smoke_borrows_indexed_string_elements() {
 }
 
 #[test]
+fn x86_smoke_loads_string_indexes() {
+    let assembly = compile_x86("backend/x86_string_index.lex");
+
+    assert!(assembly.contains("movzx eax, BYTE PTR [rax+rdx]"));
+}
+
+#[test]
 fn x86_smoke_function_value_members() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_value_members.lex"));
 }

@@ -460,6 +460,13 @@ fn x86_machine_code_borrows_indexed_string_elements() {
 }
 
 #[test]
+fn x86_machine_code_loads_string_indexes() {
+    let code = compile_machine_code("backend/x86_string_index.lex");
+
+    assert!(!code.as_bytes().is_empty());
+}
+
+#[test]
 fn x86_machine_code_function_scoped_symbol_types() {
     let code = compile_machine_code("backend/x86_function_scoped_symbols.lex");
 
