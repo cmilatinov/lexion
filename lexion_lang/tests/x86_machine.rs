@@ -453,6 +453,13 @@ fn x86_machine_code_projected_aggregate_references() {
 }
 
 #[test]
+fn x86_machine_code_borrows_indexed_string_elements() {
+    let code = compile_machine_code("backend/x86_indexed_string_borrow.lex");
+
+    assert!(!code.as_bytes().is_empty());
+}
+
+#[test]
 fn x86_machine_code_function_scoped_symbol_types() {
     let code = compile_machine_code("backend/x86_function_scoped_symbols.lex");
 

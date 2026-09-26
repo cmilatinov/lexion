@@ -1074,6 +1074,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Place::Member { .. } => Some(String::from(
                 "x86 machine-code backend does not support references through projected places yet",
             )),
+            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support references to indexed places yet",
             )),
@@ -1101,7 +1102,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                     qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
                 )?;
             }
-            Place::Index { .. } | Place::Dereference(_) => {
+            Place::Index { .. } => {
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                load_reference_operand(assembler, slots, base, rax)?;
+                load_operand(assembler, slots, index, edx)?;
+                assembler.add(rax, rdx)?;
+            }
+            Place::Dereference(_) => {
                 unreachable!("unsupported borrow places are diagnosed before emission")
             }
         }
@@ -1744,6 +1751,21 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             self.types.get(self.types.canonicalize(reference.to)),
             Some(Type::PrimitiveType(PrimitiveType::STR))
         )
+    }
+
+    fn indexed_string_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        let Place::Index { base, index } = place else {
+            return None;
+        };
+        let Place::Direct(base) = base.as_ref() else {
+            return None;
+        };
+        self.operand_is_string_value(function, base)
+            .then_some((base, index))
     }
 
     fn emit_string_value_store(
