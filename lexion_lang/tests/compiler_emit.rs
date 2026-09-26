@@ -65,7 +65,6 @@ fn compiler_emit_asm_returns_indirect_aggregate_return_assembly() {
     let assembly = output.assembly.expect("expected assembly output");
     insta::assert_snapshot!(assembly.as_str());
 }
-
 #[test]
 fn compiler_emit_asm_returns_function_value_assembly() {
     let source_path = "tests/fixtures/backend/x86_function_values.lex";
