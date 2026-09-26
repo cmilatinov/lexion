@@ -1,0 +1,41 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_string_literals.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> &str {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+#     let first = "hello";
+  lea rax, [rip + .Lstr_68656c6c6f]
+  mov QWORD PTR [rbp-24], rax
+  mov QWORD PTR [rbp-24+8], 5
+#     let second = first;
+  mov eax, DWORD PTR [rbp-24]
+  mov DWORD PTR [rbp-40], eax
+  mov eax, DWORD PTR [rbp-24+4]
+  mov DWORD PTR [rbp-40+4], eax
+  mov eax, DWORD PTR [rbp-24+8]
+  mov DWORD PTR [rbp-40+8], eax
+  mov eax, DWORD PTR [rbp-24+12]
+  mov DWORD PTR [rbp-40+12], eax
+#     second = "world";
+  lea rax, [rip + .Lstr_776f726c64]
+  mov QWORD PTR [rbp-40], rax
+  mov QWORD PTR [rbp-40+8], 5
+#     return second;
+  mov rax, QWORD PTR [rbp-40]
+  mov rdx, QWORD PTR [rbp-40+8]
+  add rsp, 48
+  pop rbp
+  ret
+.section .rodata
+.Lstr_68656c6c6f:
+  .byte 104, 101, 108, 108, 111
+.Lstr_776f726c64:
+  .byte 119, 111, 114, 108, 100
