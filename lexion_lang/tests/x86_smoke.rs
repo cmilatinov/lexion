@@ -483,6 +483,26 @@ fn x86_smoke_borrows_indexed_string_elements() {
 }
 
 #[test]
+fn x86_smoke_stages_index_before_string_base() {
+    let assembly =
+        compile_x86_with_registers("backend/x86_indexed_string_borrow.lex", vec![Register::RAX]);
+
+    assert!(
+        assembly.contains("push rax\n  mov edx, eax\n  mov rax, QWORD PTR [rbp-56]"),
+        "{assembly}"
+    );
+}
+
+#[test]
+fn x86_rejects_literal_index_borrows() {
+    assert!(
+        compile_x86_error("backend/x86_unsupported_literal_index_borrow.lex")
+            .join("\n")
+            .contains("x86 backend does not support references to indexed places yet")
+    );
+}
+
+#[test]
 fn x86_smoke_function_value_members() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_value_members.lex"));
 }

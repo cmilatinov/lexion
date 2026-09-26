@@ -1104,8 +1104,8 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             }
             Place::Index { .. } => {
                 let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
-                load_reference_operand(assembler, slots, base, rax)?;
                 load_operand(assembler, slots, index, edx)?;
+                load_reference_operand(assembler, slots, base, rax)?;
                 assembler.add(rax, rdx)?;
             }
             Place::Dereference(_) => {
@@ -1764,7 +1764,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let Place::Direct(base) = base.as_ref() else {
             return None;
         };
-        self.operand_is_string_value(function, base)
+        (operand_name(base).is_some() && self.operand_is_string_value(function, base))
             .then_some((base, index))
     }
 

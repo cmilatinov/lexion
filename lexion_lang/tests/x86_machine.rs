@@ -460,6 +460,15 @@ fn x86_machine_code_borrows_indexed_string_elements() {
 }
 
 #[test]
+fn x86_machine_rejects_literal_index_borrows() {
+    assert!(
+        compile_machine_code_error("backend/x86_unsupported_literal_index_borrow.lex")
+            .join("\n")
+            .contains("x86 machine-code backend does not support references to indexed places yet")
+    );
+}
+
+#[test]
 fn x86_machine_code_function_scoped_symbol_types() {
     let code = compile_machine_code("backend/x86_function_scoped_symbols.lex");
 
