@@ -483,6 +483,23 @@ fn x86_smoke_borrows_indexed_string_elements() {
 }
 
 #[test]
+fn x86_smoke_loads_string_indexes() {
+    let assembly = compile_x86("backend/x86_string_index.lex");
+
+    assert!(assembly.contains("movzx eax, BYTE PTR [rax+rdx]"));
+}
+
+#[test]
+fn x86_smoke_loads_string_indexes_with_rax_index() {
+    let assembly = compile_x86_with_registers("backend/x86_string_index.lex", vec![Register::RAX]);
+
+    assert!(
+        assembly.contains("push rax\n  mov edx, eax\n  mov rax, QWORD PTR [rbp-32]"),
+        "{assembly}"
+    );
+}
+
+#[test]
 fn x86_smoke_stages_index_before_string_base() {
     let assembly =
         compile_x86_with_registers("backend/x86_indexed_string_borrow.lex", vec![Register::RAX]);

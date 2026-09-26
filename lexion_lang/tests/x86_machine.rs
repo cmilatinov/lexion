@@ -460,6 +460,13 @@ fn x86_machine_code_borrows_indexed_string_elements() {
 }
 
 #[test]
+fn x86_machine_code_loads_string_indexes() {
+    let code = compile_machine_code("backend/x86_string_index.lex");
+
+    assert!(!code.as_bytes().is_empty());
+}
+
+#[test]
 fn x86_machine_rejects_literal_index_borrows() {
     assert!(
         compile_machine_code_error("backend/x86_unsupported_literal_index_borrow.lex")

@@ -590,7 +590,9 @@ impl<'a> CodeGeneratorX86<'a> {
             Place::Member { .. } => Some(String::from(
                 "x86 backend does not support references through projected places yet",
             )),
-            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
+            Place::Index { .. } if self.indexed_string_borrow_place(function, place).is_some() => {
+                None
+            }
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support references to indexed places yet",
             )),
@@ -630,7 +632,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 let preserved_rdx = target_register != Some(Register::RDX)
                     && preserve_register(lines, frame, location, Register::RDX);
                 load_operand(lines, frame, location, index, Register::RDX);
-                load_reference_operand(lines, frame, location, base, Register::RAX);
+                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
                 lines.push(String::from("  add rax, rdx"));
                 store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
                 restore_register(lines, Register::RDX, preserved_rdx);
@@ -756,7 +758,25 @@ impl<'a> CodeGeneratorX86<'a> {
                 }
             }
             Place::Index { .. } => {
-                unreachable!("unsupported load places are diagnosed before emission")
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                let target_register = allocated_target_register.unwrap_or(Register::RAX);
+                let preserved_target_register = allocated_target_register.is_none()
+                    && preserve_register(lines, frame, location, target_register);
+                let preserved_rax = target_register != Register::RAX
+                    && preserve_register(lines, frame, location, Register::RAX);
+                let preserved_rdx = target_register != Register::RDX
+                    && preserve_register(lines, frame, location, Register::RDX);
+                load_operand(lines, frame, location, index, Register::RDX);
+                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
+                lines.push(format!(
+                    "  movzx {}, BYTE PTR [rax+rdx]",
+                    register_name_32(target_register)
+                ));
+                store_operand(lines, frame, location, &inst.target, target_register);
+                restore_register(lines, Register::RDX, preserved_rdx);
+                restore_register(lines, Register::RAX, preserved_rax);
+                restore_register(lines, target_register, preserved_target_register);
+                return;
             }
         }
         store_operand(lines, frame, location, &inst.target, target_register);
@@ -994,8 +1014,47 @@ impl<'a> CodeGeneratorX86<'a> {
         let Place::Direct(base) = base.as_ref() else {
             return None;
         };
-        (operand_name(base).is_some() && self.operand_is_string_value(function, base))
+        self.operand_is_string_value(function, base)
             .then_some((base, index))
+    }
+
+    fn indexed_string_borrow_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        self.indexed_string_place(function, place)
+            .and_then(|(base, index)| operand_name(base).is_some().then_some((base, index)))
+    }
+
+    fn load_string_pointer(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        register: Register,
+    ) {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                lines.push(format!(
+                    "  lea {}, [rip + {}]",
+                    register_name(register),
+                    string_literal_label(&data)
+                ));
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                let source = aggregate_member_operand(frame, location, operand, 0)
+                    .expect("string values must have stable frame locations");
+                lines.push(format!(
+                    "  mov {}, QWORD PTR {source}",
+                    register_name(register)
+                ));
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
     }
 
     fn type_is_function(&self, ty: Index) -> bool {
@@ -1187,6 +1246,7 @@ impl<'a> CodeGeneratorX86<'a> {
     fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Member { .. } => self.unsupported_member_message(function, place),
+            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support indexed access yet",
             )),
