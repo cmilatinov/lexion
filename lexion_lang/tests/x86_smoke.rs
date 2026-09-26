@@ -500,6 +500,25 @@ fn x86_smoke_loads_string_indexes_with_rax_index() {
 }
 
 #[test]
+fn x86_smoke_stages_index_before_string_base() {
+    let assembly =
+        compile_x86_with_registers("backend/x86_indexed_string_borrow.lex", vec![Register::RAX]);
+
+    assert!(
+        assembly.contains("push rax\n  mov edx, eax\n  mov rax, QWORD PTR [rbp-56]"),
+        "{assembly}"
+    );
+}
+
+#[test]
+fn x86_smoke_borrows_literal_indexed_string_elements() {
+    let assembly = compile_x86("backend/x86_literal_index_borrow.lex");
+
+    assert!(assembly.contains("lea rax, [rip + .Lstr_616263]"));
+    assert!(assembly.contains("add rax, rdx"));
+}
+
+#[test]
 fn x86_smoke_function_value_members() {
     insta::assert_snapshot!(compile_x86("backend/x86_function_value_members.lex"));
 }
