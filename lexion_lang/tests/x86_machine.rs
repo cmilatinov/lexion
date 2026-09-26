@@ -91,6 +91,20 @@ fn machine_snapshot(code: &X86MachineCode) -> String {
     )
 }
 
+fn string_machine_snapshot(code: &X86MachineCode) -> String {
+    format!(
+        "symbols:\n{}\n\ncode bytes:\n{}\n\ndata bytes:\n{}\n\ndisassembly:\n{}",
+        code.symbols()
+            .iter()
+            .map(|(name, offset)| format!("{name}=0x{offset:04X}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        hex_bytes(&code.as_bytes()[..code.data_offset()]),
+        hex_bytes(&code.as_bytes()[code.data_offset()..]),
+        disassemble(&code.as_bytes()[..code.data_offset()], code.symbols())
+    )
+}
+
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -307,10 +321,26 @@ fn x86_machine_code_unit_arguments() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_string_values() {
-    insta::assert_snapshot!(
-        compile_machine_code_error("backend/x86_unsupported_string.lex").join("\n")
-    );
+fn x86_machine_code_string_literals() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_literals.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_empty_string_literal() {
+    let code = compile_machine_code("backend/x86_empty_string_literal.lex");
+
+    assert_eq!(&code.as_bytes()[code.data_offset()..], b"\0");
+    insta::assert_snapshot!(string_machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_string_parameters() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_string_parameter.lex"
+    )
+    .join("\n"));
 }
 
 #[test]
@@ -325,6 +355,14 @@ fn x86_machine_reports_unsupported_call_string_arg() {
 fn x86_machine_reports_unsupported_call_tuple_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_tuple_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_string_returns() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_string_return.lex"
     )
     .join("\n"));
 }

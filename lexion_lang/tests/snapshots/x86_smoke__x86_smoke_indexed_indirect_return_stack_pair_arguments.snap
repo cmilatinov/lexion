@@ -1,6 +1,5 @@
 ---
 source: lexion_lang/tests/x86_smoke.rs
-assertion_line: 253
 expression: "compile_x86(\"backend/x86_indexed_indirect_return_stack_pair_arguments.lex\")"
 snapshot_kind: text
 ---
