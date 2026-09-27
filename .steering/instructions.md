@@ -20,7 +20,7 @@ These are the default operating instructions for work in `lexion`.
 1. Inspect `git status --short`.
 2. Read the relevant steering files:
    - `.steering/gitflow.md` for branch, commit, and PR rules.
-   - `.steering/todoist.md` when selecting work or preparing PR references.
+   - `.steering/planning.md` when selecting work or preparing PR references.
    - `.steering/architecture.md` for crate boundaries and pipeline ownership.
    - `.steering/conventions.md` for local Rust and test conventions.
 3. Locate the smallest relevant code surface.
@@ -50,9 +50,8 @@ The language compiler supports dump flags such as `parse_table`, `parse_trace`, 
 
 ## Task And PR Discipline
 
-- Use Todoist as the planning source of truth when choosing the next task or opening a PR.
-- Use the `Lexion` Todoist project for this repo. If the project does not exist yet, create or request it before opening a PR that needs task references.
-- Do not create Todoist tasks for documentation-only changes. Docs-only PRs should omit Todoist and `Tasks Addressed` sections.
+- Use repository GitHub Issues for Engineering Tasks and the [Lexion Project](https://github.com/users/cmilatinov/projects/2) for roadmap priority and status.
+- Documentation-only and process-only changes do not require a new Engineering Task.
 - Keep one PR to one coherent parser, compiler, grammar, or documentation change.
 - Do not mix unrelated cleanup with behavior fixes.
-- When a PR is merged, close the linked Todoist task only if the merged code satisfies the task's stated goal or acceptance criteria.
+- Close a linked issue after merge only when its acceptance criteria are satisfied.
