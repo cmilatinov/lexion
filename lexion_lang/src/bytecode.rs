@@ -260,6 +260,90 @@ fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
     )
 }
 
+/// Definition-time state for an entity-owned behavior module. Instances clone
+/// these defaults, so no state is shared accidentally between entities.
+#[derive(Debug, Clone)]
+pub struct BehaviorModule {
+    program: BytecodeProgram,
+    defaults: BTreeMap<String, BytecodeValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BehaviorInstance {
+    module: BehaviorModule,
+    state: BTreeMap<String, BytecodeValue>,
+}
+
+impl BehaviorModule {
+    pub fn new(
+        program: BytecodeProgram,
+        defaults: BTreeMap<String, BytecodeValue>,
+    ) -> Result<Self, BytecodeError> {
+        if defaults
+            .values()
+            .any(|value| matches!(value, BytecodeValue::Unit))
+        {
+            return Err(BytecodeError {
+                message: "behavior state defaults cannot be unit values".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        Ok(Self { program, defaults })
+    }
+    pub fn create_instance(
+        &self,
+        overrides: BTreeMap<String, BytecodeValue>,
+    ) -> Result<BehaviorInstance, BytecodeError> {
+        let mut state = self.defaults.clone();
+        for (name, value) in overrides {
+            let default = state.get(&name).ok_or_else(|| BytecodeError {
+                message: format!("unknown behavior state override `{name}`"),
+                span: SourceSpan::from(0),
+            })?;
+            if !same_value_kind(default, &value) {
+                return Err(BytecodeError {
+                    message: format!("behavior state override `{name}` has an incompatible type"),
+                    span: SourceSpan::from(0),
+                });
+            }
+            state.insert(name, value);
+        }
+        Ok(BehaviorInstance {
+            module: self.clone(),
+            state,
+        })
+    }
+}
+
+impl BehaviorInstance {
+    pub fn state(&self, name: &str) -> Option<&BytecodeValue> {
+        self.state.get(name)
+    }
+    pub fn set_state(&mut self, name: &str, value: BytecodeValue) -> Result<(), BytecodeError> {
+        let previous = self.state.get(name).ok_or_else(|| BytecodeError {
+            message: format!("unknown behavior state `{name}`"),
+            span: SourceSpan::from(0),
+        })?;
+        if !same_value_kind(previous, &value) {
+            return Err(BytecodeError {
+                message: format!("behavior state `{name}` has an incompatible type"),
+                span: SourceSpan::from(0),
+            });
+        }
+        self.state.insert(name.into(), value);
+        Ok(())
+    }
+    /// Rust owns scheduling: scripts can only run a named callback when this
+    /// method is called by the host's update thread.
+    pub fn invoke(&self, callback: &str, manifest: &mut HostManifest) -> Result<(), BytecodeError> {
+        manifest.invoke(&self.module.program, callback)
+    }
+}
+
+fn same_value_kind(left: &BytecodeValue, right: &BytecodeValue) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
 fn compile_callback(function: &FuncDeclStmt, span: SourceSpan) -> Result<Callback, BytecodeError> {
     if !function.params.is_empty() || function.is_vararg {
         return Err(BytecodeError {
@@ -392,5 +476,21 @@ mod tests {
             .unwrap();
         manifest.invoke(&program, "tick").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
+    }
+    #[test]
+    fn behavior_instances_keep_independent_state() {
+        let program = BytecodeProgram::compile("callback fn update() -> () { }").unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut left = module.create_instance(BTreeMap::new()).unwrap();
+        let right = module
+            .create_instance(BTreeMap::from([("health".into(), BytecodeValue::I32(20))]))
+            .unwrap();
+        left.set_state("health", BytecodeValue::I32(5)).unwrap();
+        assert_eq!(left.state("health"), Some(&BytecodeValue::I32(5)));
+        assert_eq!(right.state("health"), Some(&BytecodeValue::I32(20)));
     }
 }
