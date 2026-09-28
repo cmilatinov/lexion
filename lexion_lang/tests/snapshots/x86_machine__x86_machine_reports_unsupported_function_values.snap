@@ -4,4 +4,4 @@ expression: "compile_machine_code_error(\"backend/x86_unsupported_function_value
 snapshot_kind: text
 ---
 x86 machine-code backend does not support function values yet: fn (i32) -> i32
-x86 machine-code backend does not support indirect calls through function values yet: callback
+x86 machine-code backend does not support indirect calls through function values yet: handler

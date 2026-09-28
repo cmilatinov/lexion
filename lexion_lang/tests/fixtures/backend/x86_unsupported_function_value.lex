@@ -3,6 +3,6 @@ fn add_one(value: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    let callback = add_one;
-    return callback(1);
+    let handler = add_one;
+    return handler(1);
 }
