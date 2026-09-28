@@ -53,12 +53,18 @@ Examples:
 - Use conventional commit prefixes in pull request titles, matching the commit style.
 - Supported pull request title prefixes are the same as commit prefixes: `fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, and `perf:`.
 - Do not add agent-identifying tags such as `[codex]`, `[claude]`, `[kiro]`, `[ai]`, or similar to pull request titles.
+- Documentation-only and process-only PRs do not require a new Engineering Task.
+- Implementation PRs must reference at least one matching Lexion GitHub issue. Create an issue before opening the PR if none exists.
+- Keep a PR to at most three related Engineering Tasks; split unrelated work.
 - PR descriptions must include:
   - `Summary`: summary plus motivation, 2 sentences maximum.
   - `Design Decisions`: architectural or design decisions made, if applicable.
+  - `Engineering Tasks`: linked GitHub issues, or `No ET — documentation/process-only change`.
   - `Tests Added`: new tests added, or `None` with a brief reason.
   - `Validation Performed`: validation run, always as the final section.
+- Use plain issue references for PRs targeting `staging`; GitHub closing keywords apply only when merging into the repository default branch.
 - When modifying or fixing an existing PR, update the PR title if needed and update the existing explanatory PR comment or description. Do not create a new comment for the explanation.
+- When relevant PRs are merged, update or close their linked GitHub issues only after the acceptance criteria are satisfied.
 
 ## Published Branches
 

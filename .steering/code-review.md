@@ -66,5 +66,6 @@ If no issues are found, say that clearly and mention any residual test gaps or r
 
 ## Repo Workflow
 
+- When review fixes become a PR, follow `.steering/planning.md`: reference the matching Lexion GitHub issue or create one for non-documentation work, and keep the PR to at most three related Engineering Tasks.
 - Keep review-fix commits atomic when practical.
 - Do not mix unrelated cleanup into review fixes unless the user explicitly includes it.
