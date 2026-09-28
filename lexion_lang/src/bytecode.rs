@@ -135,6 +135,131 @@ pub trait BytecodeHost {
     ) -> Result<BytecodeValue, String>;
 }
 
+/// A versioned, owned-value host boundary.  It deliberately exposes neither VM
+/// references nor Rust pointers to scripts.
+pub struct HostManifest {
+    version: u16,
+    operations: BTreeMap<String, HostOperation>,
+    executing: bool,
+}
+
+pub struct HostOperation {
+    pub arguments: Vec<HostValueType>,
+    pub result: HostValueType,
+    handler: Box<dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostValueType {
+    Unit,
+    I32,
+    Bool,
+    String,
+    Record,
+}
+
+impl HostManifest {
+    pub fn new(version: u16) -> Self {
+        Self {
+            version,
+            operations: BTreeMap::new(),
+            executing: false,
+        }
+    }
+    pub fn version(&self) -> u16 {
+        self.version
+    }
+    pub fn register(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        result: HostValueType,
+        handler: impl FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send + 'static,
+    ) -> Result<(), String> {
+        let name = name.into();
+        if self.operations.contains_key(&name) {
+            return Err(format!("host operation `{name}` is already registered"));
+        }
+        self.operations.insert(
+            name,
+            HostOperation {
+                arguments,
+                result,
+                handler: Box::new(handler),
+            },
+        );
+        Ok(())
+    }
+    pub fn invoke(
+        &mut self,
+        program: &BytecodeProgram,
+        callback: &str,
+    ) -> Result<(), BytecodeError> {
+        if self.executing {
+            return Err(BytecodeError {
+                message: "same-instance synchronous reentry is not allowed".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        if program.version != BYTECODE_VERSION {
+            return Err(BytecodeError {
+                message: format!("unsupported bytecode version {}", program.version),
+                span: SourceSpan::from(0),
+            });
+        }
+        self.executing = true;
+        let result = program.invoke(callback, self);
+        self.executing = false;
+        result
+    }
+}
+
+impl BytecodeHost for HostManifest {
+    fn call(
+        &mut self,
+        operation: &str,
+        arguments: &[BytecodeValue],
+    ) -> Result<BytecodeValue, String> {
+        let entry = self.operations.get_mut(operation).ok_or_else(|| {
+            format!(
+                "host manifest v{} has no `{operation}` operation",
+                self.version
+            )
+        })?;
+        if entry.arguments.len() != arguments.len() {
+            return Err(format!(
+                "host operation `{operation}` expects {} argument(s), got {}",
+                entry.arguments.len(),
+                arguments.len()
+            ));
+        }
+        for (expected, actual) in entry.arguments.iter().zip(arguments) {
+            if !matches_type(expected, actual) {
+                return Err(format!(
+                    "host operation `{operation}` received an incompatible argument"
+                ));
+            }
+        }
+        let result = (entry.handler)(arguments)?;
+        if !matches_type(&entry.result, &result) {
+            return Err(format!(
+                "host operation `{operation}` returned an incompatible value"
+            ));
+        }
+        Ok(result)
+    }
+}
+
+fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
+    matches!(
+        (expected, value),
+        (HostValueType::Unit, BytecodeValue::Unit)
+            | (HostValueType::I32, BytecodeValue::I32(_))
+            | (HostValueType::Bool, BytecodeValue::Bool(_))
+            | (HostValueType::String, BytecodeValue::String(_))
+    )
+}
+
 fn compile_callback(function: &FuncDeclStmt, span: SourceSpan) -> Result<Callback, BytecodeError> {
     if !function.params.is_empty() || function.is_vararg {
         return Err(BytecodeError {
@@ -247,5 +372,25 @@ mod tests {
         program.invoke("tick", &mut host).unwrap();
         assert_eq!(host.0, vec![BytecodeValue::I32(7)]);
         assert_eq!(program.version(), BYTECODE_VERSION);
+    }
+    #[test]
+    fn versioned_manifest_dispatches_a_command() {
+        let program = BytecodeProgram::compile("callback fn tick() -> () { record(7); }").unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+        let target = seen.clone();
+        let mut manifest = HostManifest::new(1);
+        manifest
+            .register(
+                "record",
+                vec![HostValueType::I32],
+                HostValueType::Unit,
+                move |args| {
+                    target.lock().unwrap().extend_from_slice(args);
+                    Ok(BytecodeValue::Unit)
+                },
+            )
+            .unwrap();
+        manifest.invoke(&program, "tick").unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
     }
 }
