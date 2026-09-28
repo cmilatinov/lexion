@@ -1,0 +1,33 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_scalar_casts.lex\")"
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     let as_int = true as i32;
+  mov eax, 1
+  mov edi, eax
+#     let as_bool = 2 as bool;
+  mov eax, 2
+  cmp eax, 0
+  setne al
+  movzx eax, al
+  mov esi, eax
+#     let bool_int = as_bool as i32;
+  mov eax, esi
+  mov esi, eax
+#     let same = as_int as i32;
+  mov eax, edi
+  mov DWORD PTR [rbp-4], eax
+#     return same + bool_int;
+  mov eax, DWORD PTR [rbp-4]
+  add eax, esi
+  add rsp, 16
+  pop rbp
+  ret

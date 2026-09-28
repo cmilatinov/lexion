@@ -1,0 +1,26 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  first = 4
+  second = 9
+  $t1 = first > second
+  flag = $t1
+  if false == flag then goto $celse_1
+
+$cthen_1:
+  $t3 = first + 1
+  $t2 = $t3
+  goto $cend_1
+
+$celse_1:
+  $t4 = second - 3
+  $t2 = $t4
+
+$cend_1:
+  value = $t2
+  return value
+  endfn main

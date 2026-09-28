@@ -5,13 +5,11 @@ use generational_arena::Index;
 use lexion_lib::miette::{NamedSource, SourceSpan};
 use lexion_lib::petgraph::graph::NodeIndex;
 
-use crate::ast::types::{FunctionType, Type, TypeCollection};
-use crate::ast::visitor::{
-    AstNode, AstNodeMut, AstVisitor, AstVisitorAction, NodeType, TraversalType,
-};
+use crate::ast::types::{FunctionType, PrimitiveType, Type, TypeCollection};
+use crate::ast::visitor::{AstNodeMut, AstVisitor, AstVisitorAction, TraversalType};
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr, Lit,
-    LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
+    Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IfExpr, IndexExpr,
+    Lit, LitExpr, MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructDeclStmt,
     TypedExpr, VarDecl, VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
@@ -94,6 +92,14 @@ impl<'a> TypeChecker<'a> {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::CastExpr(expr),
+                        ..
+                    },
+                span,
+            } => self.cast(diag, expr, *span),
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::MemberExpr(expr),
                         ..
                     },
@@ -148,19 +154,12 @@ impl<'a> TypeChecker<'a> {
 
     fn if_(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &mut IfExpr) -> Option<Index> {
         self.tc(diag, &mut expr.condition, Some(self.types.bool()))?;
-        let then = self.tc(
-            diag,
-            &mut expr.then,
-            if expr.else_.is_some() {
-                None
-            } else {
-                Some(self.types.unit())
-            },
-        );
         if let Some(else_) = &mut expr.else_ {
+            let then = self.tc(diag, &mut expr.then, None);
             self.tc(diag, else_, Some(then.unwrap_or(self.types.unknown())))
         } else {
-            then
+            self.tc(diag, &mut expr.then, Some(self.types.unit()));
+            Some(self.types.unit())
         }
     }
 
@@ -179,22 +178,16 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let types = types.into_iter().map(|ty| ty.unwrap()).collect::<Vec<_>>();
+        if expr.operator == operators::ASSIGN && !self.assign(diag, expr) {
+            return None;
+        }
         match self
             .operators
             .candidate_definitions(expr.operator, types.as_slice(), self.types)
         {
             Ok(defs) => {
                 if let Some(def) = defs.into_iter().find(|d| d.params.eq(&types)) {
-                    match expr {
-                        OperatorExpr { operator, .. } if (*operator).eq("=") => {
-                            if self.assign(diag, expr) {
-                                Some(def.return_type)
-                            } else {
-                                None
-                            }
-                        }
-                        _ => Some(def.return_type),
-                    }
+                    Some(def.return_type)
                 } else {
                     diag.error(LexionDiagnosticError {
                         src: self.src.clone(),
@@ -260,15 +253,104 @@ impl<'a> TypeChecker<'a> {
         None
     }
 
-    #[allow(unused)]
     fn index(
         &mut self,
         diag: &mut dyn DiagnosticConsumer,
         expr: &mut IndexExpr,
         span: SourceSpan,
     ) -> Option<Index> {
-        // TODO
-        None
+        let base_ty = self.expr(diag, &mut expr.expr)?;
+        let index_ty = self.expr(diag, &mut expr.index)?;
+        if !self.is_integer_index(index_ty) {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: expr.index.span,
+                message: format!(
+                    "index expression must be an integer, instead got '{}'",
+                    self.types.to_string_index(index_ty)
+                ),
+            });
+            return None;
+        }
+
+        let base_ty = self.types.canonicalize(base_ty);
+        let indexed_ty = self.types.dereference_all(base_ty);
+        match self.types.get(indexed_ty) {
+            Some(Type::PrimitiveType(PrimitiveType::STR)) => Some(self.types.char()),
+            _ => {
+                diag.error(LexionDiagnosticError {
+                    src: self.src.clone(),
+                    span,
+                    message: format!(
+                        "type '{}' cannot be indexed",
+                        self.types.to_string_index(base_ty)
+                    ),
+                });
+                None
+            }
+        }
+    }
+
+    fn cast(
+        &mut self,
+        diag: &mut dyn DiagnosticConsumer,
+        expr: &mut CastExpr,
+        span: SourceSpan,
+    ) -> Option<Index> {
+        let from_ty = self.expr(diag, &mut expr.expr)?;
+        let Some(to_ty) = self.types.insert_ast_type(&expr.ty.value) else {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span: expr.ty.span,
+                message: String::from("unknown cast target type"),
+            });
+            return None;
+        };
+
+        if self.types.eq(from_ty, to_ty)
+            || (self.is_scalar_cast_type(from_ty) && self.is_scalar_cast_type(to_ty))
+            || (self.is_reference_type(from_ty) && self.is_reference_type(to_ty))
+        {
+            Some(to_ty)
+        } else {
+            diag.error(LexionDiagnosticError {
+                src: self.src.clone(),
+                span,
+                message: format!(
+                    "cannot cast type '{}' to '{}'",
+                    self.types.to_string_index(from_ty),
+                    self.types.to_string_index(to_ty)
+                ),
+            });
+            None
+        }
+    }
+
+    fn is_integer_index(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::PrimitiveType(PrimitiveType::I32 | PrimitiveType::U32))
+        )
+    }
+
+    fn is_scalar_cast_type(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::PrimitiveType(
+                PrimitiveType::U32
+                    | PrimitiveType::I32
+                    | PrimitiveType::F32
+                    | PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+            ))
+        )
+    }
+
+    fn is_reference_type(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::RefType(_))
+        )
     }
 
     fn call(
@@ -365,106 +447,59 @@ impl<'a> TypeChecker<'a> {
 
     fn assign(&mut self, diag: &mut dyn DiagnosticConsumer, expr: &OperatorExpr) -> bool {
         let left = &expr.args[0];
-        if !Self::is_assignable(left) {
+        if Self::is_identifier_lvalue(left) || Self::is_place_expression(left) {
+            true
+        } else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),
                 span: left.span,
                 message: String::from("lvalue required as left operand of assignment"),
             });
             false
-        } else {
-            true
         }
     }
 
-    fn is_assignable(expr: &SourcedExpr) -> bool {
-        let mut result = true;
-        AstVisitor::new().visit_expr(expr, NodeType::Root, &mut |ty, node, _| match (ty, node) {
-            (
-                TraversalType::Postorder,
-                AstNode::Expr(Sourced {
-                    value:
-                        TypedExpr {
-                            expr: Expr::IdentExpr(_) | Expr::MemberExpr(_) | Expr::IndexExpr(_),
-                            ..
-                        },
+    fn is_identifier_lvalue(expr: &SourcedExpr) -> bool {
+        matches!(
+            expr,
+            Sourced {
+                value: TypedExpr {
+                    expr: Expr::IdentExpr(_),
                     ..
-                }),
-            ) => AstVisitorAction::Continue,
-            (
-                TraversalType::Postorder,
-                AstNode::Expr(Sourced {
-                    value:
-                        TypedExpr {
-                            expr: Expr::OperatorExpr(OperatorExpr { operator, args }),
-                            ..
-                        },
-                    ..
-                }),
-            ) if ((*operator).eq(operators::DEREFERENCE)
-                || (*operator).eq(operators::ADDRESS_OF))
-                && args.len() == 1 =>
-            {
-                AstVisitorAction::Continue
+                },
+                ..
             }
-            (TraversalType::Preorder, _) => AstVisitorAction::Continue,
-            _ => {
-                if let AstNode::Expr(expr) = node {
-                    println!("{expr:?}");
-                }
-                result = false;
-                AstVisitorAction::Terminate
-            }
-        });
-        result
+        )
+    }
+
+    fn is_place_expression(expr: &SourcedExpr) -> bool {
+        match expr {
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::MemberExpr(_) | Expr::IndexExpr(_),
+                        ..
+                    },
+                ..
+            } => true,
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::OperatorExpr(OperatorExpr { operator, args }),
+                        ..
+                    },
+                ..
+            } => (*operator).eq(operators::DEREFERENCE) && args.len() == 1,
+            _ => false,
+        }
     }
 
     fn init_operators(&mut self) {
         let i32 = self.types.i32();
-        let i32_ref = self.types.reference(i32);
         let u32 = self.types.u32();
-        let u32_ref = self.types.reference(u32);
         let f32 = self.types.f32();
-        let f32_ref = self.types.reference(f32);
         let bool = self.types.bool();
-
-        self.operators.add_definition_multiple(
-            &["--", "++"],
-            &[
-                // Prefix operators
-                FunctionType {
-                    params: vec![u32_ref],
-                    return_type: u32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![i32_ref],
-                    return_type: i32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![f32_ref],
-                    return_type: f32,
-                    is_vararg: false,
-                },
-                // Postfix w/ dummy int parameter
-                FunctionType {
-                    params: vec![u32_ref, u32],
-                    return_type: u32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![i32_ref, i32],
-                    return_type: i32,
-                    is_vararg: false,
-                },
-                FunctionType {
-                    params: vec![f32_ref, u32],
-                    return_type: f32,
-                    is_vararg: false,
-                },
-            ],
-        );
+        let char = self.types.char();
 
         // Unary plus / minus operators
         self.operators.add_definition_multiple(
@@ -574,6 +609,14 @@ impl<'a> TypeChecker<'a> {
                     is_vararg: false,
                 },
             ],
+        );
+        self.operators.add_definition_multiple(
+            &["==", "!="],
+            &[FunctionType {
+                params: vec![char, char],
+                return_type: bool,
+                is_vararg: false,
+            }],
         );
 
         // Logical operators
@@ -705,33 +748,24 @@ impl<'a> TypeChecker<'a> {
         stmt: &mut ReturnStmt,
         span: SourceSpan,
     ) {
-        let Some(parent_ty) = self
-            .table
-            .parent_entry(self.current_scope)
-            .and_then(|(_, _, entry)| entry.var_type)
-        else {
+        let mut scope = self.current_scope;
+        let mut fn_ret_ty = None;
+        while let Some((parent_scope, _, entry)) = self.table.parent_entry(scope) {
+            if let Some(parent_ty) = entry.var_type {
+                if let Some(Type::FunctionType(FunctionType { return_type, .. })) =
+                    self.types.get(parent_ty)
+                {
+                    fn_ret_ty = Some(*return_type);
+                    break;
+                }
+            }
+            scope = parent_scope;
+        }
+        let Some(fn_ret_ty) = fn_ret_ty else {
             diag.error(LexionDiagnosticError {
                 src: self.src.clone(),
                 span,
                 message: String::from("return statement outside of function"),
-            });
-            return;
-        };
-        let Some(fn_ret_ty) = self.types.get(parent_ty).and_then(|ty| {
-            if let Type::FunctionType(FunctionType {
-                return_type: fn_ret_ty,
-                ..
-            }) = ty
-            {
-                Some(*fn_ret_ty)
-            } else {
-                None
-            }
-        }) else {
-            diag.error(LexionDiagnosticError {
-                src: self.src.clone(),
-                span,
-                message: String::from("expected return statement to be within a function"),
             });
             return;
         };
@@ -743,7 +777,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn begin_struct_stmt(&mut self, stmt: &StructDeclStmt) {}
+    fn begin_struct_stmt(&mut self, _stmt: &StructDeclStmt) {}
 
     fn begin_while_stmt(&mut self, diag: &mut dyn DiagnosticConsumer, stmt: &mut WhileStmt) {
         self.tc(diag, &mut stmt.condition, Some(self.types.bool()));
@@ -867,5 +901,40 @@ impl<'a> PipelineStage for TypeChecker<'a> {
             AstVisitorAction::Continue
         });
         Some(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn type_checker_with_operators<'a>(
+        table: &'a mut SymbolTableGraph,
+        types: &'a mut TypeCollection,
+    ) -> TypeChecker<'a> {
+        TypeChecker::new((
+            NamedSource::new("<test>", Arc::new(String::new())),
+            table,
+            types,
+        ))
+    }
+
+    #[test]
+    fn increment_and_decrement_are_not_language_operators() {
+        let mut table = SymbolTableGraph::default();
+        let mut types = TypeCollection::default();
+        let tc = type_checker_with_operators(&mut table, &mut types);
+        let i32_ref = tc.types.reference(tc.types.i32());
+
+        assert!(tc
+            .operators
+            .candidate_definitions("++", &[i32_ref], tc.types)
+            .unwrap()
+            .is_empty());
+        assert!(tc
+            .operators
+            .candidate_definitions("--", &[i32_ref], tc.types)
+            .unwrap()
+            .is_empty());
     }
 }

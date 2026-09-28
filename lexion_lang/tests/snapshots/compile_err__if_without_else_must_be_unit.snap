@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x expected type '()', instead got 'i32'
+   ,-[tests/fixtures/errors/semantics/if_without_else_value.lex:2:25]
+ 1 | fn main() {
+ 2 |     let value = if true { 1 };
+   :                         ^^|^^
+   :                           `-- here
+ 3 | }
+   `----

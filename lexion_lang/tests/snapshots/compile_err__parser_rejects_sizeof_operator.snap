@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x unexpected token '1'
+   ,-[tests/fixtures/errors/parser/sizeof_operator.lex:2:24]
+ 1 | fn main() {
+ 2 |     let bytes = sizeof 1;
+   :                        |
+   :                        `-- here
+ 3 | }
+   `----

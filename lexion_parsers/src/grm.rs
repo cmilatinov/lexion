@@ -5,7 +5,7 @@ use lexion_lib::grammar::serialize::{
 use lexion_lib::Parser;
 
 #[derive(Parser)]
-#[grammar(path = "grammars/grm.json")]
+#[grammar(path = "grammars/grm.json", parser = "slr1")]
 pub struct ParserGRM;
 
 impl Default for ParserGRM {

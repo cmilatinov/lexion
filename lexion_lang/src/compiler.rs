@@ -1,16 +1,22 @@
 use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, TraversalType};
 use crate::ast::{Ast, AstView};
-use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticInfo, LexionDiagnosticList};
+use crate::diagnostic::{
+    DiagnosticConsumer, LexionDiagnosticError, LexionDiagnosticInfo, LexionDiagnosticList,
+};
 use crate::generators::tac::instructions::{ControlFlowGraph, FunctionRange, LivenessInterval};
-use crate::generators::tac::CodeGeneratorTac;
-use crate::generators::x86::{AssignedLivenessInterval, LinearRegisterAllocator};
+use crate::generators::tac::{
+    analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
+};
+use crate::generators::x86::{
+    AbiRegisterAllocator, AssignedLivenessInterval, CodeGeneratorX86, CodeGeneratorX86Elf,
+    X86Assembly, X86ElfExecutable, X86ElfOptions, X86EmitOptions, X86Target,
+};
 use crate::parser::ParserLexion;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableGenerator, SymbolTableGraph};
 use crate::type_checker::TypeChecker;
 use crate::{Dump, DumpFlags};
-use iced_x86::Register;
 use lexion_lib::miette::{NamedSource, Report};
 use lexion_lib::parsers::GrammarParserLR;
 use lexion_lib::petgraph::dot::Dot;
@@ -21,10 +27,54 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+const X86_INTEGER_WORD_BITS: u32 = 32;
+
 #[derive(Clone)]
 pub struct LexionCompilerOptions {
     pub dump_dir: PathBuf,
     pub dump_flags: DumpFlags,
+    pub emit: EmitTarget,
+    pub emit_source_comments: bool,
+}
+
+impl Default for LexionCompilerOptions {
+    fn default() -> Self {
+        Self {
+            dump_dir: PathBuf::from("dump"),
+            dump_flags: DumpFlags::default(),
+            emit: EmitTarget::Check,
+            emit_source_comments: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EmitTarget {
+    #[default]
+    Check,
+    X86Assembly,
+    X86Elf64,
+}
+
+pub struct LexionCompilerOutput {
+    pub diagnostics: LexionDiagnosticList,
+    pub assembly: Option<X86Assembly>,
+    pub executable: Option<X86ElfExecutable>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitOutputError {
+    X86AssemblyFailed,
+    X86Elf64Failed,
+}
+
+struct EmitOutputInput<'a> {
+    cfg: &'a ControlFlowGraph,
+    types: &'a TypeCollection,
+    symbols: &'a SymbolTableGraph,
+    allocations: &'a HashMap<FunctionRange, Vec<AssignedLivenessInterval>>,
+    source_text: &'a str,
+    source: &'a NamedSource<Arc<String>>,
 }
 
 pub struct LexionCompiler {
@@ -39,8 +89,9 @@ impl LexionCompiler {
     pub fn exec(
         &mut self,
         source: NamedSource<Arc<String>>,
-    ) -> Result<LexionDiagnosticList, LexionDiagnosticList> {
+    ) -> Result<LexionCompilerOutput, LexionDiagnosticList> {
         let mut diagnostics = LexionDiagnosticList::default();
+        let source_text = source.inner().clone();
         let Some((mut ast, mut types, trace)) = self.parse_source(&mut diagnostics, source.clone())
         else {
             return Err(diagnostics);
@@ -51,6 +102,9 @@ impl LexionCompiler {
         else {
             return Err(diagnostics);
         };
+        if diagnostics.has_errors() {
+            return Err(diagnostics);
+        }
 
         let Some(_) = self.type_check(
             &mut diagnostics,
@@ -61,20 +115,44 @@ impl LexionCompiler {
         ) else {
             return Err(diagnostics);
         };
+        if diagnostics.has_errors() {
+            return Err(diagnostics);
+        }
 
         let Some((cfg, intervals)) =
-            self.generate_ir(&mut diagnostics, source, &ast, &mut symbols, &types)
+            self.generate_ir(&mut diagnostics, source.clone(), &ast, &mut symbols, &types)
         else {
             return Err(diagnostics);
         };
 
-        let Some(assigned) = self.assign_registers(&mut diagnostics, &cfg, intervals) else {
+        let Some(assigned) =
+            self.assign_registers(&mut diagnostics, &source, &cfg, &types, &symbols, intervals)
+        else {
             return Err(diagnostics);
         };
 
-        println!("{assigned:#?}");
+        let (assembly, executable) = match self.emit_output(
+            &mut diagnostics,
+            EmitOutputInput {
+                cfg: &cfg,
+                types: &types,
+                symbols: &symbols,
+                allocations: &assigned,
+                source_text: source_text.as_ref(),
+                source: &source,
+            },
+        ) {
+            Ok(output) => output,
+            Err(EmitOutputError::X86AssemblyFailed | EmitOutputError::X86Elf64Failed) => {
+                return Err(diagnostics);
+            }
+        };
 
-        Ok(diagnostics)
+        Ok(LexionCompilerOutput {
+            diagnostics,
+            assembly,
+            executable,
+        })
     }
 }
 
@@ -86,7 +164,6 @@ impl LexionCompiler {
     ) -> Result<(), std::io::Error> {
         std::fs::create_dir_all(self.options.dump_dir.as_path())?;
         let path = self.options.dump_dir.join(name);
-        println!("{path:?}");
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
@@ -94,6 +171,26 @@ impl LexionCompiler {
             .open(path)?;
         file.write_all(content.as_ref())?;
         Ok(())
+    }
+
+    fn dump_file_or_diagnostic(
+        &self,
+        diagnostics: &mut LexionDiagnosticList,
+        source: &NamedSource<Arc<String>>,
+        name: &'static str,
+        content: impl AsRef<[u8]>,
+    ) -> Option<()> {
+        match self.dump_file(name, content) {
+            Ok(()) => Some(()),
+            Err(err) => {
+                diagnostics.error(LexionDiagnosticError {
+                    src: source.clone(),
+                    span: lexion_lib::miette::SourceSpan::from(0),
+                    message: format!("failed to write dump file `{name}`: {err}"),
+                });
+                None
+            }
+        }
     }
 
     fn parse_source(
@@ -105,16 +202,21 @@ impl LexionCompiler {
 
         if self.options.dump_flags.contains(Dump::ParseTable) {
             let table: Table = ParserLexion::PARSER.get_parse_table().to_table();
-            self.dump_file("parse_table.table", table.to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "parse_table.table",
+                table.to_string(),
+            )?;
         }
 
         if self.options.dump_flags.contains(Dump::Grammar) {
-            self.dump_file(
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
                 "grammar.jsmachine",
                 ParserLexion::GRAMMAR.to_jsmachine_string(),
-            )
-            .unwrap();
+            )?;
         }
 
         parser.exec(diagnostics, source.clone())
@@ -129,13 +231,21 @@ impl LexionCompiler {
         trace: &Table,
     ) -> Option<SymbolTableGraph> {
         if self.options.dump_flags.contains(Dump::ParseTrace) {
-            self.dump_file("parse_trace.table", trace.to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "parse_trace.table",
+                trace.to_string(),
+            )?;
         }
 
         if self.options.dump_flags.contains(Dump::AbstractSyntaxTree) {
-            self.dump_file("ast.tree", AstView::new(ast).to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "ast.tree",
+                AstView::new(ast).to_string(),
+            )?;
         }
 
         SymbolTableGenerator::new((source.clone(), ast, types)).exec(diagnostics, ())
@@ -151,10 +261,19 @@ impl LexionCompiler {
     ) -> Option<()> {
         if self.options.dump_flags.contains(Dump::Symbols) {
             if let Some(table) = symbols.table(symbols.root, Some(types)) {
-                self.dump_file("symbols.table", table.to_string()).unwrap();
+                self.dump_file_or_diagnostic(
+                    diagnostics,
+                    &source,
+                    "symbols.table",
+                    table.to_string(),
+                )?;
             }
-            self.dump_file("symbols.dot", format!("{:?}", Dot::new(&symbols.graph)))
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "symbols.dot",
+                format!("{:?}", Dot::new(&symbols.graph)),
+            )?;
         }
 
         TypeChecker::new((source.clone(), symbols, types)).exec(diagnostics, ast)
@@ -183,17 +302,28 @@ impl LexionCompiler {
                 }
                 AstVisitorAction::Continue
             });
-            self.dump_file("types.list", Report::new(type_list).to_string())
-                .unwrap();
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                &source,
+                "types.list",
+                Report::new(type_list).to_string(),
+            )?;
         }
 
-        CodeGeneratorTac::new((ast, symbols, types)).exec(diagnostics, ())
+        let (cfg, _) = CodeGeneratorTac::new((ast, symbols, types)).exec(diagnostics, ())?;
+        let optimizer_options = TacOptimizerOptions::for_target_word_bits(X86_INTEGER_WORD_BITS);
+        let mut cfg = CodeOptimizerTac::new(cfg).exec(diagnostics, optimizer_options)?;
+        let intervals = analyze_liveness(&mut cfg);
+        Some((cfg, intervals))
     }
 
     fn assign_registers(
         &self,
         diagnostics: &mut LexionDiagnosticList,
+        source: &NamedSource<Arc<String>>,
         cfg: &ControlFlowGraph,
+        types: &TypeCollection,
+        symbols: &SymbolTableGraph,
         intervals: HashMap<FunctionRange, Vec<LivenessInterval>>,
     ) -> Option<HashMap<FunctionRange, Vec<AssignedLivenessInterval>>> {
         if self
@@ -206,25 +336,45 @@ impl LexionCompiler {
                 ir.push_str(&block.table().to_string());
                 ir.push('\n');
             }
-            self.dump_file("ir.table", ir).unwrap();
-            self.dump_file("ir.dot", format!("{:?}", Dot::new(&cfg.graph)))
-                .unwrap();
+            self.dump_file_or_diagnostic(diagnostics, source, "ir.table", ir)?;
+            self.dump_file_or_diagnostic(
+                diagnostics,
+                source,
+                "ir.dot",
+                format!("{:?}", Dot::new(&cfg.graph)),
+            )?;
         }
-        // SystemV64::callee_saved();
-        LinearRegisterAllocator::new((
-            cfg,
-            Vec::from_iter([
-                Register::RAX,
-                Register::RCX,
-                Register::RDX,
-                Register::RSI,
-                Register::RDI,
-                Register::R8,
-                Register::R9,
-                Register::R10,
-                Register::R11,
-            ]),
-        ))
-        .exec(diagnostics, intervals)
+        AbiRegisterAllocator::new((cfg, types, symbols, X86Target::system_v64()))
+            .exec(diagnostics, intervals)
+    }
+
+    fn emit_output(
+        &self,
+        diagnostics: &mut LexionDiagnosticList,
+        input: EmitOutputInput<'_>,
+    ) -> Result<(Option<X86Assembly>, Option<X86ElfExecutable>), EmitOutputError> {
+        match self.options.emit {
+            EmitTarget::Check => Ok((None, None)),
+            EmitTarget::X86Assembly => {
+                CodeGeneratorX86::new((input.cfg, input.types, input.symbols))
+                    .with_allocations(input.allocations)
+                    .exec(
+                        diagnostics,
+                        X86EmitOptions {
+                            emit_source_comments: self.options.emit_source_comments,
+                            source: Some(input.source_text),
+                            diagnostic_source: Some(input.source),
+                        },
+                    )
+                    .map(|assembly| (Some(assembly), None))
+                    .ok_or(EmitOutputError::X86AssemblyFailed)
+            }
+            EmitTarget::X86Elf64 => {
+                CodeGeneratorX86Elf::new((input.cfg, input.types, input.symbols))
+                    .exec(diagnostics, X86ElfOptions::default())
+                    .map(|executable| (None, Some(executable)))
+                    .ok_or(EmitOutputError::X86Elf64Failed)
+            }
+        }
     }
 }

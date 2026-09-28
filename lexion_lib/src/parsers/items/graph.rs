@@ -76,7 +76,7 @@ impl<T: Eq + Ord + Hash + LRItem + Clone + ClosurableItem<T>> CanonicalCollectio
     pub fn goto(&self, state_index: NodeIndex, symbol: &str) -> Option<NodeIndex> {
         self.graph
             .edges(state_index)
-            .find(|edge| &edge.weight().symbol == symbol)
+            .find(|edge| edge.weight().symbol == symbol)
             .map(|edge| edge.target())
     }
 
@@ -91,7 +91,7 @@ impl<T: Eq + Ord + Hash + LRItem + Clone + ClosurableItem<T>> CanonicalCollectio
             state.closure(grammar);
 
             let state_index: NodeIndex;
-            let existing_state_index = graph.node_indices().find(|idx| &graph[*idx] == &state);
+            let existing_state_index = graph.node_indices().find(|idx| graph[*idx] == state);
             if let Some(existing_state_index) = existing_state_index {
                 state_index = existing_state_index;
             } else {

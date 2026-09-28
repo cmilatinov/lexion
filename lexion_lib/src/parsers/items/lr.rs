@@ -1,5 +1,5 @@
-use std::collections::{BTreeSet};
 use crate::grammar::{Grammar, GrammarRule};
+use std::collections::BTreeSet;
 
 pub trait LRItem {
     fn get_dot_index(&self) -> usize;
@@ -14,4 +14,3 @@ pub trait ClosurableItem<T: LRItem> {
     fn goto(grammar: &Grammar, items: &BTreeSet<T>, symbol: &str) -> BTreeSet<T>;
     fn closure(grammar: &Grammar, items: &mut BTreeSet<T>);
 }
-

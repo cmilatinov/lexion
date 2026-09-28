@@ -1,0 +1,30 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_return_bool.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> bool {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     let less = 1 < 2;
+  mov eax, 1
+  cmp eax, 2
+  setl al
+  movzx eax, al
+  mov edi, eax
+#     let same = less == true;
+  mov eax, edi
+  cmp eax, 1
+  sete al
+  movzx eax, al
+  mov DWORD PTR [rbp-4], eax
+  mov eax, DWORD PTR [rbp-4]
+#     return same;
+  add rsp, 16
+  pop rbp
+  ret

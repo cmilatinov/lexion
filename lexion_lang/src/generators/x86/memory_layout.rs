@@ -110,6 +110,10 @@ impl MemoryLayout {
             members: vec![],
         }
     }
+
+    pub fn members(&self) -> &[MemberLayout] {
+        &self.members
+    }
 }
 
 impl Layout for MemoryLayout {

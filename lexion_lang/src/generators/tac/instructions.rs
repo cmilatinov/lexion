@@ -2,7 +2,9 @@ use crate::ast::Lit;
 use crate::generators::label::Label;
 use derived_deref::{Deref, DerefMut};
 use enum_dispatch::enum_dispatch;
+use generational_arena::Index;
 use lexion_lib::itertools::Itertools;
+use lexion_lib::miette::SourceSpan;
 use lexion_lib::petgraph::graph::NodeIndex;
 use lexion_lib::petgraph::Graph;
 use lexion_lib::tabled::builder::Builder;
@@ -30,11 +32,12 @@ impl Operand {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = String> {
-        if self.is_literal() {
-            None.into_iter()
-        } else {
-            Some(self.to_string()).into_iter()
+        match self {
+            Operand::Variable(name) => Some(name.clone()),
+            Operand::Temporary(label) => Some(label.to_string()),
+            Operand::Label(_) | Operand::Literal(_) | Operand::Placeholder => None,
         }
+        .into_iter()
     }
 }
 
@@ -50,6 +53,107 @@ impl Display for Operand {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Place {
+    Direct(Operand),
+    Member { base: Box<Place>, member: String },
+    Index { base: Box<Place>, index: Operand },
+    Dereference(Operand),
+}
+
+impl Place {
+    pub fn iter(&self) -> impl Iterator<Item = String> {
+        let mut variables = Vec::new();
+        self.collect_variables(&mut variables);
+        variables.into_iter()
+    }
+
+    fn collect_variables(&self, variables: &mut Vec<String>) {
+        match self {
+            Place::Direct(value) | Place::Dereference(value) => variables.extend(value.iter()),
+            Place::Member { base, .. } => base.collect_variables(variables),
+            Place::Index { base, index } => {
+                base.collect_variables(variables);
+                variables.extend(index.iter());
+            }
+        }
+    }
+}
+
+impl Display for Place {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Place::Direct(value) => write!(f, "{value}"),
+            Place::Member { base, member } => write!(f, "{base}.{member}"),
+            Place::Index { base, index } => write!(f, "{base}[{index}]"),
+            Place::Dereference(value) => write!(f, "*{value}"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct BorrowInstruction {
+    pub target: Operand,
+    pub place: Place,
+}
+
+impl Display for BorrowInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} = borrow {}", self.target, self.place)
+    }
+}
+
+impl BaseInstruction for BorrowInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.place.iter())
+    }
+
+    fn variables_written(&self) -> HashSet<String> {
+        HashSet::from_iter(self.target.iter())
+    }
+}
+
+#[derive(Clone)]
+pub struct LoadInstruction {
+    pub target: Operand,
+    pub place: Place,
+}
+
+impl Display for LoadInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} = load {}", self.target, self.place)
+    }
+}
+
+impl BaseInstruction for LoadInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.place.iter())
+    }
+
+    fn variables_written(&self) -> HashSet<String> {
+        HashSet::from_iter(self.target.iter())
+    }
+}
+
+#[derive(Clone)]
+pub struct StoreInstruction {
+    pub place: Place,
+    pub value: Operand,
+}
+
+impl Display for StoreInstruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "store {} -> {}", self.value, self.place)
+    }
+}
+
+impl BaseInstruction for StoreInstruction {
+    fn variables_read(&self) -> HashSet<String> {
+        HashSet::from_iter(self.place.iter().chain(self.value.iter()))
+    }
+}
+
+#[derive(Clone)]
 pub struct AssignmentInstruction {
     pub target: Operand,
     pub left: Option<Operand>,
@@ -87,6 +191,7 @@ impl BaseInstruction for AssignmentInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct CopyInstruction {
     pub src: Operand,
     pub dst: Operand,
@@ -107,6 +212,7 @@ impl BaseInstruction for CopyInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct ConditionalJumpInstruction {
     pub left: Option<Operand>,
     pub operator: &'static str,
@@ -141,6 +247,7 @@ impl BaseInstruction for ConditionalJumpInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct JumpInstruction {
     pub target: Operand,
 }
@@ -153,6 +260,7 @@ impl Display for JumpInstruction {
 
 impl BaseInstruction for JumpInstruction {}
 
+#[derive(Clone)]
 pub struct ParameterInstruction {
     pub param: Operand,
 }
@@ -169,8 +277,11 @@ impl BaseInstruction for ParameterInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct FunctionCallInstruction {
     pub function: String,
+    pub function_type: Option<Index>,
+    pub is_direct_function: bool,
     pub return_target: Option<Operand>,
 }
 
@@ -195,20 +306,18 @@ impl BaseInstruction for FunctionCallInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct ReturnInstruction {
     pub value: Option<Operand>,
 }
 
 impl Display for ReturnInstruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.value
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or(String::from(""))
-        )
+        if let Some(value) = &self.value {
+            write!(f, "return {value}")
+        } else {
+            write!(f, "return")
+        }
     }
 }
 
@@ -218,8 +327,10 @@ impl BaseInstruction for ReturnInstruction {
     }
 }
 
+#[derive(Clone)]
 pub struct FunctionInstruction {
     pub label: String,
+    pub params: Vec<String>,
 }
 
 impl Display for FunctionInstruction {
@@ -230,6 +341,7 @@ impl Display for FunctionInstruction {
 
 impl BaseInstruction for FunctionInstruction {}
 
+#[derive(Clone)]
 pub struct EndFunctionInstruction {
     pub label: String,
 }
@@ -242,6 +354,7 @@ impl Display for EndFunctionInstruction {
 
 impl BaseInstruction for EndFunctionInstruction {}
 
+#[derive(Clone)]
 pub struct ExternInstruction {
     pub label: String,
 }
@@ -254,8 +367,12 @@ impl Display for ExternInstruction {
 
 impl BaseInstruction for ExternInstruction {}
 
+#[derive(Clone)]
 #[enum_dispatch(BaseInstruction)]
 pub enum Instruction {
+    Borrow(BorrowInstruction),
+    Load(LoadInstruction),
+    Store(StoreInstruction),
     Assignment(AssignmentInstruction),
     Copy(CopyInstruction),
     ConditionalJump(ConditionalJumpInstruction),
@@ -271,6 +388,9 @@ pub enum Instruction {
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Instruction::Borrow(borrow) => borrow.fmt(f),
+            Instruction::Load(load) => load.fmt(f),
+            Instruction::Store(store) => store.fmt(f),
             Instruction::Assignment(assignment) => assignment.fmt(f),
             Instruction::Copy(copy) => copy.fmt(f),
             Instruction::ConditionalJump(conditional_jump) => conditional_jump.fmt(f),
@@ -295,7 +415,7 @@ pub trait BaseInstruction {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct LiveSets {
     pub input: HashSet<String>,
     pub output: HashSet<String>,
@@ -311,8 +431,10 @@ impl Display for LiveSets {
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionInstance {
     pub instruction: Instruction,
+    pub source_span: Option<SourceSpan>,
     pub live: LiveSets,
 }
 
@@ -328,6 +450,7 @@ impl Debug for InstructionInstance {
     }
 }
 
+#[derive(Clone)]
 pub struct InstructionBlock {
     pub label: String,
     pub instructions: Vec<InstructionInstance>,
@@ -393,7 +516,7 @@ impl FunctionRange {
     }
 }
 
-#[derive(Deref, DerefMut)]
+#[derive(Clone, Deref, DerefMut)]
 pub struct ControlFlowGraph {
     pub functions: Vec<FunctionRange>,
     #[target]

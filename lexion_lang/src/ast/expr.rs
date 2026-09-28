@@ -26,6 +26,7 @@ pub enum Expr {
     BlockExpr(BlockExpr),
     IfExpr(IfExpr),
     OperatorExpr(OperatorExpr),
+    CastExpr(CastExpr),
     MemberExpr(MemberExpr),
     IndexExpr(IndexExpr),
     CallExpr(CallExpr),
@@ -50,6 +51,12 @@ pub struct IfExpr {
 pub struct OperatorExpr {
     pub operator: &'static str,
     pub args: Vec<SourcedExpr>,
+}
+
+#[derive(Debug)]
+pub struct CastExpr {
+    pub expr: Box<SourcedExpr>,
+    pub ty: Sourced<Type>,
 }
 
 #[derive(Debug)]

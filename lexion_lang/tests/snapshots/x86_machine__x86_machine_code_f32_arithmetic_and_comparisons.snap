@@ -1,0 +1,86 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+main=0x0000
+
+bytes:
+55 48 89 E5 48 83 EC 50 B8 00 00 40 40 66 0F 6E C0 F3 0F 11 45 D0 B8 00 00 00 40 66 0F 6E C0 F3 0F 11 45 B8 F3 0F 10 45 D0 F3 0F 58 45 B8 F3 0F 11 45 FC F3 0F 10 45 FC F3 0F 11 45 B4 F3 0F 10 45 B4 F3 0F 5C 45 B8 F3 0F 11 45 F8 F3 0F 10 45 F8 F3 0F 11 45 D8 F3 0F 10 45 D8 F3 0F 59 45 B8 F3 0F 11 45 F4 F3 0F 10 45 F4 F3 0F 11 45 C4 F3 0F 10 45 C4 F3 0F 5E 45 B8 F3 0F 11 45 F0 F3 0F 10 45 F0 F3 0F 11 45 C0 F3 0F 10 45 C0 B8 00 00 00 80 66 0F 6E C8 0F 57 C1 F3 0F 11 45 EC F3 0F 10 45 EC F3 0F 11 45 C8 F3 0F 10 45 C8 B8 00 00 00 00 66 0F 6E C8 0F 2E C1 0F 92 C0 0F 9B C1 20 C8 0F B6 C0 89 45 E8 8B 45 E8 89 45 CC F3 0F 10 45 C0 B8 00 00 40 40 66 0F 6E C8 0F 2E C1 0F 93 C0 0F B6 C0 89 45 E4 8B 45 E4 89 45 D4 8B 45 CC 23 45 D4 89 45 DC B8 00 00 00 00 3B 45 DC 74 0A B8 00 00 00 00 89 45 E0 EB 08 B8 01 00 00 00 89 45 E0 8B 45 E0 89 45 BC 8B 45 BC 48 89 EC 5D C3
+
+disassembly:
+main:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,50h
+0008: mov eax,40400000h
+000D: movd xmm0,eax
+0011: movss [rbp-30h],xmm0
+0016: mov eax,40000000h
+001B: movd xmm0,eax
+001F: movss [rbp-48h],xmm0
+0024: movss xmm0,[rbp-30h]
+0029: addss xmm0,[rbp-48h]
+002E: movss [rbp-4],xmm0
+0033: movss xmm0,[rbp-4]
+0038: movss [rbp-4Ch],xmm0
+003D: movss xmm0,[rbp-4Ch]
+0042: subss xmm0,[rbp-48h]
+0047: movss [rbp-8],xmm0
+004C: movss xmm0,[rbp-8]
+0051: movss [rbp-28h],xmm0
+0056: movss xmm0,[rbp-28h]
+005B: mulss xmm0,[rbp-48h]
+0060: movss [rbp-0Ch],xmm0
+0065: movss xmm0,[rbp-0Ch]
+006A: movss [rbp-3Ch],xmm0
+006F: movss xmm0,[rbp-3Ch]
+0074: divss xmm0,[rbp-48h]
+0079: movss [rbp-10h],xmm0
+007E: movss xmm0,[rbp-10h]
+0083: movss [rbp-40h],xmm0
+0088: movss xmm0,[rbp-40h]
+008D: mov eax,80000000h
+0092: movd xmm1,eax
+0096: xorps xmm0,xmm1
+0099: movss [rbp-14h],xmm0
+009E: movss xmm0,[rbp-14h]
+00A3: movss [rbp-38h],xmm0
+00A8: movss xmm0,[rbp-38h]
+00AD: mov eax,0
+00B2: movd xmm1,eax
+00B6: ucomiss xmm0,xmm1
+00B9: setb al
+00BC: setnp cl
+00BF: and al,cl
+00C1: movzx eax,al
+00C4: mov [rbp-18h],eax
+00C7: mov eax,[rbp-18h]
+00CA: mov [rbp-34h],eax
+00CD: movss xmm0,[rbp-40h]
+00D2: mov eax,40400000h
+00D7: movd xmm1,eax
+00DB: ucomiss xmm0,xmm1
+00DE: setae al
+00E1: movzx eax,al
+00E4: mov [rbp-1Ch],eax
+00E7: mov eax,[rbp-1Ch]
+00EA: mov [rbp-2Ch],eax
+00ED: mov eax,[rbp-34h]
+00F0: and eax,[rbp-2Ch]
+00F3: mov [rbp-24h],eax
+00F6: mov eax,0
+00FB: cmp eax,[rbp-24h]
+00FE: je short 000000000000010Ah
+0100: mov eax,0
+0105: mov [rbp-20h],eax
+0108: jmp short 0000000000000112h
+010A: mov eax,1
+010F: mov [rbp-20h],eax
+0112: mov eax,[rbp-20h]
+0115: mov [rbp-44h],eax
+0118: mov eax,[rbp-44h]
+011B: mov rsp,rbp
+011E: pop rbp
+011F: ret

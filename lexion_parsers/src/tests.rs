@@ -1,9 +1,10 @@
 use crate::grm::ParserGRM;
-use lexion_lib::grammar::serialize::GrammarData;
+use lexion_lib::grammar::serialize::{GrammarData, RuleData};
 use lexion_lib::grammar::{Grammar, GrammarRule};
 use lexion_lib::parsers::{GrammarParserLR, GrammarParserSLR1};
 use lexion_lib::tokenizer::tokens::EPSILON;
 use lexion_lib::Parser;
+use std::path::Path;
 use std::sync::Arc;
 use tabled::builder::Builder;
 use tabled::settings::Style;
@@ -47,4 +48,44 @@ pub fn test_grm_parser() {
     table.with(Style::modern());
     println!("{table}");
     println!("{}", grammar.to_jsmachine_string());
+}
+
+#[test]
+fn lexion_json_matches_grammar_source() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let grm_path = manifest_dir.join("../lexion_lang/grammar/lexion.grm");
+    let json_path = manifest_dir.join("../lexion_lang/grammar/lexion.json");
+
+    let mut parser = ParserGRM::new();
+    let mut generated = parser
+        .parse_from_file_trace(grm_path.to_str().unwrap(), None)
+        .expect("failed to parse lexion.grm");
+    generated.rules = generated
+        .rules
+        .into_iter()
+        .map(|rule| RuleData {
+            left: rule.left,
+            right: if rule.right.is_empty() {
+                vec![EPSILON.into()]
+            } else {
+                rule.right
+            },
+            reduction: rule.reduction.map(|mut reduction| {
+                reduction.code = reduction.code.replace("\r\n", "\n");
+                reduction
+            }),
+        })
+        .collect();
+
+    let checked_in: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(json_path).expect("failed to read lexion.json"),
+    )
+    .expect("failed to parse lexion.json");
+    let generated =
+        serde_json::to_value(generated).expect("failed to serialize generated grammar data");
+
+    assert_eq!(
+        generated, checked_in,
+        "lexion_lang/grammar/lexion.json is out of sync with lexion.grm"
+    );
 }

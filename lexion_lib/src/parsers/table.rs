@@ -17,7 +17,7 @@ use tabled::settings::themes::BorderCorrection;
 use tabled::settings::{Alignment, Color, Span, Style};
 use tabled::Table;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ParseTableAction {
     Shift(usize),
     Goto(usize),
@@ -143,11 +143,35 @@ impl ParseTableLR {
     pub fn apply_conflict_resolutions<'a>(
         &'a mut self,
         overrides: impl Iterator<Item = &'a ParseTableOverride>,
-    ) {
-        // Resolve S/R or R/R conflicts
+    ) -> Result<(), String> {
         for o in overrides {
-            self.insert_entry(o.state, o.symbol, o.action.clone());
+            let Some(states) = self.table.get_mut(o.symbol) else {
+                return Err(format!(
+                    "override for state {} on {} has no parse table entry",
+                    o.state, o.symbol
+                ));
+            };
+            let Some(action) = states.get(&o.state).cloned() else {
+                return Err(format!(
+                    "override for state {} on {} has no parse table action",
+                    o.state, o.symbol
+                ));
+            };
+            let ParseTableAction::Conflict(actions) = action else {
+                return Err(format!(
+                    "override for state {} on {} targets non-conflicting action {}",
+                    o.state, o.symbol, action
+                ));
+            };
+            if !actions.contains(&o.action) {
+                return Err(format!(
+                    "override action {} is not one of the conflicts for state {} on {}",
+                    o.action, o.state, o.symbol
+                ));
+            }
+            states.insert(o.state, o.action.clone());
         }
+        Ok(())
     }
 
     pub fn insert_entry(&mut self, state_index: usize, symbol: &str, action: ParseTableAction) {
@@ -159,7 +183,6 @@ impl ParseTableLR {
                         v.insert(state_index, ParseTableAction::Conflict(actions));
                     } else {
                         let new_action = ParseTableAction::Conflict(vec![old_action, action]);
-                        println!("{state_index} {symbol} -> {new_action}");
                         v.insert(state_index, new_action);
                     }
                 } else {

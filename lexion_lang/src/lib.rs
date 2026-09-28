@@ -84,10 +84,19 @@ impl From<BitFlags<Dump>> for DumpFlags {
     }
 }
 
+impl Default for DumpFlags {
+    fn default() -> Self {
+        Dump::empty().into()
+    }
+}
+
 impl FromStr for DumpFlags {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut flags = Dump::empty();
+        if s.trim().is_empty() {
+            return Ok(flags.into());
+        }
 
         for part in s.split(",") {
             let part = part.trim().to_lowercase();
@@ -116,6 +125,8 @@ impl Display for DumpFlags {
 pub enum CompilationError {
     #[error("{0}")]
     IO(std::io::Error),
+    #[error("--output is required when emitting binary output")]
+    OutputRequired,
     #[error("failed to compile source code")]
     CompilationFailed,
 }

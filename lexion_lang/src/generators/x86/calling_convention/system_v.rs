@@ -5,6 +5,8 @@ use iced_x86::Register;
 
 pub struct SystemV64;
 
+const STACK_SLOT_BYTES: usize = 8;
+
 impl CallingConvention for SystemV64 {
     fn assign_args(
         &self,
@@ -63,11 +65,13 @@ impl CallingConvention for SystemV64 {
                             stack_offset += 2;
                         }
                     } else {
+                        result.push(Location::Stack(StackOffset(stack_offset)));
+                        stack_offset += stack_slots(size);
                     }
                 }
                 TypeKind::Unknown => {
                     result.push(Location::Stack(StackOffset(stack_offset)));
-                    stack_offset += size;
+                    stack_offset += stack_slots(size);
                 }
             }
         }
@@ -113,6 +117,8 @@ impl CallingConvention for SystemV64 {
     fn caller_saved(&self) -> &'static [Register] {
         &[
             Register::RAX,
+            Register::RDI,
+            Register::RSI,
             Register::RDX,
             Register::RCX,
             Register::R8,
@@ -125,6 +131,8 @@ impl CallingConvention for SystemV64 {
     fn call_clobbered(&self) -> &'static [Register] {
         &[
             Register::RAX,
+            Register::RDI,
+            Register::RSI,
             Register::RDX,
             Register::RCX,
             Register::R8,
@@ -139,6 +147,14 @@ impl CallingConvention for SystemV64 {
             Register::XMM5,
             Register::XMM6,
             Register::XMM7,
+            Register::XMM8,
+            Register::XMM9,
+            Register::XMM10,
+            Register::XMM11,
+            Register::XMM12,
+            Register::XMM13,
+            Register::XMM14,
+            Register::XMM15,
         ]
     }
 
@@ -149,4 +165,8 @@ impl CallingConvention for SystemV64 {
     fn fixed_stack_bytes(&self) -> usize {
         0
     }
+}
+
+fn stack_slots(size: usize) -> usize {
+    size.div_ceil(STACK_SLOT_BYTES).max(1)
 }

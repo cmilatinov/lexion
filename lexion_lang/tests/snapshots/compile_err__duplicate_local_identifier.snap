@@ -1,0 +1,12 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+---
+  x duplicate identifier 'value'
+   ,-[tests/fixtures/errors/semantics/duplicate_local.lex:3:9]
+ 2 |     let value = 1;
+ 3 |     let value = 2;
+   :         ^^|^^
+   :           `-- here
+ 4 | }
+   `----

@@ -1,0 +1,10 @@
+---
+source: lexion_lang/tests/x86_elf.rs
+assertion_line: 110
+expression: "disassemble(runtime, executable.entry_point())"
+snapshot_kind: text
+---
+0000000000401000: call 000000000040100Eh
+0000000000401005: mov edi,eax
+0000000000401007: mov eax,3Ch
+000000000040100C: syscall

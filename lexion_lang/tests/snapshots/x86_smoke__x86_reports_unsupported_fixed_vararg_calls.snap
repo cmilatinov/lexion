@@ -1,0 +1,21 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_error(\"backend/x86_unsupported_vararg_fixed.lex\").join(\"\\n\")"
+snapshot_kind: text
+---
+  x x86 backend does not support vararg function signatures yet: take
+   ,-[tests/fixtures/backend/x86_unsupported_vararg_fixed.lex:1:4]
+ 1 | fn take(first: i32, ...) -> i32 {
+   :    ^^|^
+   :      `-- here
+ 2 |     return first;
+   `----
+
+  x x86 backend does not support calls to vararg functions yet: take
+   ,-[tests/fixtures/backend/x86_unsupported_vararg_fixed.lex:6:12]
+ 5 | fn main() -> i32 {
+ 6 |     return take(1, 2, 3);
+   :            ^^^^^^|^^^^^^
+   :                  `-- here
+ 7 | }
+   `----

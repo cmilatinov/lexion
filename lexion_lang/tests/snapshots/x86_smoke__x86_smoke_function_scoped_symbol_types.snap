@@ -1,0 +1,41 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_function_scoped_symbols.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global scalar_value
+scalar_value:
+# fn scalar_value() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     let value = 1;
+  mov eax, 1
+#     return value;
+  pop rbp
+  ret
+.global reference_value
+reference_value:
+# fn reference_value() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+#     let source = 1;
+  mov eax, 1
+  mov DWORD PTR [rbp-24], eax
+#     let value = &source;
+  lea rax, [rbp-24]
+  mov QWORD PTR [rbp-16], rax
+  mov rax, QWORD PTR [rbp-16]
+  mov QWORD PTR [rbp-32], rax
+#     *value = 2;
+  mov ecx, 2
+  mov rax, QWORD PTR [rbp-32]
+  mov DWORD PTR [rax], ecx
+#     return *value;
+  mov rax, QWORD PTR [rbp-32]
+  mov eax, DWORD PTR [rax]
+  add rsp, 32
+  pop rbp
+  ret

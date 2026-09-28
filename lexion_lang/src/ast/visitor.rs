@@ -1,7 +1,7 @@
 use crate::ast::{
-    Ast, BlockExpr, CallExpr, Expr, ExprStmt, FuncDeclStmt, IfExpr, IndexExpr, MemberExpr,
-    OperatorExpr, ReturnStmt, Sourced, SourcedExpr, SourcedStmt, Stmt, StructDeclStmt, TypedExpr,
-    VarDeclStmt, WhileStmt,
+    Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IfExpr, IndexExpr,
+    MemberExpr, OperatorExpr, ReturnStmt, Sourced, SourcedExpr, SourcedStmt, Stmt, StructDeclStmt,
+    TypedExpr, VarDeclStmt, WhileStmt,
 };
 
 pub struct AstVisitor {
@@ -406,6 +406,16 @@ impl AstVisitor {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::CastExpr(CastExpr { expr, .. }),
+                        ..
+                    },
+                ..
+            } => {
+                self.visit_expr(expr, NodeType::LastChild, visitor);
+            }
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::MemberExpr(MemberExpr { expr, .. }),
                         ..
                     },
@@ -509,6 +519,16 @@ impl AstVisitor {
                 while let Some(arg) = iter.next() {
                     self.visit_expr_mut(arg, iter.peek().into(), visitor);
                 }
+            }
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::CastExpr(CastExpr { expr, .. }),
+                        ..
+                    },
+                ..
+            } => {
+                self.visit_expr_mut(&mut *expr, NodeType::LastChild, visitor);
             }
             Sourced {
                 value:

@@ -54,7 +54,11 @@ impl From<SyntaxError> for LexionDiagnosticError {
 impl From<(NamedSource<Arc<String>>, ParseError)> for LexionDiagnosticError {
     fn from((src, value): (NamedSource<Arc<String>>, ParseError)) -> Self {
         match value {
-            ParseError::Syntax(err) => err.into(),
+            ParseError::Syntax(err) => LexionDiagnosticError {
+                src,
+                span: err.span,
+                message: err.message,
+            },
             ParseError::Io(err) => LexionDiagnosticError {
                 src,
                 span: SourceSpan::from(0),
@@ -94,6 +98,12 @@ pub struct LexionDiagnosticList {
 impl LexionDiagnosticList {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.list
+            .iter()
+            .any(|diagnostic| matches!(diagnostic, LexionDiagnostic::Error(_)))
     }
 }
 

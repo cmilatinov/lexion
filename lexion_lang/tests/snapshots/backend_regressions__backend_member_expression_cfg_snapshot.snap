@@ -1,0 +1,7 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: cfg_snapshot(&cfg)
+snapshot_kind: text
+---
+function 0..0
+function 1..1
