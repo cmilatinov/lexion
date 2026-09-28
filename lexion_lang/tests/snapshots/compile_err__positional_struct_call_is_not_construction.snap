@@ -1,0 +1,13 @@
+---
+source: lexion_lang/tests/compile_err.rs
+expression: "errors.join(\"\\n\")"
+snapshot_kind: text
+---
+  x struct declaration 'Point' is not a value; use a named struct literal
+   ,-[tests/fixtures/errors/semantics/positional_struct_call.lex:7:17]
+ 6 | fn main() {
+ 7 |     let point = Point(1, 2);
+   :                 ^^|^^
+   :                   `-- here
+ 8 | }
+   `----

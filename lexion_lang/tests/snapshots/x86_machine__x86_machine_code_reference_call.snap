@@ -1,0 +1,44 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+identity=0x0000
+main=0x0015
+
+bytes:
+55 48 89 E5 48 83 EC 10 48 89 7D F8 48 8B 45 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 30 B8 01 00 00 00 89 45 DC 48 8D 45 DC 48 89 45 F8 48 8B 45 F8 48 89 45 E8 48 8B 7D E8 E8 C2 FF FF FF 48 89 45 F0 48 8B 45 F0 48 89 45 E0 48 8B 45 E0 B9 05 00 00 00 89 08 8B 45 DC 48 89 EC 5D C3
+
+disassembly:
+identity:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov [rbp-8],rdi
+000C: mov rax,[rbp-8]
+0010: mov rsp,rbp
+0013: pop rbp
+0014: ret
+main:
+0015: push rbp
+0016: mov rbp,rsp
+0019: sub rsp,30h
+001D: mov eax,1
+0022: mov [rbp-24h],eax
+0025: lea rax,[rbp-24h]
+0029: mov [rbp-8],rax
+002D: mov rax,[rbp-8]
+0031: mov [rbp-18h],rax
+0035: mov rdi,[rbp-18h]
+0039: call 0 <identity>
+003E: mov [rbp-10h],rax
+0042: mov rax,[rbp-10h]
+0046: mov [rbp-20h],rax
+004A: mov rax,[rbp-20h]
+004E: mov ecx,5
+0053: mov [rax],ecx
+0055: mov eax,[rbp-24h]
+0058: mov rsp,rbp
+005B: pop rbp
+005C: ret

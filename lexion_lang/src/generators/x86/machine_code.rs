@@ -3,10 +3,10 @@ use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction,
-    FunctionRange, Instruction, Operand, Place,
+    FunctionCallTarget, FunctionRange, Instruction, Operand, Place,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
-use crate::generators::x86::X86Target;
+use crate::generators::x86::{Bitness, SizeAlign, X86Target};
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
@@ -30,17 +30,28 @@ enum ShiftKind {
 pub struct X86MachineCode {
     bytes: Vec<u8>,
     symbols: BTreeMap<String, usize>,
+    data_offset: usize,
 }
 
 #[derive(Clone, Copy)]
 struct MachineFunctionContext<'a> {
     name: &'a str,
     return_register: Register,
+    indirect_return_slot: Option<usize>,
+}
+
+struct MachineLabels<'a> {
+    blocks: &'a HashMap<String, CodeLabel>,
+    strings: &'a HashMap<Vec<u8>, CodeLabel>,
 }
 
 impl X86MachineCode {
-    pub fn new(bytes: Vec<u8>, symbols: BTreeMap<String, usize>) -> Self {
-        Self { bytes, symbols }
+    pub fn new(bytes: Vec<u8>, symbols: BTreeMap<String, usize>, data_offset: usize) -> Self {
+        Self {
+            bytes,
+            symbols,
+            data_offset,
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -49,6 +60,10 @@ impl X86MachineCode {
 
     pub fn symbols(&self) -> &BTreeMap<String, usize> {
         &self.symbols
+    }
+
+    pub fn data_offset(&self) -> usize {
+        self.data_offset
     }
 }
 
@@ -68,15 +83,41 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit(&self, options: X86MachineCodeOptions) -> Result<X86MachineCode, IcedError> {
         let mut assembler = CodeAssembler::new(64)?;
         let mut labels = self.create_labels(&mut assembler);
+        let literals = self.string_literals();
+        let mut literal_labels = literals
+            .iter()
+            .map(|literal| (literal.clone(), assembler.create_label()))
+            .collect::<HashMap<_, _>>();
         for range in &self.cfg.functions {
-            self.emit_function(&mut assembler, &mut labels, *range)?;
+            self.emit_function(&mut assembler, &mut labels, &literal_labels, *range)?;
+        }
+        let data_offset = assembler
+            .assemble_options(options.base_address, BlockEncoderOptions::NONE)?
+            .inner
+            .code_buffer
+            .len();
+        for literal in &literals {
+            assembler.set_label(
+                literal_labels
+                    .get_mut(literal)
+                    .expect("missing string literal label"),
+            )?;
+            if literal.is_empty() {
+                assembler.db(&[0])?;
+            } else {
+                assembler.db(literal)?;
+            }
         }
         let result = assembler.assemble_options(
             options.base_address,
             BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS,
         )?;
         let symbols = self.symbol_offsets(&labels, &result, options.base_address)?;
-        Ok(X86MachineCode::new(result.inner.code_buffer, symbols))
+        Ok(X86MachineCode::new(
+            result.inner.code_buffer,
+            symbols,
+            data_offset,
+        ))
     }
 
     fn create_labels(&self, assembler: &mut CodeAssembler) -> HashMap<String, CodeLabel> {
@@ -108,12 +149,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         &self,
         assembler: &mut CodeAssembler,
         labels: &mut HashMap<String, CodeLabel>,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
         range: FunctionRange,
     ) -> Result<(), IcedError> {
         let function = self.cfg[range.start].label.as_str();
         let slots = self.stack_slots(range);
+        let indirect_return_slot = self
+            .function_return_indirect_size(function)
+            .map(|_| slots.values().copied().max().unwrap_or(0) + STACK_ARG_SLOT_BYTES);
         let stack_size = align_to(
-            slots.values().copied().max().unwrap_or(0),
+            indirect_return_slot
+                .or_else(|| slots.values().copied().max())
+                .unwrap_or(0),
             self.target.calling_convention().stack_alignment(),
         );
         let return_register = self
@@ -122,12 +169,16 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         let context = MachineFunctionContext {
             name: function,
             return_register,
+            indirect_return_slot,
         };
         self.set_block_label(assembler, labels, self.cfg[range.start].label.as_str())?;
         assembler.push(rbp)?;
         assembler.mov(rbp, rsp)?;
         if stack_size > 0 {
             assembler.sub(rsp, stack_size as i32)?;
+        }
+        if let Some(offset) = indirect_return_slot {
+            assembler.mov(qword_ptr(rbp - offset as i32), rdi)?;
         }
         self.store_function_params(assembler, &slots, range)?;
 
@@ -139,9 +190,13 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 self.set_block_label(assembler, labels, block.label.as_str())?;
             }
             for inst in &block.instructions {
+                let emission_labels = MachineLabels {
+                    blocks: labels,
+                    strings: literal_labels,
+                };
                 if self.emit_instruction(
                     assembler,
-                    labels,
+                    emission_labels,
                     &slots,
                     context,
                     &mut pending_params,
@@ -171,7 +226,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_instruction(
         &self,
         assembler: &mut CodeAssembler,
-        labels: &HashMap<String, CodeLabel>,
+        labels: MachineLabels<'_>,
         slots: &BTreeMap<String, usize>,
         context: MachineFunctionContext<'_>,
         pending_params: &mut Vec<Operand>,
@@ -179,15 +234,22 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     ) -> Result<bool, IcedError> {
         match instruction {
             Instruction::Borrow(inst) => {
-                self.emit_borrow(assembler, slots, inst)?;
+                self.emit_borrow(assembler, labels.strings, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Load(inst) => {
-                self.emit_load(assembler, slots, inst)?;
+                self.emit_load(assembler, labels.strings, slots, context.name, inst)?;
                 Ok(false)
             }
             Instruction::Store(inst) => {
-                self.emit_store(assembler, slots, inst)?;
+                self.emit_store(
+                    assembler,
+                    labels.blocks,
+                    labels.strings,
+                    slots,
+                    context.name,
+                    inst,
+                )?;
                 Ok(false)
             }
             Instruction::Assignment(inst) => {
@@ -195,7 +257,25 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::Copy(inst) => {
-                if self.operand_is_reference(context.name, &inst.src)
+                if self.operand_is_string_value(context.name, &inst.src)
+                    || self.operand_is_string_value(context.name, &inst.dst)
+                {
+                    self.emit_string_value_store(
+                        assembler,
+                        labels.strings,
+                        slots,
+                        context.name,
+                        &inst.dst,
+                        &inst.src,
+                    )?;
+                } else if self.operand_is_aggregate(context.name, &inst.src) {
+                    self.emit_aggregate_copy(assembler, slots, context.name, inst)?;
+                } else if self.operand_is_function(context.name, &inst.src)
+                    || self.operand_is_function(context.name, &inst.dst)
+                {
+                    load_function_operand(assembler, labels.blocks, slots, &inst.src, rax)?;
+                    store_reference_operand(assembler, slots, &inst.dst, rax)?;
+                } else if self.operand_is_reference(context.name, &inst.src)
                     || self.operand_is_reference(context.name, &inst.dst)
                 {
                     load_reference_operand(assembler, slots, &inst.src, rax)?;
@@ -212,21 +292,82 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::ConditionalJump(inst) => {
-                self.emit_conditional_jump(assembler, labels, slots, inst)?;
+                self.emit_conditional_jump(assembler, labels.blocks, slots, inst)?;
                 Ok(false)
             }
             Instruction::Jump(inst) => {
-                emit_jump(assembler, labels, &inst.target)?;
+                emit_jump(assembler, labels.blocks, &inst.target)?;
                 Ok(false)
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(
-                        assembler,
-                        slots,
-                        value,
-                        asm_register32(context.return_register),
-                    )?;
+                    if self.operand_is_aggregate(context.name, value) {
+                        if let Some(size) = self.function_return_indirect_size(context.name) {
+                            self.emit_indirect_aggregate_return(
+                                assembler,
+                                slots,
+                                value,
+                                size,
+                                context
+                                    .indirect_return_slot
+                                    .expect("missing indirect return slot"),
+                            )?;
+                        } else if let Some((low, high)) = self.function_return_pair(context.name) {
+                            self.load_aggregate_pair(
+                                assembler,
+                                slots,
+                                context.name,
+                                value,
+                                low,
+                                high,
+                            )?;
+                        } else {
+                            self.load_aggregate_operand(
+                                assembler,
+                                slots,
+                                context.name,
+                                value,
+                                asm_register64(context.return_register),
+                            )?;
+                        }
+                    } else if self.function_returns_function(context.name) {
+                        load_function_operand(
+                            assembler,
+                            labels.blocks,
+                            slots,
+                            value,
+                            asm_register64(context.return_register),
+                        )?;
+                    } else if self.operand_is_string_value(context.name, value) {
+                        self.load_string_operand(
+                            assembler,
+                            labels.strings,
+                            slots,
+                            context.name,
+                            value,
+                        )?;
+                    } else if self.operand_is_reference(context.name, value) {
+                        load_reference_operand(
+                            assembler,
+                            slots,
+                            value,
+                            asm_register64(context.return_register),
+                        )?;
+                    } else if self.operand_is_f32(context.name, value) {
+                        load_float_operand(
+                            assembler,
+                            slots,
+                            value,
+                            asm_register_xmm(context.return_register),
+                        )?;
+                    } else {
+                        load_operand(
+                            assembler,
+                            slots,
+                            value,
+                            asm_register32(context.return_register),
+                        )?;
+                    }
                 }
                 emit_epilogue(assembler)?;
                 Ok(true)
@@ -236,7 +377,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 Ok(false)
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(assembler, labels, slots, pending_params, inst)?;
+                self.emit_function_call(
+                    assembler,
+                    labels,
+                    slots,
+                    context.name,
+                    pending_params,
+                    inst,
+                )?;
                 pending_params.clear();
                 Ok(false)
             }
@@ -461,8 +609,9 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_function_call(
         &self,
         assembler: &mut CodeAssembler,
-        labels: &HashMap<String, CodeLabel>,
+        labels: MachineLabels<'_>,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         pending_params: &[Operand],
         inst: &FunctionCallInstruction,
     ) -> Result<(), IcedError> {
@@ -474,33 +623,133 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .target
             .calling_convention()
             .assign_args(self.types, 0, signature);
+        let indirect_return = matches!(
+            self.target
+                .calling_convention()
+                .assign_ret(self.types, signature),
+            Some(Location::Indirect { .. })
+        );
         let stack_args = params
             .iter()
             .zip(locations.iter())
-            .filter_map(|(param, location)| stack_offset(location).map(|offset| (*param, offset)))
+            .zip(signature.params.iter())
+            .filter_map(|((param, location), ty)| {
+                stack_offset(location).map(|offset| (*param, offset, *ty))
+            })
             .collect::<Vec<_>>();
+        let stack_arg_slots = stack_args
+            .iter()
+            .map(|(_, offset, ty)| {
+                offset
+                    + self
+                        .types
+                        .size_align(*ty, Bitness::_64)
+                        .size
+                        .div_ceil(STACK_ARG_SLOT_BYTES)
+            })
+            .max()
+            .unwrap_or(0);
         let fixed_stack_bytes = self.target.calling_convention().fixed_stack_bytes();
         let stack_padding = call_stack_padding(
-            stack_args.len(),
+            stack_arg_slots,
             fixed_stack_bytes,
             self.target.calling_convention().stack_alignment(),
         );
-        let reserved_stack_bytes = fixed_stack_bytes + stack_padding;
+        let reserved_stack_bytes =
+            fixed_stack_bytes + stack_padding + stack_arg_slots * STACK_ARG_SLOT_BYTES;
         if reserved_stack_bytes > 0 {
             assembler.sub(rsp, reserved_stack_bytes as i32)?;
         }
-
-        for (param, _) in stack_args.iter().rev() {
-            load_operand(assembler, slots, param, eax)?;
-            assembler.push(rax)?;
-        }
-        for (param, location) in params.iter().zip(locations.iter()) {
-            if let Some(register) = outgoing_register(location) {
-                load_operand(assembler, slots, param, asm_register32(register))?;
+        if indirect_return {
+            if let Some(return_target) = &inst.return_target {
+                assembler.lea(
+                    rdi,
+                    qword_ptr(rbp - aggregate_stack_offset(slots, return_target, 0)),
+                )?;
             }
         }
-        assembler.call(label_name(labels, inst.function.as_str()))?;
-        let stack_cleanup = stack_args.len() * STACK_ARG_SLOT_BYTES + reserved_stack_bytes;
+
+        for (param, offset, ty) in &stack_args {
+            if self.type_is_string_reference(*ty) {
+                self.emit_string_stack_argument(
+                    assembler,
+                    labels.strings,
+                    slots,
+                    function,
+                    param,
+                    *offset,
+                )?;
+                continue;
+            } else if self.type_is_aggregate(*ty) {
+                self.emit_aggregate_stack_argument(assembler, slots, function, param, *offset)?;
+                continue;
+            } else if self.type_is_reference(*ty) {
+                load_reference_operand(assembler, slots, param, rax)?;
+            } else if self.type_is_function(*ty) {
+                load_function_operand(assembler, labels.blocks, slots, param, rax)?;
+            } else if self.operand_is_f32(function, param) {
+                load_float_operand(assembler, slots, param, xmm0)?;
+                assembler.movd(eax, xmm0)?;
+            } else {
+                load_operand(assembler, slots, param, eax)?;
+            }
+            assembler.mov(
+                qword_ptr(rsp + (*offset * STACK_ARG_SLOT_BYTES) as i32),
+                rax,
+            )?;
+        }
+        for ((param, location), ty) in params
+            .iter()
+            .zip(locations.iter())
+            .zip(signature.params.iter())
+        {
+            if self.type_is_string_reference(*ty) {
+                if let Some((low, high)) = register_pair(location) {
+                    self.load_string_operand_into(
+                        assembler,
+                        labels.strings,
+                        slots,
+                        function,
+                        param,
+                        (asm_register64(low), asm_register64(high)),
+                    )?;
+                }
+            } else if let Some((low, high)) = register_pair(location) {
+                self.load_aggregate_pair(assembler, slots, function, param, low, high)?;
+            } else if let Some(register) = outgoing_register(location) {
+                if is_xmm_register(register) {
+                    load_float_operand(assembler, slots, param, asm_register_xmm(register))?;
+                } else if self.type_is_reference(*ty) {
+                    load_reference_operand(assembler, slots, param, asm_register64(register))?;
+                } else if self.type_is_function(*ty) {
+                    load_function_operand(
+                        assembler,
+                        labels.blocks,
+                        slots,
+                        param,
+                        asm_register64(register),
+                    )?;
+                } else if self.type_is_aggregate(*ty) {
+                    self.load_aggregate_operand(
+                        assembler,
+                        slots,
+                        function,
+                        param,
+                        asm_register64(register),
+                    )?;
+                } else {
+                    load_operand(assembler, slots, param, asm_register32(register))?;
+                }
+            }
+        }
+        match &inst.target {
+            FunctionCallTarget::Direct(name) => assembler.call(label_name(labels.blocks, name))?,
+            FunctionCallTarget::Indirect(target) => {
+                load_function_operand(assembler, labels.blocks, slots, target, rax)?;
+                assembler.call(rax)?;
+            }
+        }
+        let stack_cleanup = reserved_stack_bytes;
         if stack_cleanup > 0 {
             assembler.add(rsp, stack_cleanup as i32)?;
         }
@@ -508,7 +757,38 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             let register = self
                 .function_call_return_register(inst)
                 .unwrap_or(Register::RAX);
-            store_operand(assembler, slots, return_target, asm_register32(register))?;
+            if self.operand_is_string_value(function, return_target) {
+                self.store_string_operand(assembler, slots, return_target, rax, rdx)?;
+            } else if self.operand_is_aggregate(function, return_target) {
+                if indirect_return {
+                    // The callee has written directly to the return target and returns it in RAX.
+                } else if let Some((low, high)) = self.function_call_return_pair(inst) {
+                    self.store_aggregate_pair(
+                        assembler,
+                        slots,
+                        function,
+                        return_target,
+                        low,
+                        high,
+                    )?;
+                } else {
+                    self.store_aggregate_operand(
+                        assembler,
+                        slots,
+                        function,
+                        return_target,
+                        asm_register64(register),
+                    )?;
+                }
+            } else if self.operand_is_reference(function, return_target)
+                || self.operand_is_function(function, return_target)
+            {
+                store_reference_operand(assembler, slots, return_target, asm_register64(register))?;
+            } else if self.operand_is_f32(function, return_target) {
+                store_float_operand(assembler, slots, return_target, asm_register_xmm(register))?;
+            } else {
+                store_operand(assembler, slots, return_target, asm_register32(register))?;
+            }
         }
         Ok(())
     }
@@ -529,9 +809,74 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .target
             .calling_convention()
             .assign_args(self.types, 0, signature);
-        for (param, location) in params.iter().zip(locations.iter()) {
+        for ((param, ty), location) in params
+            .iter()
+            .zip(signature.params.iter())
+            .zip(locations.iter())
+        {
             if let Some(offset) = slots.get(param.as_str()) {
-                if let Some(register) = outgoing_register(location) {
+                if self.type_is_string_reference(*ty) {
+                    if let Some((low, high)) = register_pair(location) {
+                        self.store_string_operand(
+                            assembler,
+                            slots,
+                            &Operand::Variable(param.clone()),
+                            asm_register64(low),
+                            asm_register64(high),
+                        )?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        self.store_string_stack_param(
+                            assembler,
+                            slots,
+                            &Operand::Variable(param.clone()),
+                            stack_offset,
+                        )?;
+                    }
+                } else if is_f32_type(self.types, *ty) {
+                    if let Some(register) = outgoing_register(location) {
+                        assembler
+                            .movss(dword_ptr(rbp - *offset as i32), asm_register_xmm(register))?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        let incoming_offset = incoming_stack_arg_offset(stack_offset);
+                        assembler.movss(xmm15, dword_ptr(rbp + incoming_offset as i32))?;
+                        assembler.movss(dword_ptr(rbp - *offset as i32), xmm15)?;
+                    }
+                } else if self.type_is_aggregate(*ty) {
+                    if let Some((low, high)) = register_pair(location) {
+                        self.store_aggregate_pair(
+                            assembler,
+                            slots,
+                            &self.cfg[range.start].label,
+                            &Operand::Variable(param.clone()),
+                            low,
+                            high,
+                        )?;
+                    } else if let Some(register) = outgoing_register(location) {
+                        self.store_aggregate_operand(
+                            assembler,
+                            slots,
+                            &self.cfg[range.start].label,
+                            &Operand::Variable(param.clone()),
+                            asm_register64(register),
+                        )?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        self.store_aggregate_stack_param(
+                            assembler,
+                            slots,
+                            &self.cfg[range.start].label,
+                            &Operand::Variable(param.clone()),
+                            stack_offset,
+                        )?;
+                    }
+                } else if self.type_is_reference(*ty) || self.type_is_function(*ty) {
+                    if let Some(register) = outgoing_register(location) {
+                        assembler.mov(qword_ptr(rbp - *offset as i32), asm_register64(register))?;
+                    } else if let Some(stack_offset) = stack_offset(location) {
+                        let incoming_offset = incoming_stack_arg_offset(stack_offset);
+                        assembler.mov(rax, qword_ptr(rbp + incoming_offset as i32))?;
+                        assembler.mov(qword_ptr(rbp - *offset as i32), rax)?;
+                    }
+                } else if let Some(register) = outgoing_register(location) {
                     assembler.mov(dword_ptr(rbp - *offset as i32), asm_register32(register))?;
                 } else if let Some(stack_offset) = stack_offset(location) {
                     let incoming_offset = incoming_stack_arg_offset(stack_offset);
@@ -610,7 +955,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .return_target
                 .as_ref()
                 .and_then(|target| self.operand_source_span(target))
-                .or_else(|| self.symbol_span(&inst.function)),
+                .or_else(|| {
+                    inst.target
+                        .direct_name()
+                        .and_then(|name| self.symbol_span(name))
+                }),
             Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
             Instruction::Return(inst) => inst
                 .value
@@ -658,14 +1007,14 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn unsupported_message(&self, function: &str, instruction: &Instruction) -> Option<String> {
         match instruction {
             Instruction::Borrow(inst) => self
-                .unsupported_borrow_message(&inst.place)
+                .unsupported_borrow_message(function, &inst.place)
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
-                .unsupported_load_message(&inst.place)
+                .unsupported_load_message(function, &inst.place)
                 .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Store(inst) => self
-                .unsupported_store_message(&inst.place)
+                .unsupported_store_message(function, &inst.place)
                 .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
                 .or_else(|| self.unsupported_operand_message(function, &inst.value)),
             Instruction::Assignment(inst) => self
@@ -688,9 +1037,7 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support extern declarations yet: {}",
                 inst.label
             )),
-            Instruction::Copy(inst) => self
-                .unsupported_operand_message(function, &inst.dst)
-                .or_else(|| self.unsupported_operand_message(function, &inst.src)),
+            Instruction::Copy(inst) => self.unsupported_copy_message(function, inst),
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
@@ -702,61 +1049,144 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::Parameter(inst) => self.unsupported_operand_message(function, &inst.param),
-            Instruction::Return(inst) => inst
-                .value
-                .as_ref()
-                .and_then(|value| self.unsupported_operand_message(function, value)),
+            Instruction::Parameter(inst) => self
+                .unsupported_aggregate_operand_message(function, &inst.param, None)
+                .or_else(|| self.unsupported_operand_message(function, &inst.param)),
+            Instruction::Return(inst) => inst.value.as_ref().and_then(|value| {
+                self.unsupported_aggregate_operand_message(function, value, None)
+                    .or_else(|| self.unsupported_operand_message(function, value))
+            }),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::FunctionCall(inst) => self
-                .unsupported_call_target_message(inst)
-                .or_else(|| self.unsupported_extern_call_message(inst))
+                .unsupported_extern_call_message(inst)
                 .or_else(|| self.unsupported_call_signature_message(inst)),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
     }
 
-    fn unsupported_borrow_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_borrow_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Direct(value) if operand_name(value).is_some() => None,
             Place::Direct(_) => Some(String::from(
                 "x86 machine-code backend can only borrow stored values",
             )),
-            Place::Member { .. } | Place::Index { .. } | Place::Dereference(_) => {
-                Some(String::from(
-                    "x86 machine-code backend does not support references to projected places yet",
-                ))
+            Place::Member { .. } if self.member_place(function, place).is_some() => None,
+            Place::Member { .. } => Some(String::from(
+                "x86 machine-code backend does not support references through projected places yet",
+            )),
+            Place::Index { .. } if self.indexed_string_borrow_place(function, place).is_some() => {
+                None
             }
+            Place::Index { .. } => Some(String::from(
+                "x86 machine-code backend does not support references to indexed places yet",
+            )),
+            Place::Dereference(_) => Some(String::from(
+                "x86 machine-code backend does not support references to dereferenced places yet",
+            )),
         }
     }
 
     fn emit_borrow(
         &self,
         assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &crate::generators::tac::instructions::BorrowInstruction,
     ) -> Result<(), IcedError> {
-        let Place::Direct(value) = &inst.place else {
-            unreachable!("unsupported borrow places are diagnosed before emission")
-        };
-        assembler.lea(rax, qword_ptr(rbp - stack_slot_offset(slots, value)))?;
+        match &inst.place {
+            Place::Direct(value) => {
+                assembler.lea(rax, qword_ptr(rbp - stack_slot_offset(slots, value)))?;
+            }
+            Place::Member { .. } => {
+                let (base, offset, _) = self.member_place(function, &inst.place).unwrap();
+                assembler.lea(
+                    rax,
+                    qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                )?;
+            }
+            Place::Index { .. } => {
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                load_operand(assembler, slots, index, edx)?;
+                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
+                assembler.add(rax, rdx)?;
+            }
+            Place::Dereference(_) => {
+                unreachable!("unsupported borrow places are diagnosed before emission")
+            }
+        }
         store_reference_operand(assembler, slots, &inst.target, rax)
     }
 
     fn emit_load(
         &self,
         assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &crate::generators::tac::instructions::LoadInstruction,
     ) -> Result<(), IcedError> {
         match &inst.place {
             Place::Direct(value) => load_operand(assembler, slots, value, eax)?,
             Place::Dereference(reference) => {
                 load_reference_operand(assembler, slots, reference, rax)?;
-                assembler.mov(eax, dword_ptr(rax))?;
+                if self.reference_pointee_is_function(function, reference) {
+                    assembler.mov(rax, qword_ptr(rax))?;
+                    return store_reference_operand(assembler, slots, &inst.target, rax);
+                }
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    return emit_aggregate_load_from_pointer(
+                        assembler,
+                        slots,
+                        rax,
+                        &inst.target,
+                        size,
+                    );
+                }
+                if self.reference_pointee_size(function, reference) == 1 {
+                    assembler.movzx(eax, byte_ptr(rax))?;
+                } else {
+                    assembler.mov(eax, dword_ptr(rax))?;
+                }
             }
-            Place::Member { .. } | Place::Index { .. } => {
-                unreachable!("unsupported load places are diagnosed before emission")
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_stack_value(slots, &base, offset);
+                if self.type_is_aggregate(ty) {
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    return emit_aggregate_region_copy(
+                        assembler,
+                        slots,
+                        (&base, offset),
+                        (&inst.target, 0),
+                        size,
+                    );
+                }
+                if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    assembler.mov(
+                        rax,
+                        qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                    )?;
+                    return store_reference_operand(assembler, slots, &inst.target, rax);
+                }
+                if is_f32_type(self.types, ty) {
+                    assembler.movss(xmm0, operand)?;
+                    return store_float_operand(assembler, slots, &inst.target, xmm0);
+                }
+                if self.types.size_align(ty, Bitness::_64).size == 1 {
+                    assembler.movzx(
+                        eax,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                    )?;
+                } else {
+                    assembler.mov(eax, operand)?;
+                }
+            }
+            Place::Index { .. } => {
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                load_operand(assembler, slots, index, edx)?;
+                self.load_string_pointer(assembler, literal_labels, slots, function, base, rax)?;
+                assembler.movzx(eax, byte_ptr(rax + rdx))?;
             }
         }
         store_operand(assembler, slots, &inst.target, eax)
@@ -765,56 +1195,831 @@ impl<'a> CodeGeneratorX86Machine<'a> {
     fn emit_store(
         &self,
         assembler: &mut CodeAssembler,
+        labels: &HashMap<String, CodeLabel>,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
         slots: &BTreeMap<String, usize>,
+        function: &str,
         inst: &crate::generators::tac::instructions::StoreInstruction,
     ) -> Result<(), IcedError> {
         match &inst.place {
             Place::Direct(target) => {
+                if self.operand_is_string_value(function, target)
+                    || self.operand_is_string_value(function, &inst.value)
+                {
+                    return self.emit_string_value_store(
+                        assembler,
+                        literal_labels,
+                        slots,
+                        function,
+                        target,
+                        &inst.value,
+                    );
+                }
                 load_operand(assembler, slots, &inst.value, eax)?;
                 store_operand(assembler, slots, target, eax)
             }
             Place::Dereference(reference) => {
                 load_reference_operand(assembler, slots, reference, rax)?;
-                load_operand(assembler, slots, &inst.value, ecx)?;
-                assembler.mov(dword_ptr(rax), ecx)
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    return emit_aggregate_store_to_pointer(
+                        assembler,
+                        slots,
+                        rax,
+                        &inst.value,
+                        size,
+                    );
+                }
+                if self.reference_pointee_is_function(function, reference) {
+                    load_function_operand(assembler, labels, slots, &inst.value, rcx)?;
+                    load_reference_operand(assembler, slots, reference, rax)?;
+                    assembler.mov(qword_ptr(rax), rcx)
+                } else {
+                    load_operand(assembler, slots, &inst.value, ecx)?;
+                    if self.reference_pointee_size(function, reference) == 1 {
+                        assembler.mov(byte_ptr(rax), cl)
+                    } else {
+                        assembler.mov(dword_ptr(rax), ecx)
+                    }
+                }
             }
-            Place::Member { .. } | Place::Index { .. } => {
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_stack_value(slots, &base, offset);
+                if self.type_is_aggregate(ty) {
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    emit_aggregate_region_copy(
+                        assembler,
+                        slots,
+                        (&inst.value, 0),
+                        (&base, offset),
+                        size,
+                    )
+                } else if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    if self.type_is_function(ty) {
+                        load_function_operand(assembler, labels, slots, &inst.value, rax)?;
+                    } else {
+                        load_reference_operand(assembler, slots, &inst.value, rax)?;
+                    }
+                    assembler.mov(
+                        qword_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                        rax,
+                    )
+                } else if is_f32_type(self.types, ty) {
+                    load_float_operand(assembler, slots, &inst.value, xmm0)?;
+                    assembler.movss(operand, xmm0)
+                } else {
+                    load_operand(assembler, slots, &inst.value, eax)?;
+                    if self.types.size_align(ty, Bitness::_64).size == 1 {
+                        assembler.mov(
+                            byte_ptr(rbp - aggregate_stack_offset(slots, &base, offset)),
+                            al,
+                        )
+                    } else {
+                        assembler.mov(operand, eax)
+                    }
+                }
+            }
+            Place::Index { .. } => {
                 unreachable!("unsupported store places are diagnosed before emission")
             }
         }
     }
 
     fn operand_is_reference(&self, function: &str, operand: &Operand) -> bool {
-        self.operand_type(function, operand).is_some_and(|ty| {
-            matches!(
-                self.types.get(self.types.canonicalize(ty)),
-                Some(Type::RefType(_))
-            )
-        })
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_reference(ty))
     }
 
-    fn unsupported_load_message(&self, place: &Place) -> Option<String> {
+    fn operand_is_string_value(&self, function: &str, operand: &Operand) -> bool {
+        matches!(operand, Operand::Literal(Lit::String(_)))
+            || self
+                .operand_type(function, operand)
+                .is_some_and(|ty| self.type_is_string_reference(ty))
+    }
+
+    fn operand_is_aggregate(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_aggregate(ty))
+    }
+
+    fn type_is_aggregate(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::TupleType(tuple)) if !tuple.types.is_empty()
+        ) || matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::StructType(_))
+        )
+    }
+
+    fn aggregate_is_integer_only(&self, ty: Index) -> bool {
+        let ty = self.types.canonicalize(ty);
+        match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple
+                .types
+                .iter()
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
+            Some(Type::StructType(struct_)) => struct_
+                .members
+                .iter()
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
+            _ => false,
+        }
+    }
+
+    fn aggregate_member_is_integer_like(&self, ty: Index) -> bool {
+        match self.types.get(self.types.canonicalize(ty)) {
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+                    | PrimitiveType::I32
+                    | PrimitiveType::U32,
+                )
+                | Type::RefType(_)
+                | Type::FunctionType(_),
+            ) => true,
+            Some(Type::TupleType(tuple)) => tuple
+                .types
+                .iter()
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
+            Some(Type::StructType(struct_)) => struct_
+                .members
+                .iter()
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
+            _ => false,
+        }
+    }
+
+    fn member_place(&self, function: &str, place: &Place) -> Option<(Operand, usize, Index)> {
+        let Place::Member { base, member } = place else {
+            return None;
+        };
+        let (base, offset, ty) = match base.as_ref() {
+            Place::Direct(base) => (base.clone(), 0, self.operand_type(function, base)?),
+            Place::Member { .. } => self.member_place(function, base)?,
+            Place::Index { .. } | Place::Dereference(_) => return None,
+        };
+        let ty = self.types.canonicalize(ty);
+        let member_index = match self.types.get(ty)? {
+            Type::TupleType(tuple) => member
+                .parse()
+                .ok()
+                .filter(|index| *index < tuple.types.len())?,
+            Type::StructType(struct_) => struct_
+                .members
+                .iter()
+                .position(|field| field.name == *member)?,
+            _ => return None,
+        };
+        let member_layout = self.types.memory_layout(ty)?.members().get(member_index)?;
+        let member_ty = match self.types.get(ty)? {
+            Type::TupleType(tuple) => tuple.types[member_index],
+            Type::StructType(struct_) => struct_.members[member_index].ty,
+            _ => return None,
+        };
+        Some((base, offset + member_layout.offset, member_ty))
+    }
+
+    fn emit_aggregate_copy(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) -> Result<(), IcedError> {
+        let Some(ty) = self.operand_type(function, &inst.src) else {
+            return Ok(());
+        };
+        let size = self.types.size_align(ty, Bitness::_64).size;
+        emit_aggregate_region_copy(assembler, slots, (&inst.src, 0), (&inst.dst, 0), size)
+    }
+
+    fn aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        self.operand_type(function, operand)
+            .filter(|ty| self.type_is_aggregate(*ty))
+            .map(|ty| self.types.size_align(ty, Bitness::_64).size)
+    }
+
+    fn aggregate_member_ranges(
+        &self,
+        ty: Index,
+        base_offset: usize,
+        ranges: &mut Vec<(usize, usize)>,
+    ) {
+        let ty = self.types.canonicalize(ty);
+        let members = match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple.types.to_vec(),
+            Some(Type::StructType(struct_)) => {
+                struct_.members.iter().map(|member| member.ty).collect()
+            }
+            _ => {
+                ranges.push((base_offset, self.types.size_align(ty, Bitness::_64).size));
+                return;
+            }
+        };
+        let layout = self.types.memory_layout(ty).unwrap();
+        for (member, member_layout) in members.iter().zip(layout.members()) {
+            self.aggregate_member_ranges(*member, base_offset + member_layout.offset, ranges);
+        }
+    }
+
+    fn emit_indirect_aggregate_return(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        size: usize,
+        result_slot: usize,
+    ) -> Result<(), IcedError> {
+        assembler.mov(rax, qword_ptr(rbp - result_slot as i32))?;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(ecx, aggregate_stack_value(slots, operand, offset))?;
+                assembler.mov(dword_ptr(rax + offset as i32), ecx)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(
+                        ecx,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                    )?;
+                    assembler.mov(byte_ptr(rax + (offset + byte) as i32), cl)?;
+                }
+            }
+        }
+        assembler.mov(rax, qword_ptr(rbp - result_slot as i32))
+    }
+
+    fn load_aggregate_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        register: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        let ty = self.operand_type(function, operand).unwrap();
+        let mut ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut ranges);
+        assembler.sub(rsp, 8)?;
+        assembler.xor(rax, rax)?;
+        assembler.mov(qword_ptr(rsp), rax)?;
+        for (member_offset, size) in ranges {
+            for offset in (0..size).step_by(4) {
+                let width = (size - offset).min(4);
+                if width == 4 {
+                    assembler.mov(
+                        eax,
+                        aggregate_stack_value(slots, operand, member_offset + offset),
+                    )?;
+                    assembler.mov(dword_ptr(rsp + (member_offset + offset) as i32), eax)?;
+                } else {
+                    for byte in 0..width {
+                        assembler.movzx(
+                            eax,
+                            byte_ptr(
+                                rbp - aggregate_stack_offset(
+                                    slots,
+                                    operand,
+                                    member_offset + offset + byte,
+                                ),
+                            ),
+                        )?;
+                        assembler
+                            .mov(byte_ptr(rsp + (member_offset + offset + byte) as i32), al)?;
+                    }
+                }
+            }
+        }
+        assembler.mov(register, qword_ptr(rsp))?;
+        assembler.add(rsp, 8)
+    }
+
+    fn load_aggregate_pair(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        low: Register,
+        high: Register,
+    ) -> Result<(), IcedError> {
+        let ty = self.operand_type(function, operand).unwrap();
+        let mut member_ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut member_ranges);
+        let low_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let end = (*offset + *size).min(8);
+                (*offset < end).then(|| (*offset, end - *offset))
+            })
+            .collect::<Vec<_>>();
+        let high_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let start = (*offset).max(8);
+                let end = (*offset + *size).min(16);
+                (start < end).then(|| (start - 8, end - start))
+            })
+            .collect::<Vec<_>>();
+
+        // This materialization uses RAX as scratch, so load RDX before the RAX half.
+        self.load_aggregate_operand_part(assembler, slots, operand, 8, &high_ranges, high)?;
+        self.load_aggregate_operand_part(assembler, slots, operand, 0, &low_ranges, low)
+    }
+
+    fn load_aggregate_operand_part(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        source_offset: usize,
+        member_ranges: &[(usize, usize)],
+        register: Register,
+    ) -> Result<(), IcedError> {
+        assembler.sub(rsp, 8)?;
+        assembler.xor(rax, rax)?;
+        assembler.mov(qword_ptr(rsp), rax)?;
+        for (member_offset, size) in member_ranges {
+            for offset in (0..*size).step_by(4) {
+                let width = (*size - offset).min(4);
+                if width == 4 {
+                    assembler.mov(
+                        eax,
+                        aggregate_stack_value(
+                            slots,
+                            operand,
+                            source_offset + member_offset + offset,
+                        ),
+                    )?;
+                    assembler.mov(dword_ptr(rsp + (member_offset + offset) as i32), eax)?;
+                } else {
+                    for byte in 0..width {
+                        assembler.movzx(
+                            eax,
+                            byte_ptr(
+                                rbp - aggregate_stack_offset(
+                                    slots,
+                                    operand,
+                                    source_offset + member_offset + offset + byte,
+                                ),
+                            ),
+                        )?;
+                        assembler
+                            .mov(byte_ptr(rsp + (member_offset + offset + byte) as i32), al)?;
+                    }
+                }
+            }
+        }
+        assembler.mov(asm_register64(register), qword_ptr(rsp))?;
+        assembler.add(rsp, 8)
+    }
+
+    fn store_aggregate_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        register: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(8);
+        assembler.push(register)?;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, dword_ptr(rsp + offset as i32))?;
+                assembler.mov(aggregate_stack_value(slots, operand, offset), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.mov(al, byte_ptr(rsp + (offset + byte) as i32))?;
+                    assembler.mov(
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                        al,
+                    )?;
+                }
+            }
+        }
+        assembler.add(rsp, 8)
+    }
+
+    fn store_aggregate_pair(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        low: Register,
+        high: Register,
+    ) -> Result<(), IcedError> {
+        self.store_aggregate_operand_part(assembler, slots, function, operand, (0, 8), low)?;
+        let size = self.aggregate_size(function, operand).unwrap_or(8);
+        self.store_aggregate_operand_part(assembler, slots, function, operand, (8, size - 8), high)
+    }
+
+    fn emit_aggregate_stack_argument(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(0);
+        for slot in 0..size.div_ceil(STACK_ARG_SLOT_BYTES) {
+            assembler.mov(
+                qword_ptr(rsp + ((stack_offset + slot) * STACK_ARG_SLOT_BYTES) as i32),
+                0,
+            )?;
+        }
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            let destination = (stack_offset * STACK_ARG_SLOT_BYTES + offset) as i32;
+            if width == 4 {
+                assembler.mov(eax, aggregate_stack_value(slots, operand, offset))?;
+                assembler.mov(dword_ptr(rsp + destination), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(
+                        eax,
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                    )?;
+                    assembler.mov(byte_ptr(rsp + destination + byte as i32), al)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn store_aggregate_stack_param(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        let size = self.aggregate_size(function, operand).unwrap_or(0);
+        let incoming = incoming_stack_arg_offset(stack_offset) as i32;
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, dword_ptr(rbp + incoming + offset as i32))?;
+                assembler.mov(aggregate_stack_value(slots, operand, offset), eax)?;
+            } else {
+                for byte in 0..width {
+                    assembler.movzx(eax, byte_ptr(rbp + incoming + (offset + byte) as i32))?;
+                    assembler.mov(
+                        byte_ptr(rbp - aggregate_stack_offset(slots, operand, offset + byte)),
+                        al,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn store_aggregate_operand_part(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        _function: &str,
+        operand: &Operand,
+        range: (usize, usize),
+        register: Register,
+    ) -> Result<(), IcedError> {
+        let (offset, size) = range;
+        assembler.push(asm_register64(register))?;
+        for part_offset in (0..size).step_by(4) {
+            let width = (size - part_offset).min(4);
+            if width == 4 {
+                assembler.mov(eax, dword_ptr(rsp + part_offset as i32))?;
+                assembler.mov(
+                    aggregate_stack_value(slots, operand, offset + part_offset),
+                    eax,
+                )?;
+            } else {
+                for byte in 0..width {
+                    assembler.mov(al, byte_ptr(rsp + (part_offset + byte) as i32))?;
+                    assembler.mov(
+                        byte_ptr(
+                            rbp - aggregate_stack_offset(
+                                slots,
+                                operand,
+                                offset + part_offset + byte,
+                            ),
+                        ),
+                        al,
+                    )?;
+                }
+            }
+        }
+        assembler.add(rsp, 8)
+    }
+
+    fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
+            .map(|layout| layout.size)
+            .unwrap_or(4)
+    }
+
+    fn reference_pointee_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+                Some(Type::RefType(ref_ty)) => Some(ref_ty.to),
+                _ => None,
+            })
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn reference_pointee_aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        let ty = self.operand_type(function, operand)?;
+        let Type::RefType(reference) = self.types.get(self.types.canonicalize(ty))? else {
+            return None;
+        };
+        self.type_is_aggregate(reference.to)
+            .then(|| self.types.size_align(reference.to, Bitness::_64).size)
+    }
+
+    fn type_is_reference(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::RefType(_))
+        )
+    }
+
+    fn type_is_string_reference(&self, ty: Index) -> bool {
+        let Some(Type::RefType(reference)) = self.types.get(self.types.canonicalize(ty)) else {
+            return false;
+        };
+        matches!(
+            self.types.get(self.types.canonicalize(reference.to)),
+            Some(Type::PrimitiveType(PrimitiveType::STR))
+        )
+    }
+
+    fn indexed_string_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        let Place::Index { base, index } = place else {
+            return None;
+        };
+        let Place::Direct(base) = base.as_ref() else {
+            return None;
+        };
+        self.operand_is_string_value(function, base)
+            .then_some((base, index))
+    }
+
+    fn indexed_string_borrow_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        self.indexed_string_place(function, place)
+            .and_then(|(base, index)| operand_name(base).is_some().then_some((base, index)))
+    }
+
+    fn load_string_pointer(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        register: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                assembler.lea(
+                    register,
+                    (*literal_labels
+                        .get(&data)
+                        .expect("missing string literal label"))
+                    .into(),
+                )
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                assembler.mov(register, reference_stack_value(slots, operand))
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
+    }
+
+    fn emit_string_value_store(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        destination: &Operand,
+        source: &Operand,
+    ) -> Result<(), IcedError> {
+        match source {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                assembler.lea(
+                    rax,
+                    (*literal_labels
+                        .get(&data)
+                        .expect("missing string literal label"))
+                    .into(),
+                )?;
+                assembler.mov(reference_stack_value(slots, destination), rax)?;
+                assembler.mov(
+                    qword_ptr(rbp - aggregate_stack_offset(slots, destination, 8)),
+                    data.len() as i32,
+                )
+            }
+            _ if self.operand_is_string_value(function, source) => {
+                emit_aggregate_region_copy(assembler, slots, (source, 0), (destination, 0), 16)
+            }
+            _ => unreachable!("unsupported string copies are diagnosed before emission"),
+        }
+    }
+
+    fn load_string_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+    ) -> Result<(), IcedError> {
+        self.load_string_operand_into(
+            assembler,
+            literal_labels,
+            slots,
+            function,
+            operand,
+            (rax, rdx),
+        )
+    }
+
+    fn load_string_operand_into(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        (pointer, length): (AsmRegister64, AsmRegister64),
+    ) -> Result<(), IcedError> {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                assembler.lea(
+                    pointer,
+                    (*literal_labels
+                        .get(&data)
+                        .expect("missing string literal label"))
+                    .into(),
+                )?;
+                assembler.mov(length, data.len() as i64)
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                assembler.mov(pointer, reference_stack_value(slots, operand))?;
+                assembler.mov(
+                    length,
+                    qword_ptr(rbp - aggregate_stack_offset(slots, operand, 8)),
+                )
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
+    }
+
+    fn store_string_operand(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        pointer: AsmRegister64,
+        length: AsmRegister64,
+    ) -> Result<(), IcedError> {
+        assembler.mov(reference_stack_value(slots, operand), pointer)?;
+        assembler.mov(
+            qword_ptr(rbp - aggregate_stack_offset(slots, operand, 8)),
+            length,
+        )
+    }
+
+    fn emit_string_stack_argument(
+        &self,
+        assembler: &mut CodeAssembler,
+        literal_labels: &HashMap<Vec<u8>, CodeLabel>,
+        slots: &BTreeMap<String, usize>,
+        function: &str,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        self.load_string_operand_into(
+            assembler,
+            literal_labels,
+            slots,
+            function,
+            operand,
+            (rax, rdx),
+        )?;
+        assembler.mov(
+            qword_ptr(rsp + (stack_offset * STACK_ARG_SLOT_BYTES) as i32),
+            rax,
+        )?;
+        assembler.mov(
+            qword_ptr(rsp + ((stack_offset + 1) * STACK_ARG_SLOT_BYTES) as i32),
+            rdx,
+        )
+    }
+
+    fn store_string_stack_param(
+        &self,
+        assembler: &mut CodeAssembler,
+        slots: &BTreeMap<String, usize>,
+        operand: &Operand,
+        stack_offset: usize,
+    ) -> Result<(), IcedError> {
+        let incoming = incoming_stack_arg_offset(stack_offset) as i32;
+        assembler.mov(rax, qword_ptr(rbp + incoming))?;
+        assembler.mov(reference_stack_value(slots, operand), rax)?;
+        assembler.mov(rdx, qword_ptr(rbp + incoming + STACK_ARG_SLOT_BYTES as i32))?;
+        assembler.mov(
+            qword_ptr(rbp - aggregate_stack_offset(slots, operand, 8)),
+            rdx,
+        )
+    }
+
+    fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn type_is_function(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::FunctionType(_))
+        )
+    }
+
+    fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 machine-code backend does not support member access yet",
-            )),
+            Place::Member { .. } => self.unsupported_member_message(function, place),
+            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support indexed access yet",
             )),
+            Place::Dereference(value) if self.operand_is_string_value(function, value) => {
+                Some(String::from(
+                    "x86 machine-code backend does not support dereferencing string values yet",
+                ))
+            }
             Place::Dereference(_) | Place::Direct(_) => None,
         }
     }
 
-    fn unsupported_store_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_store_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 machine-code backend does not support stores through member access yet",
-            )),
+            Place::Member { .. } => self.unsupported_member_message(function, place),
             Place::Index { .. } => Some(String::from(
                 "x86 machine-code backend does not support stores through indexed access yet",
             )),
+            Place::Dereference(value) if self.operand_is_string_value(function, value) => {
+                Some(String::from(
+                    "x86 machine-code backend does not support stores through string values yet",
+                ))
+            }
             Place::Dereference(_) | Place::Direct(_) => None,
         }
+    }
+
+    fn unsupported_member_message(&self, function: &str, place: &Place) -> Option<String> {
+        let Some((_, _, ty)) = self.member_place(function, place) else {
+            return Some(String::from(
+                "x86 machine-code backend does not support member access through projected references yet",
+            ));
+        };
+        let ty = self.types.canonicalize(ty);
+        (!(matches!(
+            self.types.get(ty),
+            Some(Type::PrimitiveType(
+                PrimitiveType::U32
+                    | PrimitiveType::I32
+                    | PrimitiveType::F32
+                    | PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+            ))
+        ) || ((self.type_is_reference(ty) || self.type_is_function(ty))
+            && self.types.size_align(ty, Bitness::_64).size == 8)
+            || self.type_is_aggregate(ty)))
+        .then(|| {
+            format!(
+                "x86 machine-code backend does not support non-scalar aggregate members yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
     }
 
     fn unsupported_place_operand_message(&self, function: &str, place: &Place) -> Option<String> {
@@ -827,19 +2032,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 .unsupported_place_operand_message(function, base)
                 .or_else(|| self.unsupported_operand_message(function, index)),
         }
-    }
-
-    fn unsupported_reference_abi_message(&self, ty: Index) -> Option<String> {
-        let ty = self.types.canonicalize(ty);
-        if matches!(self.types.get(ty), Some(Type::RefType(_)))
-            && self.unsupported_type_message(ty).is_none()
-        {
-            return Some(format!(
-                "x86 machine-code backend does not support reference parameters or returns yet: {}",
-                self.types.to_string_index(ty)
-            ));
-        }
-        None
     }
 
     fn unsupported_assignment_operator_message(
@@ -866,9 +2058,6 @@ impl<'a> CodeGeneratorX86Machine<'a> {
 
     fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
-            Operand::Literal(Lit::String(_)) => Some(String::from(
-                "x86 machine-code backend does not support string values yet: &str",
-            )),
             Operand::Variable(name) => self
                 .function_symbol_entry(function, name)
                 .and_then(|entry| entry.var_type)
@@ -902,19 +2091,28 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 "x86 machine-code backend does not support vararg function signatures yet: {function}"
             ));
         }
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_type_message(*ty)
-                    .or_else(|| self.unsupported_float_abi_message(*ty))
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            .enumerate()
+            .find_map(|(index, ty)| {
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
+                    .or_else(|| self.unsupported_type_message(*ty))
             })
             .or_else(|| {
-                self.unsupported_type_message(signature.return_type)
-                    .or_else(|| self.unsupported_float_abi_message(signature.return_type))
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+                self.unsupported_aggregate_type_message(
+                    signature.return_type,
+                    self.target
+                        .calling_convention()
+                        .assign_ret(self.types, signature)
+                        .as_ref(),
+                )
             })
+            .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
     fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -922,38 +2120,38 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         if signature.is_vararg {
             return Some(format!(
                 "x86 machine-code backend does not support calls to vararg functions yet: {}",
-                inst.function
+                inst.target
             ));
         }
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_float_abi_message(*ty)
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            .enumerate()
+            .find_map(|(index, ty)| {
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
             })
             .or_else(|| {
-                self.unsupported_float_abi_message(signature.return_type)
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+                self.unsupported_aggregate_type_message(
+                    signature.return_type,
+                    self.target
+                        .calling_convention()
+                        .assign_ret(self.types, signature)
+                        .as_ref(),
+                )
             })
     }
 
     fn unsupported_extern_call_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (inst.is_direct_function && self.is_extern_function(&inst.function)).then(|| {
-            format!(
-                "x86 machine-code backend does not support calls to extern functions yet: {}",
-                inst.function
-            )
-        })
-    }
-
-    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (!inst.is_direct_function).then(|| {
-            format!(
-                "x86 machine-code backend does not support indirect calls through function values yet: {}",
-                inst.function
-            )
-        })
+        inst.target
+            .direct_name()
+            .filter(|function| self.is_extern_function(function))
+            .map(|function| {
+                format!("x86 machine-code backend does not support calls to extern functions yet: {function}")
+            })
     }
 
     fn is_extern_function(&self, function: &str) -> bool {
@@ -974,51 +2172,110 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
                 "x86 machine-code backend does not support string values yet: {name}"
             )),
-            Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 machine-code backend does not support tuple values yet: {name}"
-            )),
-            Type::StructType(_) => Some(format!(
-                "x86 machine-code backend does not support struct values yet: {name}"
-            )),
             Type::RefType(ref_ty)
                 if matches!(
                     self.types.get(self.types.canonicalize(ref_ty.to)),
                     Some(Type::PrimitiveType(PrimitiveType::STR))
                 ) =>
             {
-                Some(format!(
-                    "x86 machine-code backend does not support string values yet: {name}"
-                ))
+                None
             }
+            Type::RefType(ref_ty) if self.type_is_string_reference(ref_ty.to) => Some(format!(
+                "x86 machine-code backend does not support nested string references yet: {name}"
+            )),
             Type::RefType(ref_ty) if self.reference_target_supported(ref_ty.to) => None,
             Type::RefType(_) => Some(format!(
                 "x86 machine-code backend does not support references to `{name}` values yet"
             )),
-            Type::FunctionType(_) => Some(format!(
-                "x86 machine-code backend does not support function values yet: {name}"
-            )),
-            Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
-                None
-            }
+            Type::FunctionType(_) => None,
+            Type::TupleType(_)
+            | Type::StructType(_)
+            | Type::TypeDefType(_)
+            | Type::PrimitiveType(_)
+            | Type::Unknown => None,
         }
     }
 
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
-        )
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32
+                ) | Type::FunctionType(_)
+            )
+        ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
-    fn unsupported_float_abi_message(&self, ty: Index) -> Option<String> {
-        is_f32_type(self.types, ty).then(|| {
-            format!(
-                "x86 machine-code backend does not support f32 parameters, calls, or returns yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
+    fn unsupported_aggregate_type_message(
+        &self,
+        ty: Index,
+        location: Option<&Location>,
+    ) -> Option<String> {
+        if !self.type_is_aggregate(ty)
+            || self.aggregate_is_integer_only(ty)
+                && (location.is_none()
+                    || matches!(
+                        location,
+                        Some(
+                            Location::Register(_) | Location::Stack(_) | Location::Indirect { .. }
+                        )
+                    )
+                    || location.and_then(register_pair).is_some()
+                    || location.and_then(stack_offset).is_some())
+        {
+            return None;
+        }
+        let detail = match location {
+            Some(Location::Pair { .. }) if location.and_then(register_pair).is_some() => {
+                "register-pair aggregate ABI values"
+            }
+            Some(Location::Pair { .. }) => "stack-passed aggregate ABI values",
+            Some(Location::Stack(_) | Location::RegisterAndStack(_, _)) => {
+                "stack-passed aggregate ABI values"
+            }
+            Some(Location::Indirect { .. }) => "indirect aggregate ABI values",
+            _ if !self.aggregate_is_integer_only(ty) => "non-integer aggregate ABI values",
+            _ => "aggregate ABI values",
+        };
+        Some(format!(
+            "x86 machine-code backend does not support {detail} yet: {}",
+            self.types.to_string_index(ty)
+        ))
+    }
+
+    fn unsupported_aggregate_operand_message(
+        &self,
+        function: &str,
+        operand: &Operand,
+        location: Option<&Location>,
+    ) -> Option<String> {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.unsupported_aggregate_type_message(ty, location))
+    }
+
+    fn unsupported_copy_message(
+        &self,
+        function: &str,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) -> Option<String> {
+        if self.operand_is_aggregate(function, &inst.src)
+            || self.operand_is_aggregate(function, &inst.dst)
+        {
+            let source = self.operand_type(function, &inst.src)?;
+            let destination = self.operand_type(function, &inst.dst)?;
+            if self.types.eq(source, destination) && self.type_is_aggregate(source) {
+                None
+            } else {
+                Some(String::from("x86 machine-code backend does not support aggregate copies with mismatched types"))
+            }
+        } else {
+            self.unsupported_operand_message(function, &inst.dst)
+                .or_else(|| self.unsupported_operand_message(function, &inst.src))
+        }
     }
 
     fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
@@ -1073,27 +2330,38 @@ impl<'a> CodeGeneratorX86Machine<'a> {
         names
             .into_iter()
             .map(|name| {
-                let size = if self.symbol_is_reference(function, &name) {
-                    8
-                } else {
-                    4
-                };
-                offset = align_to(offset, size);
-                offset += size;
+                let layout = self.symbol_frame_size_align(function, &name);
+                offset = layout.align.align(offset);
+                offset += layout.size;
                 (name, offset)
             })
             .collect()
     }
 
-    fn symbol_is_reference(&self, function: &str, name: &str) -> bool {
+    fn string_literals(&self) -> BTreeSet<Vec<u8>> {
+        let mut source_literals = BTreeSet::new();
+        for range in &self.cfg.functions {
+            for node in self.cfg.function_nodes(range) {
+                for instruction in &self.cfg[node].instructions {
+                    collect_instruction_string_literals(
+                        &instruction.instruction,
+                        &mut source_literals,
+                    );
+                }
+            }
+        }
+        source_literals
+            .into_iter()
+            .map(|literal| string_literal_data(&literal))
+            .collect()
+    }
+
+    fn symbol_frame_size_align(&self, function: &str, name: &str) -> SizeAlign {
         self.function_symbol_entry(function, name)
             .and_then(|entry| entry.var_type)
-            .is_some_and(|ty| {
-                matches!(
-                    self.types.get(self.types.canonicalize(ty)),
-                    Some(Type::RefType(_))
-                )
-            })
+            .map(|ty| self.types.frame_size_align(ty, Bitness::_64))
+            .filter(|layout| layout.size > 0)
+            .unwrap_or_else(|| SizeAlign::from_size(4))
     }
 
     fn unsupported_cast_message(
@@ -1137,7 +2405,11 @@ impl<'a> CodeGeneratorX86Machine<'a> {
                 self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
             }
-            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+            Operand::Label(name) => self
+                .function_symbol_entry(function, name)
+                .or_else(|| self.global_symbol_entry(name))
+                .and_then(|entry| entry.var_type),
+            Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }
     }
 
@@ -1171,6 +2443,32 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .and_then(outgoing_register)
     }
 
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
+    }
+
+    fn function_return_pair(&self, function: &str) -> Option<(Register, Register)> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
+    }
+
+    fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
+        let signature = self.function_signature(function)?;
+        match self
+            .target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+        {
+            Some(Location::Indirect { size, .. }) => Some(size),
+            _ => None,
+        }
+    }
+
     fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
         let signature = self.function_call_signature(inst)?;
         self.target
@@ -1178,6 +2476,18 @@ impl<'a> CodeGeneratorX86Machine<'a> {
             .assign_ret(self.types, signature)
             .as_ref()
             .and_then(outgoing_register)
+    }
+
+    fn function_call_return_pair(
+        &self,
+        inst: &FunctionCallInstruction,
+    ) -> Option<(Register, Register)> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
     }
 }
 
@@ -1296,7 +2606,26 @@ fn load_reference_operand(
         }
         Operand::Placeholder => assembler.xor(register, register),
         Operand::Literal(_) | Operand::Label(_) => {
-            unreachable!("references must be stored in variables or temporaries")
+            unreachable!("references must be stored in variables or temporaries: {operand:?}")
+        }
+    }
+}
+
+fn load_function_operand(
+    assembler: &mut CodeAssembler,
+    labels: &HashMap<String, CodeLabel>,
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    register: AsmRegister64,
+) -> Result<(), IcedError> {
+    match operand {
+        Operand::Label(name) => assembler.lea(register, label_name(labels, name).into()),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            assembler.mov(register, reference_stack_value(slots, operand))
+        }
+        Operand::Placeholder => assembler.xor(register, register),
+        Operand::Literal(_) => {
+            unreachable!("function values must be stored or declared functions")
         }
     }
 }
@@ -1535,15 +2864,26 @@ fn label_name(labels: &HashMap<String, CodeLabel>, label: &str) -> CodeLabel {
 fn outgoing_register(location: &Location) -> Option<Register> {
     match location {
         Location::Register(register) | Location::RegisterAndStack(register, _) => Some(*register),
-        Location::Stack(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage
+        | Location::Stack(_)
+        | Location::Indirect { .. }
+        | Location::Pair { .. } => None,
     }
+}
+
+fn register_pair(location: &Location) -> Option<(Register, Register)> {
+    let Location::Pair { low, high } = location else {
+        return None;
+    };
+    Some((outgoing_register(low)?, outgoing_register(high)?))
 }
 
 fn stack_offset(location: &Location) -> Option<usize> {
     match location {
         Location::Stack(offset) => Some(offset.0),
         Location::RegisterAndStack(_, offset) => Some(offset.0),
-        Location::Register(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::Pair { low, .. } => stack_offset(low),
+        Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
     }
 }
 
@@ -1587,8 +2927,182 @@ fn asm_register32(register: Register) -> AsmRegister32 {
     }
 }
 
+fn asm_register_xmm(register: Register) -> AsmRegisterXmm {
+    match register {
+        Register::XMM0 => xmm0,
+        Register::XMM1 => xmm1,
+        Register::XMM2 => xmm2,
+        Register::XMM3 => xmm3,
+        Register::XMM4 => xmm4,
+        Register::XMM5 => xmm5,
+        Register::XMM6 => xmm6,
+        Register::XMM7 => xmm7,
+        Register::XMM8 => xmm8,
+        Register::XMM9 => xmm9,
+        Register::XMM10 => xmm10,
+        Register::XMM11 => xmm11,
+        Register::XMM12 => xmm12,
+        Register::XMM13 => xmm13,
+        Register::XMM14 => xmm14,
+        Register::XMM15 => xmm15,
+        _ => unreachable!("x86 machine-code emitter expected an XMM register"),
+    }
+}
+
+fn is_xmm_register(register: Register) -> bool {
+    matches!(
+        register,
+        Register::XMM0
+            | Register::XMM1
+            | Register::XMM2
+            | Register::XMM3
+            | Register::XMM4
+            | Register::XMM5
+            | Register::XMM6
+            | Register::XMM7
+            | Register::XMM8
+            | Register::XMM9
+            | Register::XMM10
+            | Register::XMM11
+            | Register::XMM12
+            | Register::XMM13
+            | Register::XMM14
+            | Register::XMM15
+    )
+}
+
+fn asm_register64(register: Register) -> AsmRegister64 {
+    match register.full_register() {
+        Register::RAX => rax,
+        Register::RBX => rbx,
+        Register::RCX => rcx,
+        Register::RDX => rdx,
+        Register::RSI => rsi,
+        Register::RDI => rdi,
+        Register::RBP => rbp,
+        Register::RSP => rsp,
+        Register::R8 => r8,
+        Register::R9 => r9,
+        Register::R10 => r10,
+        Register::R11 => r11,
+        Register::R12 => r12,
+        Register::R13 => r13,
+        Register::R14 => r14,
+        Register::R15 => r15,
+        _ => unreachable!("x86 machine-code emitter only supports general-purpose registers"),
+    }
+}
+
 fn stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {
     dword_ptr(rbp - stack_slot_offset(slots, operand))
+}
+
+fn aggregate_stack_value(
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    member_offset: usize,
+) -> AsmMemoryOperand {
+    dword_ptr(rbp - aggregate_stack_offset(slots, operand, member_offset))
+}
+
+fn aggregate_stack_offset(
+    slots: &BTreeMap<String, usize>,
+    operand: &Operand,
+    member_offset: usize,
+) -> i32 {
+    stack_slot_offset(slots, operand) - member_offset as i32
+}
+
+fn emit_aggregate_region_copy(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    (source, source_offset): (&Operand, usize),
+    (destination, destination_offset): (&Operand, usize),
+    size: usize,
+) -> Result<(), IcedError> {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        if width == 4 {
+            assembler.mov(
+                eax,
+                aggregate_stack_value(slots, source, source_offset + offset),
+            )?;
+            assembler.mov(
+                aggregate_stack_value(slots, destination, destination_offset + offset),
+                eax,
+            )?;
+        } else {
+            for byte in 0..width {
+                assembler.movzx(
+                    eax,
+                    byte_ptr(
+                        rbp - aggregate_stack_offset(slots, source, source_offset + offset + byte),
+                    ),
+                )?;
+                assembler.mov(
+                    byte_ptr(
+                        rbp - aggregate_stack_offset(
+                            slots,
+                            destination,
+                            destination_offset + offset + byte,
+                        ),
+                    ),
+                    al,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn emit_aggregate_load_from_pointer(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    source: AsmRegister64,
+    destination: &Operand,
+    size: usize,
+) -> Result<(), IcedError> {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        if width == 4 {
+            assembler.mov(ecx, dword_ptr(source + offset as i32))?;
+            assembler.mov(aggregate_stack_value(slots, destination, offset), ecx)?;
+        } else {
+            for byte in 0..width {
+                assembler.movzx(ecx, byte_ptr(source + (offset + byte) as i32))?;
+                assembler.mov(
+                    byte_ptr(rbp - aggregate_stack_offset(slots, destination, offset + byte)),
+                    cl,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn emit_aggregate_store_to_pointer(
+    assembler: &mut CodeAssembler,
+    slots: &BTreeMap<String, usize>,
+    destination: AsmRegister64,
+    source: &Operand,
+    size: usize,
+) -> Result<(), IcedError> {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        if width == 4 {
+            assembler.mov(ecx, aggregate_stack_value(slots, source, offset))?;
+            assembler.mov(dword_ptr(destination + offset as i32), ecx)?;
+        } else {
+            for byte in 0..width {
+                assembler.movzx(
+                    ecx,
+                    byte_ptr(rbp - aggregate_stack_offset(slots, source, offset + byte)),
+                )?;
+                assembler.mov(byte_ptr(destination + (offset + byte) as i32), cl)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn reference_stack_value(slots: &BTreeMap<String, usize>, operand: &Operand) -> AsmMemoryOperand {
@@ -1743,8 +3257,63 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
             }
         }
         Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand(target, names);
+            }
             if let Some(target) = &inst.return_target {
                 collect_operand(target, names);
+            }
+        }
+        Instruction::Jump(_)
+        | Instruction::Function(_)
+        | Instruction::EndFunction(_)
+        | Instruction::Extern(_) => {}
+    }
+}
+
+fn collect_instruction_string_literals(instruction: &Instruction, literals: &mut BTreeSet<String>) {
+    match instruction {
+        Instruction::Borrow(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.target, literals);
+        }
+        Instruction::Load(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.target, literals);
+        }
+        Instruction::Store(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.value, literals);
+        }
+        Instruction::Assignment(inst) => {
+            collect_operand_string_literal(&inst.target, literals);
+            if let Some(left) = &inst.left {
+                collect_operand_string_literal(left, literals);
+            }
+            collect_operand_string_literal(&inst.right, literals);
+        }
+        Instruction::Copy(inst) => {
+            collect_operand_string_literal(&inst.src, literals);
+            collect_operand_string_literal(&inst.dst, literals);
+        }
+        Instruction::ConditionalJump(inst) => {
+            if let Some(left) = &inst.left {
+                collect_operand_string_literal(left, literals);
+            }
+            collect_operand_string_literal(&inst.right, literals);
+        }
+        Instruction::Parameter(inst) => collect_operand_string_literal(&inst.param, literals),
+        Instruction::Return(inst) => {
+            if let Some(value) = &inst.value {
+                collect_operand_string_literal(value, literals);
+            }
+        }
+        Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand_string_literal(target, literals);
+            }
+            if let Some(target) = &inst.return_target {
+                collect_operand_string_literal(target, literals);
             }
         }
         Instruction::Jump(_)
@@ -1765,6 +3334,19 @@ fn collect_place_operands(place: &Place, names: &mut BTreeSet<String>) {
     }
 }
 
+fn collect_place_string_literals(place: &Place, literals: &mut BTreeSet<String>) {
+    match place {
+        Place::Direct(value) | Place::Dereference(value) => {
+            collect_operand_string_literal(value, literals)
+        }
+        Place::Member { base, .. } => collect_place_string_literals(base, literals),
+        Place::Index { base, index } => {
+            collect_place_string_literals(base, literals);
+            collect_operand_string_literal(index, literals);
+        }
+    }
+}
+
 fn collect_operand(operand: &Operand, names: &mut BTreeSet<String>) {
     match operand {
         Operand::Variable(name) => {
@@ -1775,6 +3357,44 @@ fn collect_operand(operand: &Operand, names: &mut BTreeSet<String>) {
         }
         Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => {}
     }
+}
+
+fn collect_operand_string_literal(operand: &Operand, literals: &mut BTreeSet<String>) {
+    if let Operand::Literal(Lit::String(value)) = operand {
+        literals.insert(value.clone());
+    }
+}
+
+fn string_literal_data(value: &str) -> Vec<u8> {
+    let content = if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    };
+    let mut bytes = Vec::new();
+    let mut chars = content.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            let mut encoded = [0; 4];
+            bytes.extend(character.encode_utf8(&mut encoded).as_bytes());
+            continue;
+        }
+        let escaped = chars.next().unwrap_or('\\');
+        match escaped {
+            '0' => bytes.push(0),
+            'n' => bytes.push(b'\n'),
+            'r' => bytes.push(b'\r'),
+            't' => bytes.push(b'\t'),
+            other => {
+                let mut encoded = [0; 4];
+                bytes.extend(other.encode_utf8(&mut encoded).as_bytes());
+            }
+        }
+    }
+    bytes
 }
 
 fn machine_code_error(

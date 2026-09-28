@@ -1,0 +1,55 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+main=0x0000
+
+bytes:
+55 48 89 E5 48 83 EC 40 B8 03 00 00 00 89 45 F8 B8 00 00 00 00 88 45 FC 8B 45 F8 89 45 DC 8B 45 FC 89 45 E0 8B 45 DC 89 45 D4 8B 45 E0 89 45 D8 B8 07 00 00 00 89 45 D4 B8 04 00 00 00 89 45 F4 B8 07 00 00 00 89 45 F0 8B 45 F0 89 45 CC 8B 45 F4 89 45 D0 8B 45 CC 89 45 C4 8B 45 D0 89 45 C8 B8 09 00 00 00 89 45 C8 8B 45 C4 89 45 EC 8B 45 C8 89 45 E8 8B 45 EC 03 45 E8 89 45 E4 8B 45 E4 48 89 EC 5D C3
+
+disassembly:
+main:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,40h
+0008: mov eax,3
+000D: mov [rbp-8],eax
+0010: mov eax,0
+0015: mov [rbp-4],al
+0018: mov eax,[rbp-8]
+001B: mov [rbp-24h],eax
+001E: mov eax,[rbp-4]
+0021: mov [rbp-20h],eax
+0024: mov eax,[rbp-24h]
+0027: mov [rbp-2Ch],eax
+002A: mov eax,[rbp-20h]
+002D: mov [rbp-28h],eax
+0030: mov eax,7
+0035: mov [rbp-2Ch],eax
+0038: mov eax,4
+003D: mov [rbp-0Ch],eax
+0040: mov eax,7
+0045: mov [rbp-10h],eax
+0048: mov eax,[rbp-10h]
+004B: mov [rbp-34h],eax
+004E: mov eax,[rbp-0Ch]
+0051: mov [rbp-30h],eax
+0054: mov eax,[rbp-34h]
+0057: mov [rbp-3Ch],eax
+005A: mov eax,[rbp-30h]
+005D: mov [rbp-38h],eax
+0060: mov eax,9
+0065: mov [rbp-38h],eax
+0068: mov eax,[rbp-3Ch]
+006B: mov [rbp-14h],eax
+006E: mov eax,[rbp-38h]
+0071: mov [rbp-18h],eax
+0074: mov eax,[rbp-14h]
+0077: add eax,[rbp-18h]
+007A: mov [rbp-1Ch],eax
+007D: mov eax,[rbp-1Ch]
+0080: mov rsp,rbp
+0083: pop rbp
+0084: ret

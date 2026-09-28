@@ -1,0 +1,26 @@
+---
+source: lexion_lang/tests/x86_elf.rs
+expression: "disassemble(&executable.as_bytes()[code_start..executable.data_offset()],\nexecutable.entry_point() + executable.runtime_size() as u64)"
+snapshot_kind: text
+---
+000000000040100E: push rbp
+000000000040100F: mov rbp,rsp
+0000000000401012: sub rsp,20h
+0000000000401016: lea rax,[40105Eh]
+000000000040101D: mov [rbp-10h],rax
+0000000000401021: mov qword ptr [rbp-8],5
+0000000000401029: mov eax,[rbp-10h]
+000000000040102C: mov [rbp-20h],eax
+000000000040102F: mov eax,[rbp-0Ch]
+0000000000401032: mov [rbp-1Ch],eax
+0000000000401035: mov eax,[rbp-8]
+0000000000401038: mov [rbp-18h],eax
+000000000040103B: mov eax,[rbp-4]
+000000000040103E: mov [rbp-14h],eax
+0000000000401041: lea rax,[401063h]
+0000000000401048: mov [rbp-20h],rax
+000000000040104C: mov qword ptr [rbp-18h],5
+0000000000401054: mov eax,0
+0000000000401059: mov rsp,rbp
+000000000040105C: pop rbp
+000000000040105D: ret

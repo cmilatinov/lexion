@@ -19,14 +19,24 @@ These are the default operating instructions for work in `lexion`.
 
 1. Inspect `git status --short`.
 2. Read the relevant steering files:
-   - `.steering/gitflow.md` for branch, commit, and PR rules.
-   - `.steering/planning.md` when selecting work or preparing PR references.
+   - This file for branch, commit, and PR rules.
    - `.steering/architecture.md` for crate boundaries and pipeline ownership.
    - `.steering/conventions.md` for local Rust and test conventions.
 3. Locate the smallest relevant code surface.
 4. Make focused edits.
 5. Run formatting and validation appropriate to the change.
 6. Summarize what changed, what was validated, and any known residual risk.
+
+## Git And Pull Request Workflow
+
+- `main` is the default integration branch and pull request base. Never commit directly to `main`.
+- Create a separate work branch with one of: `fix/`, `feature/`, `chore/`, `docs/`, `refactor/`, or `perf/`.
+- When work depends on an unmerged feature, branch from that feature and target its pull request. Use a dedicated worktree when practical; leave unrelated changes in other worktrees untouched.
+- Use conventional commit and pull request title prefixes: `fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, or `perf:`. Do not use agent-identifying tags.
+- Open review-ready pull requests against `main` unless explicitly instructed otherwise. Never merge your own pull request.
+- Non-documentation pull requests must reference one to three related GitHub issues in an `Engineering Tasks` section. Documentation- and process-only pull requests omit that section unless an issue explicitly tracks the work.
+- PR descriptions include `Summary`, optional `Design Decisions`, applicable task references, `Tests Added`, and final `Validation Performed` sections.
+- After publication, make review updates as follow-up commits. Rewrite published history only for an intentional base-sync rebase or when explicitly requested, and use `--force-with-lease` for a rebase push.
 
 ## Steering File Maintenance
 
@@ -50,8 +60,9 @@ The language compiler supports dump flags such as `parse_table`, `parse_trace`, 
 
 ## Task And PR Discipline
 
-- Use repository GitHub Issues for Engineering Tasks and the [Lexion Project](https://github.com/users/cmilatinov/projects/2) for roadmap priority and status.
-- Documentation-only and process-only changes do not require a new Engineering Task.
+- Use the GitHub Project `Lexion` as the planning source of truth and repository issues as the Engineering Task requirements.
+- Use the available `github-projects-workflow` and `github-issues-workflow` skills for task selection, status updates, issue creation, and PR references.
+- Do not create Engineering Tasks for documentation- or process-only changes unless explicitly requested.
 - Keep one PR to one coherent parser, compiler, grammar, or documentation change.
 - Do not mix unrelated cleanup with behavior fixes.
-- Close a linked issue after merge only when its acceptance criteria are satisfied.
+- Keep linked Project items `In Progress` through review. Mark them `Done` only after merge and only when the issue's acceptance criteria are satisfied.

@@ -1,0 +1,99 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_projected_aggregate_references.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 144
+#     let values = Values { first: 1, pair: Pair { first: 2, second: 3 } };
+  mov eax, 1
+  mov DWORD PTR [rbp-20], eax
+  mov eax, 2
+  mov DWORD PTR [rbp-28], eax
+  mov eax, 3
+  mov DWORD PTR [rbp-24], eax
+  mov eax, DWORD PTR [rbp-28]
+  mov DWORD PTR [rbp-16], eax
+  mov eax, DWORD PTR [rbp-28+4]
+  mov DWORD PTR [rbp-16+4], eax
+  mov eax, DWORD PTR [rbp-20]
+  mov DWORD PTR [rbp-132], eax
+  mov eax, DWORD PTR [rbp-20+4]
+  mov DWORD PTR [rbp-132+4], eax
+  mov eax, DWORD PTR [rbp-20+8]
+  mov DWORD PTR [rbp-132+8], eax
+#     let first = &values.first;
+  lea rax, [rbp-132]
+  mov QWORD PTR [rbp-40], rax
+  mov rax, QWORD PTR [rbp-40]
+  mov QWORD PTR [rbp-96], rax
+#     let pair = &values.pair;
+  lea rax, [rbp-128]
+  mov QWORD PTR [rbp-48], rax
+  mov rax, QWORD PTR [rbp-48]
+  mov QWORD PTR [rbp-120], rax
+#     let nested = &values.pair.first;
+  lea rax, [rbp-128]
+  mov QWORD PTR [rbp-56], rax
+  mov rax, QWORD PTR [rbp-56]
+  mov QWORD PTR [rbp-112], rax
+#     *first = 4;
+  mov ecx, 4
+  mov rax, QWORD PTR [rbp-96]
+  mov DWORD PTR [rax], ecx
+#     let copied = *pair;
+  mov rdx, QWORD PTR [rbp-120]
+  mov eax, DWORD PTR [rdx]
+  mov DWORD PTR [rbp-64], eax
+  mov eax, DWORD PTR [rdx+4]
+  mov DWORD PTR [rbp-64+4], eax
+  mov eax, DWORD PTR [rbp-64]
+  mov DWORD PTR [rbp-88], eax
+  mov eax, DWORD PTR [rbp-64+4]
+  mov DWORD PTR [rbp-88+4], eax
+#     *pair = Pair { first: 5, second: 6 };
+  mov eax, 5
+  mov DWORD PTR [rbp-72], eax
+  mov eax, 6
+  mov DWORD PTR [rbp-68], eax
+  mov rdx, QWORD PTR [rbp-120]
+  mov eax, DWORD PTR [rbp-72]
+  mov DWORD PTR [rdx], eax
+  mov eax, DWORD PTR [rbp-72+4]
+  mov DWORD PTR [rdx+4], eax
+#     *nested = 7;
+  mov ecx, 7
+  mov rax, QWORD PTR [rbp-112]
+  mov DWORD PTR [rax], ecx
+#     let loaded = *pair;
+  mov rdx, QWORD PTR [rbp-120]
+  mov eax, DWORD PTR [rdx]
+  mov DWORD PTR [rbp-80], eax
+  mov eax, DWORD PTR [rdx+4]
+  mov DWORD PTR [rbp-80+4], eax
+  mov eax, DWORD PTR [rbp-80]
+  mov DWORD PTR [rbp-104], eax
+  mov eax, DWORD PTR [rbp-80+4]
+  mov DWORD PTR [rbp-104+4], eax
+#     return *first + copied.second + loaded.first + loaded.second;
+  mov rax, QWORD PTR [rbp-96]
+  mov eax, DWORD PTR [rax]
+  mov esi, DWORD PTR [rbp-84]
+  mov edx, eax
+  add edx, esi
+  mov eax, DWORD PTR [rbp-104]
+  mov esi, edx
+  add esi, eax
+  mov eax, DWORD PTR [rbp-100]
+  mov DWORD PTR [rbp-8], eax
+  mov eax, esi
+  add eax, DWORD PTR [rbp-8]
+  add rsp, 144
+  pop rbp
+  ret

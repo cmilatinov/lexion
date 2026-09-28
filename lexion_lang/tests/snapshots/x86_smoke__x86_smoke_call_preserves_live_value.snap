@@ -23,16 +23,16 @@ main:
   sub rsp, 16
 #     let value = 4;
   mov eax, 4
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 #     let next = add_one(value);
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
   push rax
   pop rdi
   call add_one
   mov edi, eax
 #     return next + value;
   mov eax, edi
-  add eax, DWORD PTR [rbp-4]
+  add eax, DWORD PTR [rbp-8]
   add rsp, 16
   pop rbp
   ret

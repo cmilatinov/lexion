@@ -25,5 +25,5 @@ Use issues and the codebase together when reporting what is implemented. A Proje
 
 - Implementation PRs reference the matching GitHub issue; create one first if none exists.
 - Keep a PR to at most three related Engineering Tasks. Documentation-only and process-only PRs need no new issue.
-- Use plain issue references for PRs targeting `staging`. Update Project status as work proceeds.
+- Use issue references for PRs targeting `main`. Update Project status as work proceeds.
 - After merge, close an issue only when its acceptance criteria are satisfied; otherwise record the remaining work on the issue.

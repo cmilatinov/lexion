@@ -1,0 +1,36 @@
+---
+source: lexion_lang/tests/backend_regressions.rs
+expression: tac_snapshot(&cfg)
+snapshot_kind: text
+---
+main:
+  fn main
+  store 1 -> $t1.first
+  store 2 -> $t2.first
+  store 3 -> $t2.second
+  store $t2 -> $t1.pair
+  values = $t1
+  $t3 = borrow values.first
+  first = $t3
+  $t4 = borrow values.pair
+  pair = $t4
+  $t5 = borrow values.pair.first
+  nested = $t5
+  store 4 -> *first
+  $t6 = load *pair
+  copied = $t6
+  store 5 -> $t7.first
+  store 6 -> $t7.second
+  store $t7 -> *pair
+  store 7 -> *nested
+  $t8 = load *pair
+  loaded = $t8
+  $t9 = load *first
+  $t10 = load copied.second
+  $t11 = $t9 + $t10
+  $t12 = load loaded.first
+  $t13 = $t11 + $t12
+  $t14 = load loaded.second
+  $t15 = $t13 + $t14
+  return $t15
+  endfn main

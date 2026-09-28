@@ -1,0 +1,70 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_string_abi_indexed.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global take
+take:
+# fn take(
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  movss DWORD PTR [rbp-4], xmm0
+#     return tail;
+  movss xmm0, DWORD PTR [rbp-4]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     let result = take(1, 2, 3, 4, 5, 6, "hello", 1.5);
+  sub rsp, 8
+  mov DWORD PTR [rsp], 0x3FC00000
+  sub rsp, 16
+  lea rax, [rip + .Lstr_68656c6c6f]
+  mov rdx, 5
+  mov QWORD PTR [rsp], rax
+  mov QWORD PTR [rsp+8], rdx
+  mov eax, 6
+  push rax
+  mov eax, 5
+  push rax
+  mov eax, 4
+  push rax
+  mov eax, 3
+  push rax
+  mov eax, 2
+  push rax
+  mov eax, 1
+  push rax
+  mov rdi, QWORD PTR [rsp]
+  mov rsi, QWORD PTR [rsp+8]
+  mov rdx, QWORD PTR [rsp+16]
+  mov rcx, QWORD PTR [rsp+24]
+  mov r8, QWORD PTR [rsp+32]
+  mov r9, QWORD PTR [rsp+40]
+  movss xmm0, DWORD PTR [rsp+64]
+  sub rsp, 24
+  mov rax, QWORD PTR [rsp+72]
+  mov QWORD PTR [rsp], rax
+  mov rax, QWORD PTR [rsp+80]
+  mov QWORD PTR [rsp+8], rax
+  call take
+  add rsp, 96
+  movss DWORD PTR [rbp-4], xmm0
+  movss xmm0, DWORD PTR [rbp-4]
+  movss DWORD PTR [rbp-8], xmm0
+#     return 0;
+  mov eax, 0
+  add rsp, 16
+  pop rbp
+  ret
+.section .rodata
+.Lstr_68656c6c6f:
+  .byte 104, 101, 108, 108, 111

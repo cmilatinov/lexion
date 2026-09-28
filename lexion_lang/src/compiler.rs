@@ -9,8 +9,9 @@ use crate::generators::tac::{
     analyze_liveness, CodeGeneratorTac, CodeOptimizerTac, TacOptimizerOptions,
 };
 use crate::generators::x86::{
-    AbiRegisterAllocator, AssignedLivenessInterval, CodeGeneratorX86, CodeGeneratorX86Elf,
-    X86Assembly, X86ElfExecutable, X86ElfOptions, X86EmitOptions, X86Target,
+    AbiRegisterAllocator, AssignedLivenessInterval, Bitness, CMemoryLayoutBuilder,
+    CodeGeneratorX86, CodeGeneratorX86Elf, X86Assembly, X86ElfExecutable, X86ElfOptions,
+    X86EmitOptions, X86Target,
 };
 use crate::parser::ParserLexion;
 use crate::pipeline::PipelineStage;
@@ -118,6 +119,7 @@ impl LexionCompiler {
         if diagnostics.has_errors() {
             return Err(diagnostics);
         }
+        types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
         let Some((cfg, intervals)) =
             self.generate_ir(&mut diagnostics, source.clone(), &ast, &mut symbols, &types)

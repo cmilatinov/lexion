@@ -30,18 +30,22 @@ impl RegClass {
     }
 }
 
+/// Index of an eightbyte stack slot, not a byte offset.
 #[derive(Debug, Default, Deref, DerefMut, Clone, Copy)]
 pub struct StackOffset(pub usize);
 
 #[derive(Debug, Clone)]
 pub enum Location {
+    NoStorage,
     Register(Register),
     Stack(StackOffset),
     RegisterAndStack(Register, StackOffset),
     Indirect {
         address_register: Register,
+        result_register: Register,
         size: usize,
     },
+    /// Two consecutive eightbytes, ordered from lower to higher address.
     Pair {
         low: Box<Location>,
         high: Box<Location>,

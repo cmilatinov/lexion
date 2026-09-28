@@ -28,15 +28,15 @@ $cthen_1:
   mov esi, eax
   add esi, 1
   mov eax, esi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
   jmp $cend_1
 $celse_1:
   mov esi, edi
   sub esi, 3
   mov eax, esi
-  mov DWORD PTR [rbp-4], eax
+  mov DWORD PTR [rbp-8], eax
 $cend_1:
-  mov eax, DWORD PTR [rbp-4]
+  mov eax, DWORD PTR [rbp-8]
 #     return value;
   add rsp, 16
   pop rbp
