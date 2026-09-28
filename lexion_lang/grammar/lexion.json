@@ -1022,7 +1022,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\n        $1.3,\n        Stmt::FuncDeclStmt(FuncDeclStmt {\n            name: $1.0,\n            params: $1.1,\n            ty: $1.2,\n            body: Some($2),\n            is_vararg: $1.4,\n            is_extern: $1.5,\n        })\n    ).into();"
+        "code": "$$ = (\n        $1.3,\n        Stmt::FuncDeclStmt(FuncDeclStmt {\n            name: $1.0,\n            params: $1.1,\n            ty: $1.2,\n            body: Some($2),\n            is_vararg: $1.4,\n            is_extern: $1.5,\n            is_callback: $1.6,\n        })\n    ).into();"
       }
     },
     {
@@ -1033,7 +1033,7 @@
       ],
       "reduction": {
         "ty": "SourcedStmt",
-        "code": "$$ = (\n        $1.3,\n        Stmt::FuncDeclStmt(FuncDeclStmt {\n            name: $1.0,\n            params: $1.1,\n            ty: $1.2,\n            body: None,\n            is_vararg: $1.4,\n            is_extern: $1.5,\n        })\n    ).into();"
+        "code": "$$ = (\n        $1.3,\n        Stmt::FuncDeclStmt(FuncDeclStmt {\n            name: $1.0,\n            params: $1.1,\n            ty: $1.2,\n            body: None,\n            is_vararg: $1.4,\n            is_extern: $1.5,\n            is_callback: $1.6,\n        })\n    ).into();"
       }
     },
     {
@@ -1048,8 +1048,8 @@
         "FuncReturn"
       ],
       "reduction": {
-        "ty": "(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool, bool)",
-        "code": "let mut ty = None;\n    let mut span = $2.span;\n    let is_extern = $1.is_some();\n    if let Some(sp) = $1 {\n        span = SpanBuilder::merge(sp, span);\n    }\n    match $7 {\n        Some(typ) => {\n            span = SpanBuilder::merge(span, typ.span);\n            ty = Some(typ);\n        }\n        None => {\n            span = SpanBuilder::merge(span, $6.span);\n        }\n    };\n    $$ = (\n        ($3.span, $3.value).into(),\n        $5.0,\n        ty,\n        span,\n        $5.1,\n        is_extern\n    );"
+        "ty": "(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool, bool, bool)",
+        "code": "let mut ty = None;\n    let mut span = $2.span;\n    let is_extern = $1.0.is_some();\n    let is_callback = $1.1.is_some();\n    if let Some(sp) = $1.0.or($1.1) {\n        span = SpanBuilder::merge(sp, span);\n    }\n    match $7 {\n        Some(typ) => {\n            span = SpanBuilder::merge(span, typ.span);\n            ty = Some(typ);\n        }\n        None => {\n            span = SpanBuilder::merge(span, $6.span);\n        }\n    };\n    $$ = (\n        ($3.span, $3.value).into(),\n        $5.0,\n        ty,\n        span,\n        $5.1,\n        is_extern,\n        is_callback\n    );"
       }
     },
     {
@@ -1058,8 +1058,18 @@
         "'extern'"
       ],
       "reduction": {
-        "ty": "Option<SourceSpan>",
-        "code": "$$ = Some($1.span);"
+        "ty": "(Option<SourceSpan>, Option<SourceSpan>)",
+        "code": "$$ = (Some($1.span), None);"
+      }
+    },
+    {
+      "left": "FuncQual",
+      "right": [
+        "'callback'"
+      ],
+      "reduction": {
+        "ty": "(Option<SourceSpan>, Option<SourceSpan>)",
+        "code": "$$ = (None, Some($1.span));"
       }
     },
     {
@@ -1068,8 +1078,8 @@
         "ε"
       ],
       "reduction": {
-        "ty": "Option<SourceSpan>",
-        "code": "$$ = None;"
+        "ty": "(Option<SourceSpan>, Option<SourceSpan>)",
+        "code": "$$ = (None, None);"
       }
     },
     {

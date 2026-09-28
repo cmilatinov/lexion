@@ -565,6 +565,7 @@ FuncDeclStmt -> FuncDecl BlockExpr
             body: Some($2),
             is_vararg: $1.4,
             is_extern: $1.5,
+            is_callback: $1.6,
         })
     ).into();
 }} ;
@@ -579,16 +580,18 @@ FuncDeclStmt -> FuncDecl ';'
             body: None,
             is_vararg: $1.4,
             is_extern: $1.5,
+            is_callback: $1.6,
         })
     ).into();
 }} ;
 
 FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
-[(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool, bool)] {{
+[(Sourced<String>, Vec<Sourced<Param>>, Option<Sourced<Type>>, SourceSpan, bool, bool, bool)] {{
     let mut ty = None;
     let mut span = $2.span;
-    let is_extern = $1.is_some();
-    if let Some(sp) = $1 {
+    let is_extern = $1.0.is_some();
+    let is_callback = $1.1.is_some();
+    if let Some(sp) = $1.0.or($1.1) {
         span = SpanBuilder::merge(sp, span);
     }
     match $7 {
@@ -606,12 +609,14 @@ FuncDecl -> FuncQual 'fn' 'ident' '(' ParamList ')' FuncReturn
         ty,
         span,
         $5.1,
-        is_extern
+        is_extern,
+        is_callback
     );
 }} ;
 
-FuncQual -> 'extern' [Option<SourceSpan>] {{ $$ = Some($1.span); }} ;
-FuncQual -> [Option<SourceSpan>] {{ $$ = None; }} ;
+FuncQual -> 'extern' [(Option<SourceSpan>, Option<SourceSpan>)] {{ $$ = (Some($1.span), None); }} ;
+FuncQual -> 'callback' [(Option<SourceSpan>, Option<SourceSpan>)] {{ $$ = (None, Some($1.span)); }} ;
+FuncQual -> [(Option<SourceSpan>, Option<SourceSpan>)] {{ $$ = (None, None); }} ;
 
 FuncReturn -> '->' Type [Option<Sourced<Type>>] {{ $$ = Some($2); }} ;
 FuncReturn ->  [Option<Sourced<Type>>] {{ $$ = None; }} ;

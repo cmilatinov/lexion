@@ -53,6 +53,7 @@ pub struct FuncDeclStmt {
     pub body: Option<SourcedExpr>,
     pub is_vararg: bool,
     pub is_extern: bool,
+    pub is_callback: bool,
 }
 
 #[derive(Debug)]
