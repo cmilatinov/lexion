@@ -3,29 +3,29 @@ source: lexion_lang/tests/x86_smoke.rs
 expression: "compile_x86_error(\"backend/x86_unsupported_shadowed_function_value.lex\").join(\"\\n\")"
 snapshot_kind: text
 ---
-  ! shadowed function 'callback'
+  ! shadowed function 'handler'
     ,-[tests/fixtures/backend/x86_unsupported_shadowed_function_value.lex:10:9]
   9 | fn main() -> i32 {
- 10 |     let callback = add_one;
-    :         ^^^^|^^^
-    :             `-- here
- 11 |     return callback(1);
+ 10 |     let handler = add_one;
+    :         ^^^|^^^
+    :            `-- here
+ 11 |     return handler(1);
     `----
 
   x x86 backend does not support function values yet: fn (i32) -> i32
     ,-[tests/fixtures/backend/x86_unsupported_shadowed_function_value.lex:10:9]
   9 | fn main() -> i32 {
- 10 |     let callback = add_one;
-    :         ^^^^|^^^
-    :             `-- here
- 11 |     return callback(1);
+ 10 |     let handler = add_one;
+    :         ^^^|^^^
+    :            `-- here
+ 11 |     return handler(1);
     `----
 
-  x x86 backend does not support indirect calls through function values yet: callback
+  x x86 backend does not support indirect calls through function values yet: handler
     ,-[tests/fixtures/backend/x86_unsupported_shadowed_function_value.lex:11:12]
- 10 |     let callback = add_one;
- 11 |     return callback(1);
-    :            ^^^^^|^^^^^
+ 10 |     let handler = add_one;
+ 11 |     return handler(1);
+    :            ^^^^^|^^^^
     :                 `-- here
  12 | }
     `----
