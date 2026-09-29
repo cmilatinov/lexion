@@ -340,14 +340,17 @@ impl HostManifest {
             });
         }
         for operation in program.operations() {
-            let entry = self.operations.get(operation.name()).ok_or_else(|| BytecodeError {
-                message: format!(
-                    "host manifest v{} has no `{}` operation",
-                    self.version,
-                    operation.name()
-                ),
-                span: SourceSpan::from(0),
-            })?;
+            let entry = self
+                .operations
+                .get(operation.name())
+                .ok_or_else(|| BytecodeError {
+                    message: format!(
+                        "host manifest v{} has no `{}` operation",
+                        self.version,
+                        operation.name()
+                    ),
+                    span: SourceSpan::from(0),
+                })?;
             let expected = operation
                 .arguments()
                 .iter()
@@ -763,17 +766,47 @@ mod tests {
         let target = seen.clone();
         let mut manifest = HostManifest::new(1);
         manifest
-            .register(
-                "record",
-                vec![HostValueType::I32],
-                move |args| {
-                    target.lock().unwrap().extend_from_slice(args);
-                    Ok(())
-                },
-            )
+            .register("record", vec![HostValueType::I32], move |args| {
+                target.lock().unwrap().extend_from_slice(args);
+                Ok(())
+            })
             .unwrap();
         manifest.invoke(&program, "tick").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
+    }
+
+    #[test]
+    fn manifest_rejects_an_incompatible_api_version_or_signature() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn record(value: i32); callback fn tick() -> () { record(7); }",
+            2,
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest
+            .register("record", vec![HostValueType::I32], |_| Ok(()))
+            .unwrap();
+
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
+
+        let program = BytecodeProgram::compile(
+            "extern fn record(value: i32); callback fn tick() -> () { record(7); }",
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register("record", vec![HostValueType::Bool], |_| Ok(()))
+            .unwrap();
+
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest v1 has an incompatible `record` operation signature"
+        );
     }
 
     #[test]
