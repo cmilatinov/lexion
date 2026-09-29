@@ -55,9 +55,9 @@ main:
   push rbp
   mov rbp, rsp
   sub rsp, 64
-#     let callback = make_large;
+#     let handler = make_large;
   lea rdi, [make_large]
-#     let value = callback();
+#     let value = handler();
   push rax
   mov rax, rdi
   xchg QWORD PTR [rsp], rax

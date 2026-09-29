@@ -1,5 +1,5 @@
 struct Holder {
-    callback: fn(i32) -> i32
+    handler: fn(i32) -> i32
 }
 
 fn add_one(value: i32) -> i32 {
@@ -21,8 +21,8 @@ fn main() -> i32 {
     let eighth = 8;
     let ninth = 9;
     let tenth = 10;
-    let callback = add_one;
-    let holder = relay(Holder { callback: callback });
+    let handler = add_one;
+    let holder = relay(Holder { handler: handler });
     return first + second + third + fourth + fifth + sixth + seventh + eighth + ninth + tenth
-        + holder.callback(0);
+        + holder.handler(0);
 }

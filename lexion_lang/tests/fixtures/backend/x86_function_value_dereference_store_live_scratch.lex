@@ -3,10 +3,10 @@ fn add_one(value: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    let callback = add_one;
-    let callback_ref = &callback;
+    let handler = add_one;
+    let handler_ref = &handler;
     let left = 40;
     let right = 2;
-    *callback_ref = add_one;
+    *handler_ref = add_one;
     return right + left;
 }

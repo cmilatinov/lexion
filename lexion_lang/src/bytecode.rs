@@ -5,9 +5,11 @@ use lexion_lib::error::ParseError;
 use lexion_lib::miette::SourceSpan;
 use lexion_lib::Parser;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub const BYTECODE_VERSION: u16 = 1;
+pub const DEFAULT_HOST_API_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BytecodeValue {
@@ -86,6 +88,7 @@ impl BytecodeOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BytecodeProgram {
     version: u16,
+    required_host_api_version: u16,
     operations: Vec<BytecodeOperation>,
     callbacks: BTreeMap<String, Callback>,
 }
@@ -106,6 +109,13 @@ enum Instruction {
 
 impl BytecodeProgram {
     pub fn compile(source: impl Into<String>) -> Result<Self, BytecodeError> {
+        Self::compile_for_host_api(source, DEFAULT_HOST_API_VERSION)
+    }
+
+    pub fn compile_for_host_api(
+        source: impl Into<String>,
+        required_host_api_version: u16,
+    ) -> Result<Self, BytecodeError> {
         let source = Arc::new(source.into());
         let mut parser = ParserLexion::new();
         let ast = parser.parse_from_string(source).map_err(|error| {
@@ -192,6 +202,7 @@ impl BytecodeProgram {
         }
         Ok(Self {
             version: BYTECODE_VERSION,
+            required_host_api_version,
             operations,
             callbacks,
         })
@@ -199,6 +210,10 @@ impl BytecodeProgram {
 
     pub fn version(&self) -> u16 {
         self.version
+    }
+
+    pub fn required_host_api_version(&self) -> u16 {
+        self.required_host_api_version
     }
 
     pub fn callback_names(&self) -> impl Iterator<Item = &str> {
@@ -246,6 +261,204 @@ pub trait BytecodeHost {
         operation: &BytecodeOperation,
         arguments: &[BytecodeValue],
     ) -> Result<(), String>;
+}
+
+/// A versioned, owned-value host boundary.  It deliberately exposes neither VM
+/// references nor Rust pointers to scripts.
+pub struct HostManifest {
+    version: u16,
+    operations: BTreeMap<String, HostOperation>,
+    executing: Arc<AtomicBool>,
+    dispatching: Arc<AtomicBool>,
+}
+
+pub struct HostOperation {
+    pub arguments: Vec<HostValueType>,
+    handler: Box<dyn FnMut(&[BytecodeValue]) -> Result<(), String> + Send>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostValueType {
+    I32,
+    Bool,
+    String,
+}
+
+impl HostManifest {
+    pub fn new(version: u16) -> Self {
+        Self {
+            version,
+            operations: BTreeMap::new(),
+            executing: Arc::new(AtomicBool::new(false)),
+            dispatching: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn version(&self) -> u16 {
+        self.version
+    }
+    pub fn register(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        handler: impl FnMut(&[BytecodeValue]) -> Result<(), String> + Send + 'static,
+    ) -> Result<(), String> {
+        let name = name.into();
+        if self.operations.contains_key(&name) {
+            return Err(format!("host operation `{name}` is already registered"));
+        }
+        self.operations.insert(
+            name,
+            HostOperation {
+                arguments,
+                handler: Box::new(handler),
+            },
+        );
+        Ok(())
+    }
+    pub fn invoke(
+        &mut self,
+        program: &BytecodeProgram,
+        callback: &str,
+    ) -> Result<(), BytecodeError> {
+        if self.executing.load(Ordering::Acquire) {
+            return Err(BytecodeError {
+                message: "same-instance synchronous reentry is not allowed".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        if program.version != BYTECODE_VERSION {
+            return Err(BytecodeError {
+                message: format!("unsupported bytecode version {}", program.version),
+                span: SourceSpan::from(0),
+            });
+        }
+        if program.required_host_api_version != self.version {
+            return Err(BytecodeError {
+                message: format!(
+                    "bytecode requires host API version {}, but manifest provides version {}",
+                    program.required_host_api_version, self.version
+                ),
+                span: SourceSpan::from(0),
+            });
+        }
+        for operation in program.operations() {
+            let entry = self
+                .operations
+                .get(operation.name())
+                .ok_or_else(|| BytecodeError {
+                    message: format!(
+                        "host manifest v{} has no `{}` operation",
+                        self.version,
+                        operation.name()
+                    ),
+                    span: SourceSpan::from(0),
+                })?;
+            let expected = operation
+                .arguments()
+                .iter()
+                .map(|value| {
+                    HostValueType::from_bytecode(*value).ok_or_else(|| BytecodeError {
+                        message: format!(
+                            "host manifest cannot invoke `{}` with an unsupported {} argument",
+                            operation.name(),
+                            value
+                        ),
+                        span: SourceSpan::from(0),
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if entry.arguments != expected {
+                return Err(BytecodeError {
+                    message: format!(
+                        "host manifest v{} has an incompatible `{}` operation signature",
+                        self.version,
+                        operation.name()
+                    ),
+                    span: SourceSpan::from(0),
+                });
+            }
+        }
+        if self.executing.swap(true, Ordering::AcqRel) {
+            return Err(BytecodeError {
+                message: "same-instance synchronous reentry is not allowed".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        self.dispatching.store(true, Ordering::Release);
+        let _execution = ExecutionGuard {
+            executing: Arc::clone(&self.executing),
+            dispatching: Arc::clone(&self.dispatching),
+        };
+        program.invoke(callback, self)
+    }
+}
+
+impl BytecodeHost for HostManifest {
+    fn call(
+        &mut self,
+        operation: &BytecodeOperation,
+        arguments: &[BytecodeValue],
+    ) -> Result<(), String> {
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("host manifest calls must be invoked through HostManifest::invoke".into());
+        }
+        let entry = self.operations.get_mut(operation.name()).ok_or_else(|| {
+            format!(
+                "host manifest v{} has no `{}` operation",
+                operation.name(),
+                self.version
+            )
+        })?;
+        if entry.arguments.len() != arguments.len() {
+            return Err(format!(
+                "host operation `{}` expects {} argument(s), got {}",
+                operation.name(),
+                entry.arguments.len(),
+                arguments.len()
+            ));
+        }
+        for (expected, actual) in entry.arguments.iter().zip(arguments) {
+            if !matches_type(expected, actual) {
+                return Err(format!(
+                    "host operation `{}` received an incompatible argument",
+                    operation.name()
+                ));
+            }
+        }
+        (entry.handler)(arguments)
+    }
+}
+
+fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
+    matches!(
+        (expected, value),
+        (HostValueType::I32, BytecodeValue::I32(_))
+            | (HostValueType::Bool, BytecodeValue::Bool(_))
+            | (HostValueType::String, BytecodeValue::String(_))
+    )
+}
+
+struct ExecutionGuard {
+    executing: Arc<AtomicBool>,
+    dispatching: Arc<AtomicBool>,
+}
+
+impl Drop for ExecutionGuard {
+    fn drop(&mut self) {
+        self.dispatching.store(false, Ordering::Release);
+        self.executing.store(false, Ordering::Release);
+    }
+}
+
+impl HostValueType {
+    fn from_bytecode(value: BytecodeValueType) -> Option<Self> {
+        match value {
+            BytecodeValueType::Unit => None,
+            BytecodeValueType::I32 => Some(Self::I32),
+            BytecodeValueType::Bool => Some(Self::Bool),
+            BytecodeValueType::String => Some(Self::String),
+        }
+    }
 }
 
 fn compile_host_operation(
@@ -574,6 +787,104 @@ mod tests {
         );
         assert_eq!(program.operations().next().unwrap().name(), "record");
         assert_eq!(program.version(), BYTECODE_VERSION);
+    }
+    #[test]
+    fn versioned_manifest_dispatches_a_command() {
+        let program = BytecodeProgram::compile(
+            "extern fn record(value: i32); callback fn tick() -> () { record(7); }",
+        )
+        .unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+        let target = seen.clone();
+        let mut manifest = HostManifest::new(1);
+        manifest
+            .register("record", vec![HostValueType::I32], move |args| {
+                target.lock().unwrap().extend_from_slice(args);
+                Ok(())
+            })
+            .unwrap();
+        manifest.invoke(&program, "tick").unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
+    }
+
+    #[test]
+    fn direct_program_invocation_cannot_bypass_manifest_validation() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn record(); callback fn tick() -> () { record(); }",
+            2,
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest.register("record", vec![], |_| Ok(())).unwrap();
+
+        let error = program.invoke("tick", &mut manifest).unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest calls must be invoked through HostManifest::invoke"
+        );
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
+    }
+
+    #[test]
+    fn manifest_is_reusable_after_a_caught_host_panic() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::AtomicUsize;
+
+        let program =
+            BytecodeProgram::compile("extern fn record(); callback fn tick() -> () { record(); }")
+                .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = Arc::clone(&calls);
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register("record", vec![], move |_| {
+                if handler_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    panic!("host panic");
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(catch_unwind(AssertUnwindSafe(|| manifest.invoke(&program, "tick"))).is_err());
+        manifest.invoke(&program, "tick").unwrap();
+    }
+
+    #[test]
+    fn manifest_rejects_an_incompatible_api_version_or_signature() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn record(value: i32); callback fn tick() -> () { record(7); }",
+            2,
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest
+            .register("record", vec![HostValueType::I32], |_| Ok(()))
+            .unwrap();
+
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
+
+        let program = BytecodeProgram::compile(
+            "extern fn record(value: i32); callback fn tick() -> () { record(7); }",
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register("record", vec![HostValueType::Bool], |_| Ok(()))
+            .unwrap();
+
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest v1 has an incompatible `record` operation signature"
+        );
     }
 
     #[test]

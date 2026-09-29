@@ -17,13 +17,13 @@ add_one:
   ret
 .global apply
 apply:
-# fn apply(callback: fn(i32) -> i32, value: i32) -> i32 {
+# fn apply(handler: fn(i32) -> i32, value: i32) -> i32 {
   push rbp
   mov rbp, rsp
   sub rsp, 16
   mov QWORD PTR [rbp-8], rdi
   mov DWORD PTR [rbp-16], esi
-#     return callback(value);
+#     return handler(value);
   push rax
   mov rax, QWORD PTR [rbp-8]
   xchg QWORD PTR [rsp], rax
@@ -42,9 +42,9 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-#     let callback = add_one;
+#     let handler = add_one;
   lea rdi, [add_one]
-#     return apply(callback, 4);
+#     return apply(handler, 4);
   mov eax, 4
   push rax
   mov rax, rdi
