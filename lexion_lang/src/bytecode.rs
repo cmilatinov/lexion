@@ -5,6 +5,7 @@ use lexion_lib::error::ParseError;
 use lexion_lib::miette::SourceSpan;
 use lexion_lib::Parser;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub const BYTECODE_VERSION: u16 = 1;
@@ -267,7 +268,7 @@ pub trait BytecodeHost {
 pub struct HostManifest {
     version: u16,
     operations: BTreeMap<String, HostOperation>,
-    executing: bool,
+    executing: Arc<AtomicBool>,
 }
 
 pub struct HostOperation {
@@ -287,7 +288,7 @@ impl HostManifest {
         Self {
             version,
             operations: BTreeMap::new(),
-            executing: false,
+            executing: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn version(&self) -> u16 {
@@ -317,7 +318,7 @@ impl HostManifest {
         program: &BytecodeProgram,
         callback: &str,
     ) -> Result<(), BytecodeError> {
-        if self.executing {
+        if self.executing.load(Ordering::Acquire) {
             return Err(BytecodeError {
                 message: "same-instance synchronous reentry is not allowed".into(),
                 span: SourceSpan::from(0),
@@ -375,10 +376,14 @@ impl HostManifest {
                 });
             }
         }
-        self.executing = true;
-        let result = program.invoke(callback, self);
-        self.executing = false;
-        result
+        if self.executing.swap(true, Ordering::AcqRel) {
+            return Err(BytecodeError {
+                message: "same-instance synchronous reentry is not allowed".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        let _execution = ExecutionGuard(Arc::clone(&self.executing));
+        program.invoke(callback, self)
     }
 }
 
@@ -422,6 +427,14 @@ fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
             | (HostValueType::Bool, BytecodeValue::Bool(_))
             | (HostValueType::String, BytecodeValue::String(_))
     )
+}
+
+struct ExecutionGuard(Arc<AtomicBool>);
+
+impl Drop for ExecutionGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl HostValueType {
@@ -779,6 +792,30 @@ mod tests {
             .unwrap();
         manifest.invoke(&program, "tick").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
+    }
+
+    #[test]
+    fn manifest_is_reusable_after_a_caught_host_panic() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::AtomicUsize;
+
+        let program =
+            BytecodeProgram::compile("extern fn record(); callback fn tick() -> () { record(); }")
+                .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = Arc::clone(&calls);
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register("record", vec![], move |_| {
+                if handler_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    panic!("host panic");
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(catch_unwind(AssertUnwindSafe(|| manifest.invoke(&program, "tick"))).is_err());
+        manifest.invoke(&program, "tick").unwrap();
     }
 
     #[test]
