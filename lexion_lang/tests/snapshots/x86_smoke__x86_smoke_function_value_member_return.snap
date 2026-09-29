@@ -27,7 +27,7 @@ get_callback:
   mov eax, DWORD PTR [rsp+4]
   mov DWORD PTR [rbp-8+4], eax
   add rsp, 8
-#     return holder.callback;
+#     return holder.handler;
   mov rax, QWORD PTR [rbp-8]
   add rsp, 16
   pop rbp
@@ -38,7 +38,7 @@ main:
   push rbp
   mov rbp, rsp
   sub rsp, 16
-#     return get_callback(Holder { callback: add_one })(4);
+#     return get_callback(Holder { handler: add_one })(4);
   lea rax, [add_one]
   mov QWORD PTR [rbp-16], rax
   sub rsp, 8

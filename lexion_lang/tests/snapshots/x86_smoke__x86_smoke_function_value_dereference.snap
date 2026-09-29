@@ -22,19 +22,19 @@ main:
   mov rbp, rsp
   push rbx
   sub rsp, 32
-#     let callback = add_one;
+#     let handler = add_one;
   lea rax, [add_one]
   mov QWORD PTR [rbp-24], rax
-#     let callback_ref = &callback;
+#     let handler_ref = &handler;
   lea rax, [rbp-24]
   mov QWORD PTR [rbp-16], rax
   mov rax, QWORD PTR [rbp-16]
   mov QWORD PTR [rbp-32], rax
-#     *callback_ref = add_one;
+#     *handler_ref = add_one;
   lea rcx, [add_one]
   mov rax, QWORD PTR [rbp-32]
   mov QWORD PTR [rax], rcx
-#     return (*callback_ref)(4);
+#     return (*handler_ref)(4);
   mov rbx, QWORD PTR [rbp-32]
   mov rbx, QWORD PTR [rbx]
   push rax

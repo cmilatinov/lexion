@@ -22,17 +22,17 @@ main:
   mov rbp, rsp
   push rbx
   sub rsp, 16
-#     let holder = Holder { callback: add_one };
+#     let holder = Holder { handler: add_one };
   lea rax, [add_one]
   mov QWORD PTR [rbp-16], rax
   mov eax, DWORD PTR [rbp-16]
   mov DWORD PTR [rbp-24], eax
   mov eax, DWORD PTR [rbp-16+4]
   mov DWORD PTR [rbp-24+4], eax
-#     holder.callback = add_one;
+#     holder.handler = add_one;
   lea rax, [add_one]
   mov QWORD PTR [rbp-24], rax
-#     return holder.callback(4);
+#     return holder.handler(4);
   mov rbx, QWORD PTR [rbp-24]
   push rax
   mov rax, rbx

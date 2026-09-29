@@ -27,9 +27,9 @@ main:
 #     let value = 4;
   mov eax, 4
   mov DWORD PTR [rbp-8], eax
-#     let callback = add_one;
+#     let handler = add_one;
   lea rax, [add_one]
-#     let holder = Holder { callback: callback };
+#     let holder = Holder { handler: handler };
   push rax
   mov QWORD PTR [rbp-24], rax
   pop rax
