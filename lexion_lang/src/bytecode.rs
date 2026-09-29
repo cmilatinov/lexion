@@ -269,6 +269,7 @@ pub struct HostManifest {
     version: u16,
     operations: BTreeMap<String, HostOperation>,
     executing: Arc<AtomicBool>,
+    dispatching: Arc<AtomicBool>,
 }
 
 pub struct HostOperation {
@@ -289,6 +290,7 @@ impl HostManifest {
             version,
             operations: BTreeMap::new(),
             executing: Arc::new(AtomicBool::new(false)),
+            dispatching: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn version(&self) -> u16 {
@@ -382,7 +384,11 @@ impl HostManifest {
                 span: SourceSpan::from(0),
             });
         }
-        let _execution = ExecutionGuard(Arc::clone(&self.executing));
+        self.dispatching.store(true, Ordering::Release);
+        let _execution = ExecutionGuard {
+            executing: Arc::clone(&self.executing),
+            dispatching: Arc::clone(&self.dispatching),
+        };
         program.invoke(callback, self)
     }
 }
@@ -393,6 +399,9 @@ impl BytecodeHost for HostManifest {
         operation: &BytecodeOperation,
         arguments: &[BytecodeValue],
     ) -> Result<(), String> {
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("host manifest calls must be invoked through HostManifest::invoke".into());
+        }
         let entry = self.operations.get_mut(operation.name()).ok_or_else(|| {
             format!(
                 "host manifest v{} has no `{}` operation",
@@ -429,11 +438,15 @@ fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
     )
 }
 
-struct ExecutionGuard(Arc<AtomicBool>);
+struct ExecutionGuard {
+    executing: Arc<AtomicBool>,
+    dispatching: Arc<AtomicBool>,
+}
 
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.dispatching.store(false, Ordering::Release);
+        self.executing.store(false, Ordering::Release);
     }
 }
 
@@ -792,6 +805,28 @@ mod tests {
             .unwrap();
         manifest.invoke(&program, "tick").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
+    }
+
+    #[test]
+    fn direct_program_invocation_cannot_bypass_manifest_validation() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn record(); callback fn tick() -> () { record(); }",
+            2,
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest.register("record", vec![], |_| Ok(())).unwrap();
+
+        let error = program.invoke("tick", &mut manifest).unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest calls must be invoked through HostManifest::invoke"
+        );
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
     }
 
     #[test]
