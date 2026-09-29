@@ -17,7 +17,7 @@ fn make_large() -> Large {
 }
 
 fn main() -> i32 {
-    let callback = make_large;
-    let value = callback();
+    let handler = make_large;
+    let value = handler();
     return value.fifth;
 }

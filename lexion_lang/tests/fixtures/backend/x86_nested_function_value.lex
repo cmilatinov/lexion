@@ -1,5 +1,5 @@
-fn apply(callback: fn(i32) -> i32, value: i32) -> i32 {
-    return callback(value);
+fn apply(handler: fn(i32) -> i32, value: i32) -> i32 {
+    return handler(value);
 }
 
 fn main() -> i32 {
