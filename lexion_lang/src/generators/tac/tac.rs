@@ -376,7 +376,7 @@ impl<'a> CodeGeneratorTac<'a> {
                 .map(|param| param.value.name.value.clone())
                 .collect();
             self.function(decl.name.value.clone(), params, decl.name.span);
-        } else if decl.is_extern {
+        } else if decl.qualifier == crate::ast::FunctionQualifier::Extern {
             self.extern_(decl.name.value.clone(), decl.name.span);
         }
     }
