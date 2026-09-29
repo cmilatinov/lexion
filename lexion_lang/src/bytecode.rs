@@ -563,6 +563,11 @@ fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
 /// these defaults, so no state is shared accidentally between entities.
 #[derive(Debug, Clone)]
 pub struct BehaviorModule {
+    definition: Arc<BehaviorModuleDefinition>,
+}
+
+#[derive(Debug)]
+struct BehaviorModuleDefinition {
     program: BytecodeProgram,
     defaults: BTreeMap<String, BytecodeValue>,
 }
@@ -610,13 +615,15 @@ impl BehaviorModule {
                 span: SourceSpan::from(0),
             });
         }
-        Ok(Self { program, defaults })
+        Ok(Self {
+            definition: Arc::new(BehaviorModuleDefinition { program, defaults }),
+        })
     }
     pub fn create_instance(
         &self,
         overrides: BTreeMap<String, BytecodeValue>,
     ) -> Result<BehaviorInstance, BytecodeError> {
-        let mut state = self.defaults.clone();
+        let mut state = self.definition.defaults.clone();
         for (name, value) in overrides {
             let default = state.get(&name).ok_or_else(|| BytecodeError {
                 message: format!("unknown behavior state override `{name}`"),
@@ -656,7 +663,7 @@ impl BehaviorInstance {
         callback: &str,
         manifest: &mut HostManifest,
     ) -> Result<(), BytecodeError> {
-        manifest.invoke_with_state(&self.module.program, callback, &mut self.state)
+        manifest.invoke_with_state(&self.module.definition.program, callback, &mut self.state)
     }
 }
 
@@ -1044,6 +1051,10 @@ mod tests {
         let right = module
             .create_instance(BTreeMap::from([("health".into(), BytecodeValue::I32(20))]))
             .unwrap();
+        assert!(Arc::ptr_eq(
+            &left.module.definition,
+            &right.module.definition
+        ));
         left.set_state("health", BytecodeValue::I32(5)).unwrap();
         assert_eq!(left.state("health"), Some(&BytecodeValue::I32(5)));
         assert_eq!(right.state("health"), Some(&BytecodeValue::I32(20)));
@@ -1123,6 +1134,7 @@ mod tests {
             .unwrap();
 
         let error = module
+            .definition
             .program
             .invoke_with_state("tick", &mut manifest, &mut instance.state)
             .unwrap_err();
