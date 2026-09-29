@@ -1,6 +1,7 @@
 //! Deterministic, deliberately small bytecode for embedding Lexion callbacks.
 use crate::ast::{Expr, FuncDeclStmt, FunctionQualifier, Lit, Sourced, SourcedExpr, Stmt, Type};
 use crate::parser::ParserLexion;
+use lexion_lib::error::ParseError;
 use lexion_lib::miette::SourceSpan;
 use lexion_lib::Parser;
 use std::collections::BTreeMap;
@@ -107,12 +108,16 @@ impl BytecodeProgram {
     pub fn compile(source: impl Into<String>) -> Result<Self, BytecodeError> {
         let source = Arc::new(source.into());
         let mut parser = ParserLexion::new();
-        let ast = parser
-            .parse_from_string(source)
-            .map_err(|error| BytecodeError {
+        let ast = parser.parse_from_string(source).map_err(|error| {
+            let span = match &error {
+                ParseError::Syntax(error) => error.span,
+                ParseError::Io(_) => SourceSpan::from(0),
+            };
+            BytecodeError {
                 message: error.to_string(),
-                span: SourceSpan::from(0),
-            })?;
+                span,
+            }
+        })?;
 
         let mut host_declarations = BTreeMap::new();
         let mut callback_declarations = Vec::new();
@@ -254,7 +259,7 @@ fn compile_host_operation(
     let arguments = function
         .params
         .iter()
-        .map(|parameter| bytecode_type(&parameter.value.ty.value, parameter.span))
+        .map(|parameter| bytecode_parameter_type(&parameter.value.ty.value, parameter.span))
         .collect::<Result<Vec<_>, _>>()?;
     let result = function
         .ty
@@ -384,26 +389,106 @@ fn compile_call(
 }
 
 fn bytecode_value(argument: &SourcedExpr) -> Result<BytecodeValue, BytecodeError> {
-    let Expr::LitExpr(literal) = &argument.expr else {
-        return Err(BytecodeError {
-            message: "bytecode host arguments must be literals".into(),
-            span: argument.span,
-        });
-    };
-    match &literal.lit {
-        Lit::Integer(value) => Ok(BytecodeValue::I32((*value).try_into().map_err(|_| {
-            BytecodeError {
-                message: "integer does not fit in i32".into(),
+    match &argument.expr {
+        Expr::LitExpr(literal) => match &literal.lit {
+            Lit::Integer(value) => bytecode_i32(*value, argument.span),
+            Lit::Boolean(value) => Ok(BytecodeValue::Bool(*value)),
+            Lit::String(value) => Ok(BytecodeValue::String(decode_string_literal(
+                value,
+                argument.span,
+            )?)),
+            Lit::Float(_) => Err(BytecodeError {
+                message: "bytecode does not support floating-point host arguments".into(),
                 span: argument.span,
-            }
-        })?)),
-        Lit::Boolean(value) => Ok(BytecodeValue::Bool(*value)),
-        Lit::String(value) => Ok(BytecodeValue::String(value.clone())),
-        Lit::Float(_) => Err(BytecodeError {
-            message: "bytecode does not support floating-point host arguments".into(),
+            }),
+        },
+        Expr::OperatorExpr(operator) if operator.operator == "-" && operator.args.len() == 1 => {
+            let Expr::LitExpr(literal) = &operator.args[0].expr else {
+                return Err(BytecodeError {
+                    message: "bytecode host arguments must be literals".into(),
+                    span: argument.span,
+                });
+            };
+            let Lit::Integer(value) = literal.lit else {
+                return Err(BytecodeError {
+                    message: "bytecode host arguments must be literals".into(),
+                    span: argument.span,
+                });
+            };
+            bytecode_i32(
+                value.checked_neg().ok_or_else(|| BytecodeError {
+                    message: "integer does not fit in i32".into(),
+                    span: argument.span,
+                })?,
+                argument.span,
+            )
+        }
+        _ => Err(BytecodeError {
+            message: "bytecode host arguments must be literals".into(),
             span: argument.span,
         }),
     }
+}
+
+fn bytecode_i32(value: isize, span: SourceSpan) -> Result<BytecodeValue, BytecodeError> {
+    Ok(BytecodeValue::I32(value.try_into().map_err(|_| {
+        BytecodeError {
+            message: "integer does not fit in i32".into(),
+            span,
+        }
+    })?))
+}
+
+fn decode_string_literal(value: &str, span: SourceSpan) -> Result<String, BytecodeError> {
+    let Some(quote) = value.chars().next() else {
+        return Err(BytecodeError {
+            message: "invalid string literal".into(),
+            span,
+        });
+    };
+    let Some(inner) = value
+        .strip_prefix(quote)
+        .and_then(|value| value.strip_suffix(quote))
+    else {
+        return Err(BytecodeError {
+            message: "invalid string literal".into(),
+            span,
+        });
+    };
+    let mut decoded = String::with_capacity(inner.len());
+    let mut characters = inner.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        let escaped = characters.next().ok_or_else(|| BytecodeError {
+            message: "invalid string escape".into(),
+            span,
+        })?;
+        decoded.push(match escaped {
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '0' => '\0',
+            other => other,
+        });
+    }
+    Ok(decoded)
+}
+
+fn bytecode_parameter_type(
+    ty: &Type,
+    span: SourceSpan,
+) -> Result<BytecodeValueType, BytecodeError> {
+    let value_type = bytecode_type(ty, span)?;
+    if value_type == BytecodeValueType::Unit {
+        return Err(BytecodeError {
+            message: "bytecode host operation parameters must not use `()`".into(),
+            span,
+        });
+    }
+    Ok(value_type)
 }
 
 fn bytecode_type(ty: &Type, span: SourceSpan) -> Result<BytecodeValueType, BytecodeError> {
@@ -499,6 +584,23 @@ mod tests {
     }
 
     #[test]
+    fn decodes_string_literals_and_accepts_negative_i32_arguments() {
+        let program = BytecodeProgram::compile(
+            "extern fn record(value: &str); extern fn offset(value: i32); callback fn tick() { record(\"line\\ntext\"); offset(-1); }",
+        )
+        .unwrap();
+        let mut host = Recorder::default();
+        program.invoke("tick", &mut host).unwrap();
+        assert_eq!(
+            host.0,
+            vec![
+                (1, vec![BytecodeValue::String("line\ntext".into())]),
+                (0, vec![BytecodeValue::I32(-1)]),
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_unsupported_top_level_code_and_host_signatures() {
         let top_level = BytecodeProgram::compile("fn helper() {}").unwrap_err();
         assert_eq!(
@@ -511,6 +613,18 @@ mod tests {
             return_type.message,
             "bytecode host operations must return `()`"
         );
+
+        let unit_parameter = BytecodeProgram::compile("extern fn record(value: ());").unwrap_err();
+        assert_eq!(
+            unit_parameter.message,
+            "bytecode host operation parameters must not use `()`"
+        );
+    }
+
+    #[test]
+    fn preserves_syntax_error_spans() {
+        let error = BytecodeProgram::compile("callback fn tick( {").unwrap_err();
+        assert_ne!(error.span, SourceSpan::from(0));
     }
 
     #[test]
