@@ -356,13 +356,12 @@ type HostHandler = dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> 
 
 pub struct HostOperation {
     pub arguments: Vec<HostValueType>,
-    result: HostValueType,
+    result: Option<HostValueType>,
     handler: Box<HostHandler>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostValueType {
-    Unit,
     I32,
     Bool,
     String,
@@ -395,7 +394,7 @@ impl HostManifest {
             name,
             HostOperation {
                 arguments,
-                result: HostValueType::Unit,
+                result: None,
                 handler: Box::new(move |arguments| {
                     handler(arguments).map(|()| BytecodeValue::Unit)
                 }),
@@ -419,7 +418,7 @@ impl HostManifest {
             name,
             HostOperation {
                 arguments,
-                result,
+                result: Some(result),
                 handler: Box::new(handler),
             },
         );
@@ -487,14 +486,18 @@ impl HostManifest {
                     span: SourceSpan::from(0),
                 });
             }
-            let expected_result = HostValueType::from_bytecode(operation.result().clone())
-                .ok_or_else(|| BytecodeError {
-                    message: format!(
-                        "host manifest cannot invoke `{}` with an unsupported result",
-                        operation.name()
-                    ),
-                    span: SourceSpan::from(0),
-                })?;
+            let expected_result = match operation.result() {
+                BytecodeValueType::Unit => None,
+                value => Some(HostValueType::from_bytecode(value.clone()).ok_or_else(|| {
+                    BytecodeError {
+                        message: format!(
+                            "host manifest cannot invoke `{}` with an unsupported result",
+                            operation.name()
+                        ),
+                        span: SourceSpan::from(0),
+                    }
+                })?),
+            };
             if entry.result != expected_result {
                 return Err(BytecodeError {
                     message: format!(
@@ -554,11 +557,20 @@ impl BytecodeHost for HostManifest {
             }
         }
         let value = (entry.handler)(arguments)?;
-        if !matches_type(&entry.result, &value) {
-            return Err(format!(
-                "host operation `{}` returned an incompatible value",
-                operation.name()
-            ));
+        match &entry.result {
+            Some(expected) if !matches_type(expected, &value) => {
+                return Err(format!(
+                    "host operation `{}` returned an incompatible value",
+                    operation.name()
+                ));
+            }
+            None if value != BytecodeValue::Unit => {
+                return Err(format!(
+                    "host operation `{}` returned an incompatible value",
+                    operation.name()
+                ));
+            }
+            _ => {}
         }
         Ok(value)
     }
@@ -568,8 +580,7 @@ fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
     match (expected, value) {
         (HostValueType::I32, BytecodeValue::I32(_))
         | (HostValueType::Bool, BytecodeValue::Bool(_))
-        | (HostValueType::String, BytecodeValue::String(_))
-        | (HostValueType::Unit, BytecodeValue::Unit) => true,
+        | (HostValueType::String, BytecodeValue::String(_)) => true,
         (HostValueType::Record(expected), BytecodeValue::Record { fields }) => {
             expected.len() == fields.len()
                 && expected.iter().all(|(name, expected)| {
@@ -597,7 +608,7 @@ impl Drop for ExecutionGuard {
 impl HostValueType {
     fn from_bytecode(value: BytecodeValueType) -> Option<Self> {
         match value {
-            BytecodeValueType::Unit => Some(Self::Unit),
+            BytecodeValueType::Unit => None,
             BytecodeValueType::I32 => Some(Self::I32),
             BytecodeValueType::Bool => Some(Self::Bool),
             BytecodeValueType::String => Some(Self::String),
