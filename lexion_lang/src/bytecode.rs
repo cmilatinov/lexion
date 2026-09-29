@@ -313,6 +313,7 @@ pub struct HostManifest {
     version: u16,
     operations: BTreeMap<String, HostOperation>,
     executing: Arc<AtomicBool>,
+    dispatching: Arc<AtomicBool>,
 }
 
 pub struct HostOperation {
@@ -338,6 +339,7 @@ impl HostManifest {
             version,
             operations: BTreeMap::new(),
             executing: Arc::new(AtomicBool::new(false)),
+            dispatching: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn version(&self) -> u16 {
@@ -466,7 +468,11 @@ impl HostManifest {
                 span: SourceSpan::from(0),
             });
         }
-        Ok(ExecutionGuard(Arc::clone(&self.executing)))
+        self.dispatching.store(true, Ordering::Release);
+        Ok(ExecutionGuard {
+            executing: Arc::clone(&self.executing),
+            dispatching: Arc::clone(&self.dispatching),
+        })
     }
 }
 
@@ -476,6 +482,9 @@ impl BytecodeHost for HostManifest {
         operation: &BytecodeOperation,
         arguments: &[BytecodeValue],
     ) -> Result<(), String> {
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("host manifest calls must be invoked through HostManifest::invoke".into());
+        }
         let entry = self.operations.get_mut(operation.name()).ok_or_else(|| {
             format!(
                 "host manifest v{} has no `{}` operation",
@@ -499,6 +508,9 @@ impl BytecodeHost for HostManifest {
         arguments: &[BytecodeValue],
         state: &mut BehaviorState,
     ) -> Result<(), String> {
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("host manifest calls must be invoked through HostManifest::invoke".into());
+        }
         let entry = self.operations.get_mut(operation.name()).ok_or_else(|| {
             format!(
                 "host manifest v{} has no `{}` operation",
@@ -652,11 +664,15 @@ fn same_value_kind(left: &BytecodeValue, right: &BytecodeValue) -> bool {
     std::mem::discriminant(left) == std::mem::discriminant(right)
 }
 
-struct ExecutionGuard(Arc<AtomicBool>);
+struct ExecutionGuard {
+    executing: Arc<AtomicBool>,
+    dispatching: Arc<AtomicBool>,
+}
 
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.dispatching.store(false, Ordering::Release);
+        self.executing.store(false, Ordering::Release);
     }
 }
 
@@ -1062,6 +1078,65 @@ mod tests {
 
         assert_eq!(left.state("health"), Some(&BytecodeValue::I32(11)));
         assert_eq!(right.state("health"), Some(&BytecodeValue::I32(21)));
+    }
+
+    #[test]
+    fn direct_program_invocation_cannot_bypass_manifest_validation() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn record(); callback fn tick() -> () { record(); }",
+            2,
+        )
+        .unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest.register("record", vec![], |_| Ok(())).unwrap();
+
+        let error = program.invoke("tick", &mut manifest).unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest calls must be invoked through HostManifest::invoke"
+        );
+        let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
+    }
+
+    #[test]
+    fn direct_stateful_program_invocation_cannot_bypass_manifest_validation() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn heal(); callback fn tick() -> () { heal(); }",
+            2,
+        )
+        .unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut instance = module.create_instance(BTreeMap::new()).unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest
+            .register_with_state("heal", vec![], |state, _| {
+                state.set("health", BytecodeValue::I32(0))
+            })
+            .unwrap();
+
+        let error = module
+            .program
+            .invoke_with_state("tick", &mut manifest, &mut instance.state)
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest calls must be invoked through HostManifest::invoke"
+        );
+        assert_eq!(instance.state("health"), Some(&BytecodeValue::I32(10)));
+
+        let error = instance.invoke("tick", &mut manifest).unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
     }
 
     #[test]
