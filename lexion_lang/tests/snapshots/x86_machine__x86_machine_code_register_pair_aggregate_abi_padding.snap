@@ -1,0 +1,109 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "machine_snapshot(&compile_machine_code(\"backend/x86_register_pair_aggregate_padding.lex\",))"
+---
+symbols:
+identity=0x0000
+main=0x006B
+
+bytes:
+55 48 89 E5 48 83 EC 10 57 8B 04 24 89 45 F0 8B 44 24 04 89 45 F4 48 83 C4 08 56 8B 04 24 89 45 F8 8B 44 24 04 89 45 FC 48 83 C4 08 48 83 EC 08 48 31 C0 48 89 04 24 8B 45 F8 89 04 24 8B 45 FC 89 44 24 04 48 8B 14 24 48 83 C4 08 48 83 EC 08 48 31 C0 48 89 04 24 0F B6 45 F0 88 04 24 48 8B 04 24 48 83 C4 08 48 89 EC 5D C3 55 48 89 E5 48 83 EC 60 89 7D AC B8 07 00 00 00 89 45 C4 8B 45 AC 88 45 F0 48 8D 45 C4 48 89 45 E8 48 8B 45 E8 48 89 45 F8 8B 45 F0 89 45 B0 8B 45 F4 89 45 B4 8B 45 F8 89 45 B8 8B 45 FC 89 45 BC 48 83 EC 08 48 31 C0 48 89 04 24 8B 45 B8 89 04 24 8B 45 BC 89 44 24 04 48 8B 34 24 48 83 C4 08 48 83 EC 08 48 31 C0 48 89 04 24 0F B6 45 B0 88 04 24 48 8B 3C 24 48 83 C4 08 E8 15 FF FF FF 50 8B 04 24 89 45 D8 8B 44 24 04 89 45 DC 48 83 C4 08 52 8B 04 24 89 45 E0 8B 44 24 04 89 45 E4 48 83 C4 08 8B 45 D8 89 45 C8 8B 45 DC 89 45 CC 8B 45 E0 89 45 D0 8B 45 E4 89 45 D4 8B 45 C4 48 89 EC 5D C3
+
+disassembly:
+identity:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: push rdi
+0009: mov eax,[rsp]
+000C: mov [rbp-10h],eax
+000F: mov eax,[rsp+4]
+0013: mov [rbp-0Ch],eax
+0016: add rsp,8
+001A: push rsi
+001B: mov eax,[rsp]
+001E: mov [rbp-8],eax
+0021: mov eax,[rsp+4]
+0025: mov [rbp-4],eax
+0028: add rsp,8
+002C: sub rsp,8
+0030: xor rax,rax
+0033: mov [rsp],rax
+0037: mov eax,[rbp-8]
+003A: mov [rsp],eax
+003D: mov eax,[rbp-4]
+0040: mov [rsp+4],eax
+0044: mov rdx,[rsp]
+0048: add rsp,8
+004C: sub rsp,8
+0050: xor rax,rax
+0053: mov [rsp],rax
+0057: movzx eax,byte ptr [rbp-10h]
+005B: mov [rsp],al
+005E: mov rax,[rsp]
+0062: add rsp,8
+0066: mov rsp,rbp
+0069: pop rbp
+006A: ret
+main:
+006B: push rbp
+006C: mov rbp,rsp
+006F: sub rsp,60h
+0073: mov [rbp-54h],edi
+0076: mov eax,7
+007B: mov [rbp-3Ch],eax
+007E: mov eax,[rbp-54h]
+0081: mov [rbp-10h],al
+0084: lea rax,[rbp-3Ch]
+0088: mov [rbp-18h],rax
+008C: mov rax,[rbp-18h]
+0090: mov [rbp-8],rax
+0094: mov eax,[rbp-10h]
+0097: mov [rbp-50h],eax
+009A: mov eax,[rbp-0Ch]
+009D: mov [rbp-4Ch],eax
+00A0: mov eax,[rbp-8]
+00A3: mov [rbp-48h],eax
+00A6: mov eax,[rbp-4]
+00A9: mov [rbp-44h],eax
+00AC: sub rsp,8
+00B0: xor rax,rax
+00B3: mov [rsp],rax
+00B7: mov eax,[rbp-48h]
+00BA: mov [rsp],eax
+00BD: mov eax,[rbp-44h]
+00C0: mov [rsp+4],eax
+00C4: mov rsi,[rsp]
+00C8: add rsp,8
+00CC: sub rsp,8
+00D0: xor rax,rax
+00D3: mov [rsp],rax
+00D7: movzx eax,byte ptr [rbp-50h]
+00DB: mov [rsp],al
+00DE: mov rdi,[rsp]
+00E2: add rsp,8
+00E6: call 0 <identity>
+00EB: push rax
+00EC: mov eax,[rsp]
+00EF: mov [rbp-28h],eax
+00F2: mov eax,[rsp+4]
+00F6: mov [rbp-24h],eax
+00F9: add rsp,8
+00FD: push rdx
+00FE: mov eax,[rsp]
+0101: mov [rbp-20h],eax
+0104: mov eax,[rsp+4]
+0108: mov [rbp-1Ch],eax
+010B: add rsp,8
+010F: mov eax,[rbp-28h]
+0112: mov [rbp-38h],eax
+0115: mov eax,[rbp-24h]
+0118: mov [rbp-34h],eax
+011B: mov eax,[rbp-20h]
+011E: mov [rbp-30h],eax
+0121: mov eax,[rbp-1Ch]
+0124: mov [rbp-2Ch],eax
+0127: mov eax,[rbp-3Ch]
+012A: mov rsp,rbp
+012D: pop rbp
+012E: ret

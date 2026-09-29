@@ -1,0 +1,136 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "machine_snapshot(&compile_machine_code(\"backend/x86_function_value_aggregate_abi.lex\"))"
+snapshot_kind: text
+---
+symbols:
+add_one=0x0000
+main=0x005D
+relay=0x001E
+
+bytes:
+55 48 89 E5 48 83 EC 10 89 7D F8 8B 45 F8 05 01 00 00 00 89 45 FC 8B 45 FC 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 57 8B 04 24 89 45 F8 8B 44 24 04 89 45 FC 48 83 C4 08 48 83 EC 08 48 31 C0 48 89 04 24 8B 45 F8 89 04 24 8B 45 FC 89 44 24 04 48 8B 04 24 48 83 C4 08 48 89 EC 5D C3 55 48 89 E5 48 81 EC 90 00 00 00 B8 01 00 00 00 89 45 9C B8 02 00 00 00 89 45 88 B8 03 00 00 00 89 85 78 FF FF FF B8 04 00 00 00 89 45 98 B8 05 00 00 00 89 45 A0 B8 06 00 00 00 89 45 80 B8 07 00 00 00 89 45 84 B8 08 00 00 00 89 45 A4 B8 09 00 00 00 89 45 8C B8 0A 00 00 00 89 85 7C FF FF FF 48 8D 05 3B FF FF FF 48 89 45 A8 48 8B 45 A8 48 89 45 D0 48 83 EC 08 48 31 C0 48 89 04 24 8B 45 D0 89 04 24 8B 45 D4 89 44 24 04 48 8B 3C 24 48 83 C4 08 E8 28 FF FF FF 50 8B 04 24 89 45 F8 8B 44 24 04 89 45 FC 48 83 C4 08 8B 45 F8 89 45 90 8B 45 FC 89 45 94 8B 45 9C 03 45 88 89 45 CC 8B 45 CC 03 85 78 FF FF FF 89 45 C8 8B 45 C8 03 45 98 89 45 C4 8B 45 C4 03 45 A0 89 45 C0 8B 45 C0 03 45 80 89 45 BC 8B 45 BC 03 45 84 89 45 B8 8B 45 B8 03 45 A4 89 45 B4 8B 45 B4 03 45 8C 89 45 F4 8B 45 F4 03 85 7C FF FF FF 89 45 F0 48 8B 45 90 48 89 45 E0 BF 00 00 00 00 48 8B 45 E0 FF D0 89 45 EC 8B 45 F0 03 45 EC 89 45 DC 8B 45 DC 48 89 EC 5D C3
+
+disassembly:
+add_one:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov [rbp-8],edi
+000B: mov eax,[rbp-8]
+000E: add eax,1
+0013: mov [rbp-4],eax
+0016: mov eax,[rbp-4]
+0019: mov rsp,rbp
+001C: pop rbp
+001D: ret
+relay:
+001E: push rbp
+001F: mov rbp,rsp
+0022: sub rsp,10h
+0026: push rdi
+0027: mov eax,[rsp]
+002A: mov [rbp-8],eax
+002D: mov eax,[rsp+4]
+0031: mov [rbp-4],eax
+0034: add rsp,8
+0038: sub rsp,8
+003C: xor rax,rax
+003F: mov [rsp],rax
+0043: mov eax,[rbp-8]
+0046: mov [rsp],eax
+0049: mov eax,[rbp-4]
+004C: mov [rsp+4],eax
+0050: mov rax,[rsp]
+0054: add rsp,8
+0058: mov rsp,rbp
+005B: pop rbp
+005C: ret
+main:
+005D: push rbp
+005E: mov rbp,rsp
+0061: sub rsp,90h
+0068: mov eax,1
+006D: mov [rbp-64h],eax
+0070: mov eax,2
+0075: mov [rbp-78h],eax
+0078: mov eax,3
+007D: mov [rbp-88h],eax
+0083: mov eax,4
+0088: mov [rbp-68h],eax
+008B: mov eax,5
+0090: mov [rbp-60h],eax
+0093: mov eax,6
+0098: mov [rbp-80h],eax
+009B: mov eax,7
+00A0: mov [rbp-7Ch],eax
+00A3: mov eax,8
+00A8: mov [rbp-5Ch],eax
+00AB: mov eax,9
+00B0: mov [rbp-74h],eax
+00B3: mov eax,0Ah
+00B8: mov [rbp-84h],eax
+00BE: lea rax,[0]
+00C5: mov [rbp-58h],rax
+00C9: mov rax,[rbp-58h]
+00CD: mov [rbp-30h],rax
+00D1: sub rsp,8
+00D5: xor rax,rax
+00D8: mov [rsp],rax
+00DC: mov eax,[rbp-30h]
+00DF: mov [rsp],eax
+00E2: mov eax,[rbp-2Ch]
+00E5: mov [rsp+4],eax
+00E9: mov rdi,[rsp]
+00ED: add rsp,8
+00F1: call 000000000000001Eh <relay>
+00F6: push rax
+00F7: mov eax,[rsp]
+00FA: mov [rbp-8],eax
+00FD: mov eax,[rsp+4]
+0101: mov [rbp-4],eax
+0104: add rsp,8
+0108: mov eax,[rbp-8]
+010B: mov [rbp-70h],eax
+010E: mov eax,[rbp-4]
+0111: mov [rbp-6Ch],eax
+0114: mov eax,[rbp-64h]
+0117: add eax,[rbp-78h]
+011A: mov [rbp-34h],eax
+011D: mov eax,[rbp-34h]
+0120: add eax,[rbp-88h]
+0126: mov [rbp-38h],eax
+0129: mov eax,[rbp-38h]
+012C: add eax,[rbp-68h]
+012F: mov [rbp-3Ch],eax
+0132: mov eax,[rbp-3Ch]
+0135: add eax,[rbp-60h]
+0138: mov [rbp-40h],eax
+013B: mov eax,[rbp-40h]
+013E: add eax,[rbp-80h]
+0141: mov [rbp-44h],eax
+0144: mov eax,[rbp-44h]
+0147: add eax,[rbp-7Ch]
+014A: mov [rbp-48h],eax
+014D: mov eax,[rbp-48h]
+0150: add eax,[rbp-5Ch]
+0153: mov [rbp-4Ch],eax
+0156: mov eax,[rbp-4Ch]
+0159: add eax,[rbp-74h]
+015C: mov [rbp-0Ch],eax
+015F: mov eax,[rbp-0Ch]
+0162: add eax,[rbp-84h]
+0168: mov [rbp-10h],eax
+016B: mov rax,[rbp-70h]
+016F: mov [rbp-20h],rax
+0173: mov edi,0
+0178: mov rax,[rbp-20h]
+017C: call rax <add_one>
+017E: mov [rbp-14h],eax
+0181: mov eax,[rbp-10h]
+0184: add eax,[rbp-14h]
+0187: mov [rbp-24h],eax
+018A: mov eax,[rbp-24h]
+018D: mov rsp,rbp
+0190: pop rbp
+0191: ret

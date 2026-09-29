@@ -2,7 +2,9 @@ use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
 use lexion_lang::compiler::{EmitTarget, LexionCompiler, LexionCompilerOptions};
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
-use lexion_lang::generators::x86::{CodeGeneratorX86Elf, X86ElfExecutable, X86ElfOptions};
+use lexion_lang::generators::x86::{
+    Bitness, CMemoryLayoutBuilder, CodeGeneratorX86Elf, X86ElfExecutable, X86ElfOptions,
+};
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
 use lexion_lang::symbol_table::SymbolTableGenerator;
@@ -25,6 +27,7 @@ fn compile_elf(fixture: &str) -> X86ElfExecutable {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -49,6 +52,7 @@ fn compile_elf_error(fixture: &str) -> Vec<String> {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -199,6 +203,83 @@ fn x86_elf_executable_supports_stack_arguments() {
 }
 
 #[test]
+fn x86_elf_executable_supports_f32_function_calls() {
+    let executable = compile_elf("backend/x86_f32_function_calls.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("scale"));
+    assert!(executable.symbols().contains_key("sum9"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
+fn x86_elf_executable_supports_function_values() {
+    let executable = compile_elf("backend/x86_function_values.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("apply"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
+fn x86_elf_executable_supports_function_value_returns() {
+    let executable = compile_elf("backend/x86_function_value_returns.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let code = &executable.as_bytes()[code_start..];
+
+    assert!(executable.symbols().contains_key("make_adder"));
+    insta::assert_snapshot!(disassemble(
+        code,
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
+fn x86_elf_executable_supports_string_literals() {
+    let executable = compile_elf("backend/x86_string_literals.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+    let data = &executable.as_bytes()[executable.data_offset()..];
+
+    assert_eq!(data, b"helloworld");
+    insta::assert_snapshot!(disassemble(
+        &executable.as_bytes()[code_start..executable.data_offset()],
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
+fn x86_elf_executable_supports_empty_string_literal() {
+    let executable = compile_elf("backend/x86_empty_string_literal.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+
+    assert_eq!(&executable.as_bytes()[executable.data_offset()..], b"\0");
+    insta::assert_snapshot!(disassemble(
+        &executable.as_bytes()[code_start..executable.data_offset()],
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
+fn x86_elf_executable_supports_string_abi_transport() {
+    let executable = compile_elf("backend/x86_string_abi_indexed.lex");
+    let code_start = executable.text_offset() + executable.runtime_size();
+
+    assert!(executable.symbols().contains_key("take"));
+    insta::assert_snapshot!(disassemble(
+        &executable.as_bytes()[code_start..executable.data_offset()],
+        executable.entry_point() + executable.runtime_size() as u64
+    ));
+}
+
+#[test]
 fn x86_elf_reports_unsupported_extern_calls() {
     insta::assert_snapshot!(compile_elf_error("backend/x86_unsupported_extern_call.lex").join("\n"));
 }
@@ -254,5 +335,180 @@ fn x86_elf_local_reference_executable_runs_on_linux_x86_64() {
     assert_eq!(
         run_executable_fixture("backend/x86_reference_dereference.lex"),
         Some(2)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_narrow_reference_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_narrow_reference_dereference.lex"),
+        Some(0)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_unit_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_unit_arguments.lex"),
+        Some(7)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_f32_function_call_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_f32_function_calls.lex"),
+        Some(0)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_reference_call_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_reference_call.lex"),
+        Some(5)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_indexed_string_borrow_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_indexed_string_borrow.lex"),
+        Some(b'b')
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_string_index_executable_runs_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_string_index.lex"),
+        Some(b'b')
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_reference_stack_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_reference_stack_arguments.lex"),
+        Some(9)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_aggregate_reference_places_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_aggregate_reference_places.lex"),
+        Some(22)
+    );
+}
+
+#[test]
+fn x86_elf_executable_supports_local_aggregate_values() {
+    let executable = compile_elf("backend/x86_local_aggregates.lex");
+
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[test]
+fn x86_elf_executable_supports_aggregate_member_values() {
+    let executable = compile_elf("backend/x86_aggregate_members.lex");
+
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[test]
+fn x86_elf_executable_supports_aggregate_reference_places() {
+    let executable = compile_elf("backend/x86_aggregate_reference_places.lex");
+
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[test]
+fn x86_elf_executable_supports_one_eightbyte_aggregate_abi_values() {
+    let executable = compile_elf("backend/x86_aggregate_abi.lex");
+    assert!(executable.symbols().contains_key("shift"));
+}
+
+#[test]
+fn x86_elf_executable_supports_register_pair_aggregate_abi_values() {
+    let executable = compile_elf("backend/x86_register_pair_aggregates.lex");
+    assert!(executable.symbols().contains_key("shift_quad"));
+    assert!(executable.symbols().contains_key("shift_tuple"));
+}
+
+#[test]
+fn x86_elf_executable_supports_string_returns() {
+    let executable = compile_elf("backend/x86_string_return.lex");
+
+    assert!(executable.symbols().contains_key("make"));
+    assert!(executable.symbols().contains_key("main"));
+}
+
+#[test]
+fn x86_elf_executable_supports_stack_aggregate_arguments() {
+    let executable = compile_elf("backend/x86_stack_aggregate_arguments.lex");
+    assert!(executable.symbols().contains_key("large_after_gprs"));
+    assert!(executable.symbols().contains_key("pair_after_gprs"));
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_stack_aggregate_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_stack_aggregate_arguments.lex"),
+        Some(81)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_local_aggregate_values_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_local_aggregates.lex"),
+        Some(16)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_aggregate_member_values_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_aggregate_members.lex"),
+        Some(102)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_one_eightbyte_aggregate_abi_values_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_aggregate_abi.lex"),
+        Some(10)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_register_pair_aggregate_abi_values_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_register_pair_aggregates.lex"),
+        Some(44)
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn x86_elf_indexed_register_pair_call_arguments_run_on_linux_x86_64() {
+    assert_eq!(
+        run_executable_fixture("backend/x86_indexed_register_pair_call.lex"),
+        Some(9)
     );
 }

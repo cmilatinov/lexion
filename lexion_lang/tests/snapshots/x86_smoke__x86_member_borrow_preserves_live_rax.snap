@@ -1,0 +1,31 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_member_borrow_preserves_rax.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+#     let values = Values { first: 3 };
+  mov eax, 3
+  mov DWORD PTR [rbp-4], eax
+  mov eax, DWORD PTR [rbp-4]
+  mov DWORD PTR [rbp-20], eax
+#     return (values.first + 7) + *(&values.first);
+  mov eax, DWORD PTR [rbp-20]
+  mov esi, eax
+  add esi, 7
+  lea rax, [rbp-20]
+  mov QWORD PTR [rbp-16], rax
+  mov rdi, QWORD PTR [rbp-16]
+  mov edi, DWORD PTR [rdi]
+  mov eax, esi
+  add eax, edi
+  add rsp, 32
+  pop rbp
+  ret

@@ -30,6 +30,8 @@ pub enum Expr {
     MemberExpr(MemberExpr),
     IndexExpr(IndexExpr),
     CallExpr(CallExpr),
+    StructExpr(StructExpr),
+    TupleExpr(TupleExpr),
     IdentExpr(IdentExpr),
     LitExpr(LitExpr),
 }
@@ -78,6 +80,23 @@ pub struct CallExpr {
 }
 
 #[derive(Debug)]
+pub struct StructExpr {
+    pub name: Sourced<String>,
+    pub fields: Vec<Sourced<StructExprField>>,
+}
+
+#[derive(Debug)]
+pub struct StructExprField {
+    pub name: Sourced<String>,
+    pub expr: SourcedExpr,
+}
+
+#[derive(Debug)]
+pub struct TupleExpr {
+    pub values: Vec<SourcedExpr>,
+}
+
+#[derive(Debug)]
 pub struct IdentExpr {
     pub ident: String,
 }
@@ -111,6 +130,7 @@ pub enum Type {
     Path(PathType),
     Reference(ReferenceType),
     Tuple(TupleType),
+    Function(FunctionType),
 }
 
 #[derive(Debug)]
@@ -131,4 +151,10 @@ pub struct ReferenceType {
 #[derive(Debug)]
 pub struct TupleType {
     pub types: Vec<Sourced<Type>>,
+}
+
+#[derive(Debug)]
+pub struct FunctionType {
+    pub params: Vec<Sourced<Type>>,
+    pub return_type: Box<Sourced<Type>>,
 }

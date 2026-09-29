@@ -116,7 +116,7 @@ impl<'a> LinearRegisterAllocator<'a> {
         &mut self,
         mut intervals: Vec<LivenessInterval>,
     ) -> Vec<AssignedLivenessInterval> {
-        intervals.sort_by_key(|i| i.span.start);
+        sort_intervals(&mut intervals);
 
         let mut assigned = Vec::new();
 
@@ -291,7 +291,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
         range: FunctionRange,
         mut intervals: Vec<LivenessInterval>,
     ) -> Vec<AssignedLivenessInterval> {
-        intervals.sort_by_key(|interval| interval.span.start);
+        sort_intervals(&mut intervals);
         let call_locations = self.call_locations(range);
         let constraints = self.location_constraints(range);
         let mut assigned = Vec::new();
@@ -572,7 +572,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                                     .push(AbiLocationConstraint {
                                         location: *location,
                                         role: AbiLocationRole::CallArgument {
-                                            function: call.function.clone(),
+                                            function: call.target.to_string(),
                                             index,
                                         },
                                         abi_location,
@@ -593,7 +593,7 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
                                     .push(AbiLocationConstraint {
                                         location: CodeLocation::new(block, instruction_index),
                                         role: AbiLocationRole::CallReturn {
-                                            function: call.function.clone(),
+                                            function: call.target.to_string(),
                                         },
                                         abi_location,
                                     });
@@ -661,6 +661,16 @@ impl<'a, C: CallingConvention> AbiRegisterAllocator<'a, C> {
     }
 }
 
+fn sort_intervals(intervals: &mut [LivenessInterval]) {
+    intervals.sort_by(|left, right| {
+        left.span
+            .start
+            .cmp(&right.span.start)
+            .then_with(|| left.variable.cmp(&right.variable))
+            .then_with(|| left.span.end.cmp(&right.span.end))
+    });
+}
+
 fn active_requires_register(assigned: &AssignedLivenessInterval, register: Register) -> bool {
     matches!(
         hard_register_constraint(assigned.constraints()),
@@ -669,6 +679,13 @@ fn active_requires_register(assigned: &AssignedLivenessInterval, register: Regis
 }
 
 fn hard_register_constraint(constraints: &[AbiLocationConstraint]) -> HardRegisterConstraint {
+    // A pair needs two registers atomically; scalar allocation keeps it in its home.
+    if constraints
+        .iter()
+        .any(|constraint| matches!(constraint.abi_location(), Location::Pair { .. }))
+    {
+        return HardRegisterConstraint::Conflict;
+    }
     let mut required = None;
     for register in constraints
         .iter()
@@ -772,6 +789,23 @@ mod tests {
     }
 
     #[test]
+    fn register_pair_constraint_spills_instead_of_using_a_scalar_register() {
+        let cfg = ControlFlowGraph::new();
+        let types = TypeCollection::default();
+        let symbols = SymbolTableGraph::default();
+        let mut allocator =
+            AbiRegisterAllocator::new((&cfg, &types, &symbols, X86Target::system_v64()));
+
+        let location = allocator.allocate_location(
+            &[Register::RAX, Register::RDX],
+            &[pair_constraint(Register::RAX, Register::RDX)],
+            &mut Vec::new(),
+        );
+
+        assert_stack(&location, 0);
+    }
+
+    #[test]
     fn caller_saved_hard_register_constraint_spills_when_disallowed() {
         let cfg = ControlFlowGraph::new();
         let types = TypeCollection::default();
@@ -833,6 +867,17 @@ mod tests {
             location: location(0),
             role: AbiLocationRole::ReturnValue,
             abi_location: Location::Register(register),
+        }
+    }
+
+    fn pair_constraint(low: Register, high: Register) -> AbiLocationConstraint {
+        AbiLocationConstraint {
+            location: location(0),
+            role: AbiLocationRole::ReturnValue,
+            abi_location: Location::Pair {
+                low: Box::new(Location::Register(low)),
+                high: Box::new(Location::Register(high)),
+            },
         }
     }
 

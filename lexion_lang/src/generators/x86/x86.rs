@@ -3,11 +3,14 @@ use crate::ast::Lit;
 use crate::diagnostic::{DiagnosticConsumer, LexionDiagnosticError};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, BaseInstruction, BorrowInstruction, CodeLocation,
-    ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction, FunctionRange,
-    Instruction, InstructionInstance, LoadInstruction, Operand, Place, StoreInstruction,
+    ConditionalJumpInstruction, ControlFlowGraph, FunctionCallInstruction, FunctionCallTarget,
+    FunctionRange, Instruction, InstructionInstance, LoadInstruction, Operand, Place,
+    StoreInstruction,
 };
 use crate::generators::x86::calling_convention::{CallingConvention, Location};
-use crate::generators::x86::{AbiLocationRole, AssignedLivenessInterval, StackOffset, X86Target};
+use crate::generators::x86::{
+    AbiLocationRole, AssignedLivenessInterval, Bitness, SizeAlign, StackOffset, X86Target,
+};
 use crate::operators;
 use crate::pipeline::PipelineStage;
 use crate::symbol_table::{SymbolTableEntry, SymbolTableGraph};
@@ -95,7 +98,33 @@ impl<'a> CodeGeneratorX86<'a> {
                 lines.extend(self.emit_function(*range, options));
             }
         }
+        let literals = self.string_literals();
+        if !literals.is_empty() {
+            lines.push(String::from(".section .rodata"));
+            for literal in literals {
+                lines.push(format!("{}:", string_literal_label(&literal)));
+                lines.push(format!("  .byte {}", string_literal_bytes(&literal)));
+            }
+        }
         X86Assembly::new(lines.join("\n"))
+    }
+
+    fn string_literals(&self) -> BTreeSet<Vec<u8>> {
+        let mut source_literals = BTreeSet::new();
+        for range in &self.cfg.functions {
+            for node in self.cfg.function_nodes(range) {
+                for instruction in &self.cfg[node].instructions {
+                    collect_instruction_string_literals(
+                        &instruction.instruction,
+                        &mut source_literals,
+                    );
+                }
+            }
+        }
+        source_literals
+            .into_iter()
+            .map(|literal| string_literal_data(&literal))
+            .collect()
     }
 
     fn extern_label(&self, range: FunctionRange) -> Option<&str> {
@@ -121,10 +150,14 @@ impl<'a> CodeGeneratorX86<'a> {
         if frame.stack_size > 0 {
             lines.push(format!("  sub rsp, {}", frame.stack_size));
         }
+        if let Some(offset) = frame.indirect_return_slot {
+            lines.push(format!("  mov QWORD PTR [rbp-{offset}], rdi"));
+        }
         self.emit_function_parameter_moves(&mut lines, range, &frame);
 
         let mut emitted_return = false;
         let mut pending_param_count = 0;
+        let mut staged_indirect_target = false;
         for node in self.cfg.function_nodes(&range) {
             let block = &self.cfg[node];
             if node != range.start {
@@ -138,15 +171,40 @@ impl<'a> CodeGeneratorX86<'a> {
                     &mut source_line_range,
                 );
                 let location = CodeLocation::new(node, instruction_index);
+                if matches!(inst.instruction, Instruction::Parameter(_)) && pending_param_count == 0
+                {
+                    let next_instruction = block.instructions[instruction_index..]
+                        .iter()
+                        .find(|inst| !matches!(inst.instruction, Instruction::Parameter(_)))
+                        .map(|inst| &inst.instruction);
+                    if let Some(Instruction::FunctionCall(FunctionCallInstruction {
+                        target: FunctionCallTarget::Indirect(target),
+                        ..
+                    })) = next_instruction
+                    {
+                        // Keep the target below the staged arguments without reserving an
+                        // allocatable register. Exchange restores a pending RAX argument.
+                        lines.push(String::from("  push rax"));
+                        load_function_operand(&mut lines, &frame, location, target, Register::RAX);
+                        lines.push(String::from("  xchg QWORD PTR [rsp], rax"));
+                        staged_indirect_target = true;
+                    }
+                }
                 if self.emit_instruction(
                     &mut lines,
                     &frame,
                     name.as_str(),
-                    location,
-                    &mut pending_param_count,
+                    &mut InstructionEmission {
+                        location,
+                        pending_param_count: &mut pending_param_count,
+                        staged_indirect_target,
+                    },
                     &inst.instruction,
                 ) {
                     emitted_return = true;
+                }
+                if matches!(inst.instruction, Instruction::FunctionCall(_)) {
+                    staged_indirect_target = false;
                 }
             }
         }
@@ -232,7 +290,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 .return_target
                 .as_ref()
                 .and_then(|target| self.operand_source_span(target))
-                .or_else(|| self.symbol_span(&inst.function)),
+                .or_else(|| {
+                    inst.target
+                        .direct_name()
+                        .and_then(|name| self.symbol_span(name))
+                }),
             Instruction::Parameter(inst) => self.operand_source_span(&inst.param),
             Instruction::Return(inst) => inst
                 .value
@@ -290,7 +352,11 @@ impl<'a> CodeGeneratorX86<'a> {
                 self.function_symbol_entry(function, &name)
                     .and_then(|entry| entry.var_type)
             }
-            Operand::Literal(Lit::String(_)) | Operand::Label(_) | Operand::Placeholder => None,
+            Operand::Label(name) => self
+                .function_symbol_entry(function, name)
+                .or_else(|| self.global_symbol_entry(name))
+                .and_then(|entry| entry.var_type),
+            Operand::Literal(Lit::String(_)) | Operand::Placeholder => None,
         }
     }
 
@@ -299,21 +365,21 @@ impl<'a> CodeGeneratorX86<'a> {
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
         function: &str,
-        location: CodeLocation,
-        pending_param_count: &mut usize,
+        emission: &mut InstructionEmission<'_>,
         instruction: &Instruction,
     ) -> bool {
+        let location = emission.location;
         match instruction {
             Instruction::Borrow(inst) => {
-                self.emit_borrow(lines, frame, location, inst);
+                self.emit_borrow(lines, frame, function, location, inst);
                 false
             }
             Instruction::Load(inst) => {
-                self.emit_load(lines, frame, location, inst);
+                self.emit_load(lines, frame, function, location, inst);
                 false
             }
             Instruction::Store(inst) => {
-                self.emit_store(lines, frame, location, inst);
+                self.emit_store(lines, frame, function, location, inst);
                 false
             }
             Instruction::Assignment(inst) => {
@@ -321,7 +387,28 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Copy(inst) => {
-                if self.operand_is_reference(function, &inst.src)
+                let Some(destination) = frame.operand_location(location, &inst.dst) else {
+                    return false;
+                };
+                if self.operand_is_string_value(function, &inst.src)
+                    || self.operand_is_string_value(function, &inst.dst)
+                {
+                    self.emit_string_copy(lines, frame, function, location, inst);
+                } else if self.operand_is_aggregate(function, &inst.src) {
+                    self.emit_aggregate_copy(lines, frame, function, location, inst);
+                } else if self.operand_is_function(function, &inst.src)
+                    || self.operand_is_function(function, &inst.dst)
+                {
+                    let register = destination.register().unwrap_or(Register::RAX);
+                    let preserved = if destination.register().is_none() {
+                        preserve_register(lines, frame, location, register)
+                    } else {
+                        false
+                    };
+                    load_function_operand(lines, frame, location, &inst.src, register);
+                    store_reference_operand(lines, frame, location, &inst.dst, register);
+                    restore_register(lines, register, preserved);
+                } else if self.operand_is_reference(function, &inst.src)
                     || self.operand_is_reference(function, &inst.dst)
                 {
                     load_reference_operand(lines, frame, location, &inst.src, Register::RAX);
@@ -332,10 +419,7 @@ impl<'a> CodeGeneratorX86<'a> {
                     load_float_operand(lines, frame, location, &inst.src, Register::XMM0);
                     store_float_operand(lines, frame, location, &inst.dst, Register::XMM0);
                 } else {
-                    let register = frame
-                        .operand_location(location, &inst.dst)
-                        .and_then(|location| location.register())
-                        .unwrap_or(Register::RAX);
+                    let register = destination.register().unwrap_or(Register::RAX);
                     load_operand(lines, frame, location, &inst.src, register);
                     store_operand(lines, frame, location, &inst.dst, register);
                 }
@@ -351,7 +435,44 @@ impl<'a> CodeGeneratorX86<'a> {
             }
             Instruction::Return(inst) => {
                 if let Some(value) = &inst.value {
-                    load_operand(lines, frame, location, value, Register::RAX);
+                    let return_register = self
+                        .function_return_register(function)
+                        .unwrap_or(Register::RAX);
+                    if self.operand_is_aggregate(function, value) {
+                        if let Some(size) = self.function_return_indirect_size(function) {
+                            self.emit_indirect_aggregate_return(
+                                lines, frame, location, value, size,
+                            );
+                        } else if let Some((low, high)) = self.function_return_pair(function) {
+                            self.load_aggregate_pair(
+                                lines,
+                                frame,
+                                function,
+                                location,
+                                value,
+                                (low, high),
+                            );
+                        } else {
+                            self.load_aggregate_operand(
+                                lines,
+                                frame,
+                                function,
+                                location,
+                                value,
+                                return_register,
+                            );
+                        }
+                    } else if self.operand_is_string_value(function, value) {
+                        self.load_string_operand(lines, frame, function, location, value);
+                    } else if self.function_returns_function(function) {
+                        load_function_operand(lines, frame, location, value, return_register);
+                    } else if self.operand_is_reference(function, value) {
+                        load_reference_operand(lines, frame, location, value, return_register);
+                    } else if self.operand_is_f32(function, value) {
+                        load_float_operand(lines, frame, location, value, return_register);
+                    } else {
+                        load_operand(lines, frame, location, value, return_register);
+                    }
                 }
                 emit_epilogue(lines, frame);
                 true
@@ -360,13 +481,13 @@ impl<'a> CodeGeneratorX86<'a> {
                 false
             }
             Instruction::Parameter(inst) => {
-                self.emit_parameter(lines, frame, location, &inst.param);
-                *pending_param_count += 1;
+                self.emit_parameter(lines, frame, function, location, &inst.param);
+                *emission.pending_param_count += 1;
                 false
             }
             Instruction::FunctionCall(inst) => {
-                self.emit_function_call(lines, frame, location, *pending_param_count, inst);
-                *pending_param_count = 0;
+                self.emit_function_call(lines, frame, function, emission, inst);
+                *emission.pending_param_count = 0;
                 false
             }
         }
@@ -403,14 +524,14 @@ impl<'a> CodeGeneratorX86<'a> {
     fn unsupported_message(&self, function: &str, instruction: &Instruction) -> Option<String> {
         match instruction {
             Instruction::Borrow(inst) => self
-                .unsupported_borrow_message(&inst.place)
+                .unsupported_borrow_message(function, &inst.place)
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Load(inst) => self
-                .unsupported_load_message(&inst.place)
+                .unsupported_load_message(function, &inst.place)
                 .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
                 .or_else(|| self.unsupported_operand_message(function, &inst.target)),
             Instruction::Store(inst) => self
-                .unsupported_store_message(&inst.place)
+                .unsupported_store_message(function, &inst.place)
                 .or_else(|| self.unsupported_place_operand_message(function, &inst.place))
                 .or_else(|| self.unsupported_operand_message(function, &inst.value)),
             Instruction::Assignment(inst) => self
@@ -429,18 +550,15 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::FunctionCall(inst) => self
-                .unsupported_call_target_message(inst)
-                .or_else(|| self.unsupported_call_signature_message(inst))
-                .or_else(|| {
+            Instruction::FunctionCall(inst) => {
+                self.unsupported_call_signature_message(inst).or_else(|| {
                     inst.return_target
                         .as_ref()
                         .and_then(|target| self.unsupported_operand_message(function, target))
-                }),
+                })
+            }
             Instruction::Extern(_) => None,
-            Instruction::Copy(inst) => self
-                .unsupported_operand_message(function, &inst.dst)
-                .or_else(|| self.unsupported_operand_message(function, &inst.src)),
+            Instruction::Copy(inst) => self.unsupported_copy_message(function, inst),
             Instruction::ConditionalJump(inst) => inst
                 .left
                 .as_ref()
@@ -452,23 +570,35 @@ impl<'a> CodeGeneratorX86<'a> {
                 })
                 .or_else(|| self.unsupported_reference_operation_message(function, &inst.right))
                 .or_else(|| self.unsupported_operand_message(function, &inst.right)),
-            Instruction::Parameter(inst) => self.unsupported_operand_message(function, &inst.param),
-            Instruction::Return(inst) => inst
-                .value
-                .as_ref()
-                .and_then(|value| self.unsupported_operand_message(function, value)),
+            Instruction::Parameter(inst) => self
+                .unsupported_aggregate_operand_message(function, &inst.param, None)
+                .or_else(|| self.unsupported_operand_message(function, &inst.param)),
+            Instruction::Return(inst) => inst.value.as_ref().and_then(|value| {
+                self.unsupported_aggregate_operand_message(function, value, None)
+                    .or_else(|| self.unsupported_operand_message(function, value))
+            }),
             Instruction::Function(inst) => self.unsupported_function_signature_message(&inst.label),
             Instruction::Jump(_) | Instruction::EndFunction(_) => None,
         }
     }
 
-    fn unsupported_borrow_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_borrow_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
             Place::Direct(value) if operand_name(value).is_some() => None,
             Place::Direct(_) => Some(String::from("x86 backend can only borrow stored values")),
-            Place::Member { .. } | Place::Index { .. } | Place::Dereference(_) => Some(
-                String::from("x86 backend does not support references to projected places yet"),
-            ),
+            Place::Member { .. } if self.member_place(function, place).is_some() => None,
+            Place::Member { .. } => Some(String::from(
+                "x86 backend does not support references through projected places yet",
+            )),
+            Place::Index { .. } if self.indexed_string_borrow_place(function, place).is_some() => {
+                None
+            }
+            Place::Index { .. } => Some(String::from(
+                "x86 backend does not support references to indexed places yet",
+            )),
+            Place::Dereference(_) => Some(String::from(
+                "x86 backend does not support references to dereferenced places yet",
+            )),
         }
     }
 
@@ -476,58 +606,306 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &BorrowInstruction,
     ) {
-        let Place::Direct(value) = &inst.place else {
-            unreachable!("unsupported borrow places are diagnosed before emission")
+        let operand = match &inst.place {
+            Place::Direct(value) => {
+                let Some(AssemblyLocation::FrameStack { offset }) =
+                    frame.operand_location(location, value)
+                else {
+                    unreachable!("borrowed values must have stable frame locations")
+                };
+                format!("[rbp-{offset}]")
+            }
+            Place::Member { .. } => {
+                let (base, offset, _) = self.member_place(function, &inst.place).unwrap();
+                aggregate_member_operand(frame, location, &base, offset)
+                    .expect("borrowed aggregate members must have stable frame locations")
+            }
+            Place::Index { .. } => {
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                let target_register = operand_register(frame, location, &inst.target);
+                let preserved_rax = target_register != Some(Register::RAX)
+                    && preserve_register(lines, frame, location, Register::RAX);
+                let preserved_rdx = target_register != Some(Register::RDX)
+                    && preserve_register(lines, frame, location, Register::RDX);
+                load_operand(lines, frame, location, index, Register::RDX);
+                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
+                lines.push(String::from("  add rax, rdx"));
+                store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
+                restore_register(lines, Register::RDX, preserved_rdx);
+                restore_register(lines, Register::RAX, preserved_rax);
+                return;
+            }
+            Place::Dereference(_) => {
+                unreachable!("unsupported borrow places are diagnosed before emission")
+            }
         };
-        let Some(AssemblyLocation::FrameStack { offset }) = frame.operand_location(location, value)
-        else {
-            unreachable!("borrowed values must have stable frame locations")
-        };
-        lines.push(format!("  lea rax, [rbp-{offset}]"));
+        let preserved_rax = operand_register(frame, location, &inst.target) != Some(Register::RAX)
+            && preserve_register(lines, frame, location, Register::RAX);
+        lines.push(format!("  lea rax, {operand}"));
         store_reference_operand(lines, frame, location, &inst.target, Register::RAX);
+        restore_register(lines, Register::RAX, preserved_rax);
     }
 
     fn emit_load(
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &LoadInstruction,
     ) {
+        let allocated_target_register = operand_register(frame, location, &inst.target);
+        let target_register = allocated_target_register.unwrap_or(Register::RAX);
+        let mut preserved_target_register = false;
         match &inst.place {
-            Place::Direct(value) => load_operand(lines, frame, location, value, Register::RAX),
-            Place::Dereference(reference) => {
-                load_reference_operand(lines, frame, location, reference, Register::RAX);
-                lines.push(String::from("  mov eax, DWORD PTR [rax]"));
+            Place::Direct(value) => {
+                if allocated_target_register.is_none() {
+                    preserved_target_register =
+                        preserve_register(lines, frame, location, target_register);
+                }
+                load_operand(lines, frame, location, value, target_register);
             }
-            Place::Member { .. } | Place::Index { .. } => {
-                unreachable!("unsupported load places are diagnosed before emission")
+            Place::Dereference(reference) => {
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    let Some(destination) =
+                        aggregate_member_operand(frame, location, &inst.target, 0)
+                    else {
+                        return;
+                    };
+                    let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+                    let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
+                    load_reference_operand(lines, frame, location, reference, Register::RDX);
+                    emit_memory_copy(lines, "[rdx]", &destination, size);
+                    restore_register(lines, Register::RDX, preserved_rdx);
+                    restore_register(lines, Register::RAX, preserved_rax);
+                    return;
+                }
+                if allocated_target_register.is_none() {
+                    preserved_target_register =
+                        preserve_register(lines, frame, location, target_register);
+                }
+                load_reference_operand(lines, frame, location, reference, target_register);
+                if self.reference_pointee_is_function(function, reference) {
+                    lines.push(format!(
+                        "  mov {}, QWORD PTR [{}]",
+                        register_name(target_register),
+                        register_name(target_register)
+                    ));
+                    store_reference_operand(lines, frame, location, &inst.target, target_register);
+                    restore_register(lines, target_register, preserved_target_register);
+                    return;
+                } else if self.reference_pointee_size(function, reference) == 1 {
+                    lines.push(format!(
+                        "  movzx {}, BYTE PTR [{}]",
+                        register_name_32(target_register),
+                        register_name(target_register)
+                    ));
+                } else {
+                    lines.push(format!(
+                        "  mov {}, DWORD PTR [{}]",
+                        register_name_32(target_register),
+                        register_name(target_register)
+                    ));
+                }
+            }
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_member_operand(frame, location, &base, offset).unwrap();
+                if self.type_is_aggregate(ty) {
+                    let target =
+                        aggregate_member_operand(frame, location, &inst.target, 0).unwrap();
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    emit_memory_copy(lines, &operand, &target, size);
+                    restore_register(lines, Register::RAX, preserved);
+                    return;
+                }
+                if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    let target_register = allocated_target_register.unwrap_or(Register::RAX);
+                    let preserved = allocated_target_register.is_none()
+                        && preserve_register(lines, frame, location, target_register);
+                    lines.push(format!(
+                        "  mov {}, QWORD PTR {operand}",
+                        register_name(target_register)
+                    ));
+                    store_reference_operand(lines, frame, location, &inst.target, target_register);
+                    restore_register(lines, target_register, preserved);
+                    return;
+                }
+                if is_f32_type(self.types, ty) {
+                    lines.push(format!("  movss xmm0, DWORD PTR {operand}"));
+                    store_float_operand(lines, frame, location, &inst.target, Register::XMM0);
+                    return;
+                }
+                if allocated_target_register.is_none() {
+                    preserved_target_register =
+                        preserve_register(lines, frame, location, target_register);
+                }
+                if self.types.size_align(ty, Bitness::_64).size == 1 {
+                    lines.push(format!(
+                        "  movzx {}, BYTE PTR {operand}",
+                        register_name_32(target_register)
+                    ));
+                } else {
+                    lines.push(format!(
+                        "  mov {}, DWORD PTR {operand}",
+                        register_name_32(target_register)
+                    ));
+                }
+            }
+            Place::Index { .. } => {
+                let (base, index) = self.indexed_string_place(function, &inst.place).unwrap();
+                let target_register = allocated_target_register.unwrap_or(Register::RAX);
+                let preserved_target_register = allocated_target_register.is_none()
+                    && preserve_register(lines, frame, location, target_register);
+                let preserved_rax = target_register != Register::RAX
+                    && preserve_register(lines, frame, location, Register::RAX);
+                let preserved_rdx = target_register != Register::RDX
+                    && preserve_register(lines, frame, location, Register::RDX);
+                load_operand(lines, frame, location, index, Register::RDX);
+                self.load_string_pointer(lines, frame, function, location, base, Register::RAX);
+                lines.push(format!(
+                    "  movzx {}, BYTE PTR [rax+rdx]",
+                    register_name_32(target_register)
+                ));
+                store_operand(lines, frame, location, &inst.target, target_register);
+                restore_register(lines, Register::RDX, preserved_rdx);
+                restore_register(lines, Register::RAX, preserved_rax);
+                restore_register(lines, target_register, preserved_target_register);
+                return;
             }
         }
-        store_operand(lines, frame, location, &inst.target, Register::RAX);
+        store_operand(lines, frame, location, &inst.target, target_register);
+        restore_register(lines, target_register, preserved_target_register);
     }
 
     fn emit_store(
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         inst: &StoreInstruction,
     ) {
         match &inst.place {
             Place::Direct(target) => {
+                if self.operand_is_string_value(function, target)
+                    || self.operand_is_string_value(function, &inst.value)
+                {
+                    self.emit_string_value_store(
+                        lines,
+                        frame,
+                        function,
+                        location,
+                        target,
+                        &inst.value,
+                    );
+                    return;
+                }
                 load_operand(lines, frame, location, &inst.value, Register::RAX);
                 store_operand(lines, frame, location, target, Register::RAX);
             }
             Place::Dereference(reference) => {
-                load_operand(lines, frame, location, &inst.value, Register::RCX);
-                load_reference_operand(lines, frame, location, reference, Register::RAX);
-                lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                if let Some(size) = self.reference_pointee_aggregate_size(function, reference) {
+                    let Some(source) = aggregate_member_operand(frame, location, &inst.value, 0)
+                    else {
+                        return;
+                    };
+                    let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+                    let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
+                    load_reference_operand(lines, frame, location, reference, Register::RDX);
+                    emit_memory_copy(lines, &source, "[rdx]", size);
+                    restore_register(lines, Register::RDX, preserved_rdx);
+                    restore_register(lines, Register::RAX, preserved_rax);
+                    return;
+                }
+                if self.reference_pointee_is_function(function, reference) {
+                    let reference_register = operand_register(frame, location, reference);
+                    let value_register = operand_register(frame, location, &inst.value);
+                    let preserve_rax = reference_register != Some(Register::RAX)
+                        && value_register != Some(Register::RAX)
+                        && preserve_register(lines, frame, location, Register::RAX);
+                    let preserve_rcx = reference_register != Some(Register::RCX)
+                        && value_register != Some(Register::RCX)
+                        && preserve_register(lines, frame, location, Register::RCX);
+                    if reference_register == Some(Register::RCX)
+                        && value_register == Some(Register::RAX)
+                    {
+                        // Keep the callback while RAX is used to materialize the reference.
+                        lines.push(String::from("  push rax"));
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                        lines.push(String::from("  pop rcx"));
+                    } else if reference_register == Some(Register::RCX)
+                        && value_register != Some(Register::RCX)
+                    {
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                        load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                    } else {
+                        load_function_operand(lines, frame, location, &inst.value, Register::RCX);
+                        load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    }
+                    lines.push(String::from("  mov QWORD PTR [rax], rcx"));
+                    restore_register(lines, Register::RCX, preserve_rcx);
+                    restore_register(lines, Register::RAX, preserve_rax);
+                } else {
+                    load_operand(lines, frame, location, &inst.value, Register::RCX);
+                    load_reference_operand(lines, frame, location, reference, Register::RAX);
+                    if self.reference_pointee_size(function, reference) == 1 {
+                        lines.push(String::from("  mov BYTE PTR [rax], cl"));
+                    } else {
+                        lines.push(String::from("  mov DWORD PTR [rax], ecx"));
+                    }
+                }
             }
-            Place::Member { .. } | Place::Index { .. } => {
+            Place::Member { .. } => {
+                let (base, offset, ty) = self.member_place(function, &inst.place).unwrap();
+                let operand = aggregate_member_operand(frame, location, &base, offset).unwrap();
+                if self.type_is_aggregate(ty) {
+                    let source = aggregate_member_operand(frame, location, &inst.value, 0).unwrap();
+                    let size = self.types.size_align(ty, Bitness::_64).size;
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    emit_memory_copy(lines, &source, &operand, size);
+                    restore_register(lines, Register::RAX, preserved);
+                } else if self.type_is_reference(ty) || self.type_is_function(ty) {
+                    let preserved = preserve_register(lines, frame, location, Register::RAX);
+                    if self.type_is_function(ty) {
+                        load_function_operand(lines, frame, location, &inst.value, Register::RAX);
+                    } else {
+                        load_reference_operand(lines, frame, location, &inst.value, Register::RAX);
+                    }
+                    lines.push(format!("  mov QWORD PTR {operand}, rax"));
+                    restore_register(lines, Register::RAX, preserved);
+                } else if is_f32_type(self.types, ty) {
+                    load_float_operand(lines, frame, location, &inst.value, Register::XMM0);
+                    lines.push(format!("  movss DWORD PTR {operand}, xmm0"));
+                } else {
+                    let allocated_value_register = operand_register(frame, location, &inst.value);
+                    let value_register = allocated_value_register.unwrap_or(Register::RAX);
+                    let preserved = if allocated_value_register.is_none() {
+                        preserve_register(lines, frame, location, Register::RAX)
+                    } else {
+                        false
+                    };
+                    load_operand(lines, frame, location, &inst.value, value_register);
+                    if self.types.size_align(ty, Bitness::_64).size == 1 {
+                        lines.push(format!(
+                            "  mov BYTE PTR {operand}, {}",
+                            register_name_8(value_register)
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "  mov DWORD PTR {operand}, {}",
+                            register_name_32(value_register)
+                        ));
+                    }
+                    restore_register(lines, Register::RAX, preserved);
+                }
+            }
+            Place::Index { .. } => {
                 unreachable!("unsupported store places are diagnosed before emission")
             }
         }
@@ -542,28 +920,381 @@ impl<'a> CodeGeneratorX86<'a> {
         })
     }
 
-    fn unsupported_load_message(&self, place: &Place) -> Option<String> {
+    fn operand_is_string_value(&self, function: &str, operand: &Operand) -> bool {
+        matches!(operand, Operand::Literal(Lit::String(_)))
+            || self
+                .operand_type(function, operand)
+                .is_some_and(|ty| self.type_is_string_reference(ty))
+    }
+
+    fn operand_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn operand_is_aggregate(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .is_some_and(|ty| self.type_is_aggregate(ty))
+    }
+
+    fn type_is_aggregate(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::TupleType(tuple)) if !tuple.types.is_empty()
+        ) || matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::StructType(_))
+        )
+    }
+
+    fn aggregate_is_integer_only(&self, ty: Index) -> bool {
+        let ty = self.types.canonicalize(ty);
+        match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple
+                .types
+                .iter()
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
+            Some(Type::StructType(struct_)) => struct_
+                .members
+                .iter()
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
+            _ => false,
+        }
+    }
+
+    fn aggregate_member_is_integer_like(&self, ty: Index) -> bool {
+        match self.types.get(self.types.canonicalize(ty)) {
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+                    | PrimitiveType::I32
+                    | PrimitiveType::U32,
+                )
+                | Type::RefType(_)
+                | Type::FunctionType(_),
+            ) => true,
+            Some(Type::TupleType(tuple)) => tuple
+                .types
+                .iter()
+                .all(|ty| self.aggregate_member_is_integer_like(*ty)),
+            Some(Type::StructType(struct_)) => struct_
+                .members
+                .iter()
+                .all(|member| self.aggregate_member_is_integer_like(member.ty)),
+            _ => false,
+        }
+    }
+
+    fn type_is_reference(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::RefType(_))
+        )
+    }
+
+    fn type_is_string_reference(&self, ty: Index) -> bool {
+        let Some(Type::RefType(reference)) = self.types.get(self.types.canonicalize(ty)) else {
+            return false;
+        };
+        matches!(
+            self.types.get(self.types.canonicalize(reference.to)),
+            Some(Type::PrimitiveType(PrimitiveType::STR))
+        )
+    }
+
+    fn indexed_string_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        let Place::Index { base, index } = place else {
+            return None;
+        };
+        let Place::Direct(base) = base.as_ref() else {
+            return None;
+        };
+        self.operand_is_string_value(function, base)
+            .then_some((base, index))
+    }
+
+    fn indexed_string_borrow_place<'b>(
+        &self,
+        function: &str,
+        place: &'b Place,
+    ) -> Option<(&'b Operand, &'b Operand)> {
+        self.indexed_string_place(function, place)
+            .and_then(|(base, index)| operand_name(base).is_some().then_some((base, index)))
+    }
+
+    fn load_string_pointer(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        register: Register,
+    ) {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                lines.push(format!(
+                    "  lea {}, [rip + {}]",
+                    register_name(register),
+                    string_literal_label(&data)
+                ));
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                let source = aggregate_member_operand(frame, location, operand, 0)
+                    .expect("string values must have stable frame locations");
+                lines.push(format!(
+                    "  mov {}, QWORD PTR {source}",
+                    register_name(register)
+                ));
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
+    }
+
+    fn type_is_function(&self, ty: Index) -> bool {
+        matches!(
+            self.types.get(self.types.canonicalize(ty)),
+            Some(Type::FunctionType(_))
+        )
+    }
+
+    fn member_place(&self, function: &str, place: &Place) -> Option<(Operand, usize, Index)> {
+        let Place::Member { base, member } = place else {
+            return None;
+        };
+        let (base, offset, ty) = match base.as_ref() {
+            Place::Direct(base) => (base.clone(), 0, self.operand_type(function, base)?),
+            Place::Member { .. } => self.member_place(function, base)?,
+            Place::Index { .. } | Place::Dereference(_) => return None,
+        };
+        let ty = self.types.canonicalize(ty);
+        let member_index = match self.types.get(ty)? {
+            Type::TupleType(tuple) => member
+                .parse()
+                .ok()
+                .filter(|index| *index < tuple.types.len())?,
+            Type::StructType(struct_) => struct_
+                .members
+                .iter()
+                .position(|field| field.name == *member)?,
+            _ => return None,
+        };
+        let layout = self.types.memory_layout(ty)?;
+        let member_layout = layout.members().get(member_index)?;
+        let member_ty = match self.types.get(ty)? {
+            Type::TupleType(tuple) => tuple.types[member_index],
+            Type::StructType(struct_) => struct_.members[member_index].ty,
+            _ => return None,
+        };
+        Some((base, offset + member_layout.offset, member_ty))
+    }
+
+    fn emit_aggregate_copy(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) {
+        let Some(ty) = self.operand_type(function, &inst.src) else {
+            return;
+        };
+        let size = self.types.size_align(ty, Bitness::_64).size;
+        let Some(source) = aggregate_member_operand(frame, location, &inst.src, 0) else {
+            return;
+        };
+        let Some(destination) = aggregate_member_operand(frame, location, &inst.dst, 0) else {
+            return;
+        };
+        let preserved = preserve_register(lines, frame, location, Register::RAX);
+        emit_memory_copy(lines, &source, &destination, size);
+        restore_register(lines, Register::RAX, preserved);
+    }
+
+    fn emit_string_copy(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) {
+        self.emit_string_value_store(lines, frame, function, location, &inst.dst, &inst.src);
+    }
+
+    fn emit_string_value_store(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        destination: &Operand,
+        source: &Operand,
+    ) {
+        let Some(destination) = aggregate_member_operand(frame, location, destination, 0) else {
+            return;
+        };
+        // Local values copy the descriptor; literal bytes remain immutable in .rodata.
+        match source {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                let preserved = preserve_register(lines, frame, location, Register::RAX);
+                lines.push(format!(
+                    "  lea rax, [rip + {}]",
+                    string_literal_label(&data)
+                ));
+                lines.push(format!("  mov QWORD PTR {destination}, rax"));
+                lines.push(format!(
+                    "  mov QWORD PTR {}, {}",
+                    offset_assembly_operand(&destination, 8),
+                    data.len()
+                ));
+                restore_register(lines, Register::RAX, preserved);
+            }
+            _ if self.operand_is_string_value(function, source) => {
+                let Some(source) = aggregate_member_operand(frame, location, source, 0) else {
+                    return;
+                };
+                let preserved = preserve_register(lines, frame, location, Register::RAX);
+                emit_memory_copy(lines, &source, &destination, 16);
+                restore_register(lines, Register::RAX, preserved);
+            }
+            _ => unreachable!("unsupported string copies are diagnosed before emission"),
+        }
+    }
+
+    fn load_string_operand(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+    ) {
+        match operand {
+            Operand::Literal(Lit::String(value)) => {
+                let data = string_literal_data(value);
+                lines.push(format!(
+                    "  lea rax, [rip + {}]",
+                    string_literal_label(&data)
+                ));
+                lines.push(format!("  mov rdx, {}", data.len()));
+            }
+            _ if self.operand_is_string_value(function, operand) => {
+                let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+                    return;
+                };
+                lines.push(format!("  mov rax, QWORD PTR {source}"));
+                lines.push(format!(
+                    "  mov rdx, QWORD PTR {}",
+                    offset_assembly_operand(&source, 8)
+                ));
+            }
+            _ => unreachable!("unsupported string values are diagnosed before emission"),
+        }
+    }
+
+    fn store_string_operand(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        operand: &Operand,
+    ) {
+        let Some(destination) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        lines.push(format!("  mov QWORD PTR {destination}, rax"));
+        lines.push(format!(
+            "  mov QWORD PTR {}, rdx",
+            offset_assembly_operand(&destination, 8)
+        ));
+    }
+
+    fn reference_pointee_size(&self, function: &str, operand: &Operand) -> usize {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.types.pointee_size_align(ty, Bitness::_64))
+            .map(|layout| layout.size)
+            .unwrap_or(4)
+    }
+
+    fn reference_pointee_is_function(&self, function: &str, operand: &Operand) -> bool {
+        self.operand_type(function, operand)
+            .and_then(|ty| match self.types.get(self.types.canonicalize(ty)) {
+                Some(Type::RefType(ref_ty)) => Some(ref_ty.to),
+                _ => None,
+            })
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn reference_pointee_aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        let ty = self.operand_type(function, operand)?;
+        let Type::RefType(reference) = self.types.get(self.types.canonicalize(ty))? else {
+            return None;
+        };
+        self.type_is_aggregate(reference.to)
+            .then(|| self.types.size_align(reference.to, Bitness::_64).size)
+    }
+
+    fn unsupported_load_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 backend does not support member access yet",
-            )),
+            Place::Member { .. } => self.unsupported_member_message(function, place),
+            Place::Index { .. } if self.indexed_string_place(function, place).is_some() => None,
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support indexed access yet",
             )),
+            Place::Dereference(value) if self.operand_is_string_value(function, value) => Some(
+                String::from("x86 backend does not support dereferencing string values yet"),
+            ),
             Place::Dereference(_) | Place::Direct(_) => None,
         }
     }
 
-    fn unsupported_store_message(&self, place: &Place) -> Option<String> {
+    fn unsupported_store_message(&self, function: &str, place: &Place) -> Option<String> {
         match place {
-            Place::Member { .. } => Some(String::from(
-                "x86 backend does not support stores through member access yet",
-            )),
+            Place::Member { .. } => self.unsupported_member_message(function, place),
             Place::Index { .. } => Some(String::from(
                 "x86 backend does not support stores through indexed access yet",
             )),
+            Place::Dereference(value) if self.operand_is_string_value(function, value) => Some(
+                String::from("x86 backend does not support stores through string values yet"),
+            ),
             Place::Dereference(_) | Place::Direct(_) => None,
         }
+    }
+
+    fn unsupported_member_message(&self, function: &str, place: &Place) -> Option<String> {
+        let Some((_, _, ty)) = self.member_place(function, place) else {
+            return Some(String::from(
+                "x86 backend does not support member access through projected references yet",
+            ));
+        };
+        let ty = self.types.canonicalize(ty);
+        (!(matches!(
+            self.types.get(ty),
+            Some(Type::PrimitiveType(
+                PrimitiveType::U32
+                    | PrimitiveType::I32
+                    | PrimitiveType::F32
+                    | PrimitiveType::BOOL
+                    | PrimitiveType::CHAR
+            ))
+        ) || ((self.type_is_reference(ty) || self.type_is_function(ty))
+            && self.types.size_align(ty, Bitness::_64).size == 8)
+            || self.type_is_aggregate(ty)))
+        .then(|| {
+            format!(
+                "x86 backend does not support non-scalar aggregate members yet: {}",
+                self.types.to_string_index(ty)
+            )
+        })
     }
 
     fn unsupported_place_operand_message(&self, function: &str, place: &Place) -> Option<String> {
@@ -576,19 +1307,6 @@ impl<'a> CodeGeneratorX86<'a> {
                 .unsupported_place_operand_message(function, base)
                 .or_else(|| self.unsupported_operand_message(function, index)),
         }
-    }
-
-    fn unsupported_reference_abi_message(&self, ty: Index) -> Option<String> {
-        let ty = self.types.canonicalize(ty);
-        if matches!(self.types.get(ty), Some(Type::RefType(_)))
-            && self.unsupported_type_message(ty).is_none()
-        {
-            return Some(format!(
-                "x86 backend does not support reference parameters or returns yet: {}",
-                self.types.to_string_index(ty)
-            ));
-        }
-        None
     }
 
     fn unsupported_assignment_operator_message(
@@ -643,9 +1361,6 @@ impl<'a> CodeGeneratorX86<'a> {
 
     fn unsupported_operand_message(&self, function: &str, operand: &Operand) -> Option<String> {
         match operand {
-            Operand::Literal(Lit::String(_)) => Some(String::from(
-                "x86 backend does not support string values yet: &str",
-            )),
             Operand::Variable(name) => self
                 .function_symbol_entry(function, name)
                 .and_then(|entry| entry.var_type)
@@ -677,19 +1392,28 @@ impl<'a> CodeGeneratorX86<'a> {
                 "x86 backend does not support vararg function signatures yet: {function}"
             ));
         }
+        let locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_type_message(*ty)
-                    .or_else(|| self.unsupported_float_abi_message(*ty))
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            .enumerate()
+            .find_map(|(index, ty)| {
+                self.unsupported_aggregate_type_message(*ty, locations.get(index))
+                    .or_else(|| self.unsupported_type_message(*ty))
             })
             .or_else(|| {
-                self.unsupported_type_message(signature.return_type)
-                    .or_else(|| self.unsupported_float_abi_message(signature.return_type))
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+                self.unsupported_aggregate_type_message(
+                    signature.return_type,
+                    self.target
+                        .calling_convention()
+                        .assign_ret(self.types, signature)
+                        .as_ref(),
+                )
             })
+            .or_else(|| self.unsupported_type_message(signature.return_type))
     }
 
     fn unsupported_call_signature_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
@@ -697,29 +1421,31 @@ impl<'a> CodeGeneratorX86<'a> {
         if signature.is_vararg {
             return Some(format!(
                 "x86 backend does not support calls to vararg functions yet: {}",
-                inst.function
+                inst.target
             ));
         }
         signature
             .params
             .iter()
-            .find_map(|ty| {
-                self.unsupported_float_abi_message(*ty)
-                    .or_else(|| self.unsupported_reference_abi_message(*ty))
+            .enumerate()
+            .find_map(|(index, ty)| {
+                self.unsupported_aggregate_type_message(
+                    *ty,
+                    self.target
+                        .calling_convention()
+                        .assign_args(self.types, 0, signature)
+                        .get(index),
+                )
             })
             .or_else(|| {
-                self.unsupported_float_abi_message(signature.return_type)
-                    .or_else(|| self.unsupported_reference_abi_message(signature.return_type))
+                self.unsupported_aggregate_type_message(
+                    signature.return_type,
+                    self.target
+                        .calling_convention()
+                        .assign_ret(self.types, signature)
+                        .as_ref(),
+                )
             })
-    }
-
-    fn unsupported_call_target_message(&self, inst: &FunctionCallInstruction) -> Option<String> {
-        (!inst.is_direct_function).then(|| {
-            format!(
-                "x86 backend does not support indirect calls through function values yet: {}",
-                inst.function
-            )
-        })
     }
 
     fn unsupported_type_message(&self, ty: Index) -> Option<String> {
@@ -729,51 +1455,115 @@ impl<'a> CodeGeneratorX86<'a> {
             Type::PrimitiveType(PrimitiveType::STR) => Some(format!(
                 "x86 backend does not support string values yet: {name}"
             )),
-            Type::TupleType(tuple) if !tuple.types.is_empty() => Some(format!(
-                "x86 backend does not support tuple values yet: {name}"
-            )),
-            Type::StructType(_) => Some(format!(
-                "x86 backend does not support struct values yet: {name}"
-            )),
             Type::RefType(ref_ty)
                 if matches!(
                     self.types.get(self.types.canonicalize(ref_ty.to)),
                     Some(Type::PrimitiveType(PrimitiveType::STR))
                 ) =>
             {
-                Some(format!(
-                    "x86 backend does not support string values yet: {name}"
-                ))
+                None
             }
+            Type::RefType(ref_ty) if self.type_is_string_reference(ref_ty.to) => Some(format!(
+                "x86 backend does not support nested string references yet: {name}"
+            )),
             Type::RefType(ref_ty) if self.reference_target_supported(ref_ty.to) => None,
             Type::RefType(_) => Some(format!(
                 "x86 backend does not support references to `{name}` values yet"
             )),
-            Type::FunctionType(_) => Some(format!(
-                "x86 backend does not support function values yet: {name}"
-            )),
-            Type::TupleType(_) | Type::TypeDefType(_) | Type::PrimitiveType(_) | Type::Unknown => {
-                None
-            }
+            Type::FunctionType(_) => None,
+            Type::TupleType(_)
+            | Type::StructType(_)
+            | Type::TypeDefType(_)
+            | Type::PrimitiveType(_)
+            | Type::Unknown => None,
         }
     }
 
     fn reference_target_supported(&self, ty: Index) -> bool {
         matches!(
             self.types.get(self.types.canonicalize(ty)),
-            Some(Type::PrimitiveType(
-                PrimitiveType::BOOL | PrimitiveType::CHAR | PrimitiveType::I32 | PrimitiveType::U32
-            ))
-        )
+            Some(
+                Type::PrimitiveType(
+                    PrimitiveType::BOOL
+                        | PrimitiveType::CHAR
+                        | PrimitiveType::I32
+                        | PrimitiveType::U32
+                ) | Type::FunctionType(_)
+            )
+        ) || (self.type_is_aggregate(ty) && self.aggregate_is_integer_only(ty))
     }
 
-    fn unsupported_float_abi_message(&self, ty: Index) -> Option<String> {
-        is_f32_type(self.types, ty).then(|| {
-            format!(
-                "x86 backend does not support f32 parameters, calls, or returns yet: {}",
-                self.types.to_string_index(ty)
-            )
-        })
+    fn unsupported_aggregate_type_message(
+        &self,
+        ty: Index,
+        location: Option<&Location>,
+    ) -> Option<String> {
+        if !self.type_is_aggregate(ty)
+            || self.aggregate_is_integer_only(ty)
+                && (location.is_none()
+                    || matches!(
+                        location,
+                        Some(
+                            Location::NoStorage
+                                | Location::Register(_)
+                                | Location::Stack(_)
+                                | Location::Indirect { .. }
+                        )
+                    )
+                    || location.and_then(register_pair).is_some()
+                    || location.and_then(stack_location_offset).is_some())
+        {
+            return None;
+        }
+        let detail = match location {
+            Some(Location::Pair { .. }) if location.and_then(register_pair).is_some() => {
+                "register-pair aggregate ABI values"
+            }
+            Some(Location::Pair { .. }) => "stack-passed aggregate ABI values",
+            Some(Location::Stack(_) | Location::RegisterAndStack(_, _)) => {
+                "stack-passed aggregate ABI values"
+            }
+            Some(Location::Indirect { .. }) => "indirect aggregate ABI values",
+            _ if !self.aggregate_is_integer_only(ty) => "non-integer aggregate ABI values",
+            _ => "aggregate ABI values",
+        };
+        Some(format!(
+            "x86 backend does not support {detail} yet: {}",
+            self.types.to_string_index(ty)
+        ))
+    }
+
+    fn unsupported_aggregate_operand_message(
+        &self,
+        function: &str,
+        operand: &Operand,
+        location: Option<&Location>,
+    ) -> Option<String> {
+        self.operand_type(function, operand)
+            .and_then(|ty| self.unsupported_aggregate_type_message(ty, location))
+    }
+
+    fn unsupported_copy_message(
+        &self,
+        function: &str,
+        inst: &crate::generators::tac::instructions::CopyInstruction,
+    ) -> Option<String> {
+        if self.operand_is_aggregate(function, &inst.src)
+            || self.operand_is_aggregate(function, &inst.dst)
+        {
+            let source = self.operand_type(function, &inst.src)?;
+            let destination = self.operand_type(function, &inst.dst)?;
+            if self.types.eq(source, destination) && self.type_is_aggregate(source) {
+                None
+            } else {
+                Some(String::from(
+                    "x86 backend does not support aggregate copies with mismatched types",
+                ))
+            }
+        } else {
+            self.unsupported_operand_message(function, &inst.dst)
+                .or_else(|| self.unsupported_operand_message(function, &inst.src))
+        }
     }
 
     fn operand_is_f32(&self, function: &str, operand: &Operand) -> bool {
@@ -809,6 +1599,73 @@ impl<'a> CodeGeneratorX86<'a> {
                 Type::FunctionType(signature) => Some(signature),
                 _ => None,
             })
+    }
+
+    fn function_return_register(&self, function: &str) -> Option<Register> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
+    }
+
+    fn function_returns_function(&self, function: &str) -> bool {
+        self.function_signature(function)
+            .is_some_and(|signature| self.type_is_function(signature.return_type))
+    }
+
+    fn function_return_pair(&self, function: &str) -> Option<(Register, Register)> {
+        let signature = self.function_signature(function)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
+    }
+
+    fn function_return_indirect_size(&self, function: &str) -> Option<usize> {
+        let signature = self.function_signature(function)?;
+        match self
+            .target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+        {
+            Some(Location::Indirect { size, .. }) => Some(size),
+            _ => None,
+        }
+    }
+
+    fn function_call_return_register(&self, inst: &FunctionCallInstruction) -> Option<Register> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(outgoing_register)
+    }
+
+    fn function_call_return_pair(
+        &self,
+        inst: &FunctionCallInstruction,
+    ) -> Option<(Register, Register)> {
+        let signature = self.function_call_signature(inst)?;
+        self.target
+            .calling_convention()
+            .assign_ret(self.types, signature)
+            .as_ref()
+            .and_then(register_pair)
+    }
+
+    fn function_call_indirect_return(&self, inst: &FunctionCallInstruction) -> bool {
+        self.function_call_signature(inst).is_some_and(|signature| {
+            matches!(
+                self.target
+                    .calling_convention()
+                    .assign_ret(self.types, signature),
+                Some(Location::Indirect { .. })
+            )
+        })
     }
 
     fn operand_primitive_type(&self, function: &str, operand: &Operand) -> Option<PrimitiveType> {
@@ -877,6 +1734,22 @@ impl<'a> CodeGeneratorX86<'a> {
                 load_operand(lines, frame, location, &inst.right, target_register);
             }
             (Some(left), operators::PLUS) => {
+                if frame
+                    .operand_location(location, &inst.right)
+                    .and_then(AssemblyLocation::register)
+                    == Some(target_register)
+                {
+                    // Preserve a call result before loading the left side into its register.
+                    lines.push(format!("  push {}", register_name(target_register)));
+                    load_operand(lines, frame, location, left, target_register);
+                    lines.push(format!(
+                        "  add {}, DWORD PTR [rsp]",
+                        register_name_32(target_register)
+                    ));
+                    lines.push(String::from("  add rsp, 8"));
+                    store_operand(lines, frame, location, &inst.target, target_register);
+                    return;
+                }
                 load_operand(lines, frame, location, left, target_register);
                 lines.push(format!(
                     "  add {}, {}",
@@ -1112,44 +1985,165 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
-        location: CodeLocation,
-        pending_param_count: usize,
+        function: &str,
+        emission: &InstructionEmission<'_>,
         inst: &FunctionCallInstruction,
     ) {
-        let arg_locations = self
-            .function_call_signature(inst)
-            .map(|signature| {
-                self.target
-                    .calling_convention()
-                    .assign_args(self.types, 0, signature)
-            })
-            .unwrap_or_default();
-        let register_args = arg_locations
-            .iter()
-            .take(pending_param_count)
-            .filter_map(outgoing_register)
-            .collect::<Vec<_>>();
-        for register in register_args {
-            lines.push(format!("  pop {}", register_name(register)));
+        let location = emission.location;
+        let indirect_return = self.function_call_indirect_return(inst);
+        let mut staged_indirect_target = emission.staged_indirect_target;
+        if !staged_indirect_target && indirect_return {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                // Zero-argument calls have no ParameterInstruction at which to stage a target.
+                lines.push(String::from("  push rax"));
+                load_function_operand(lines, frame, location, target, Register::RAX);
+                lines.push(String::from("  xchg QWORD PTR [rsp], rax"));
+                staged_indirect_target = true;
+            }
         }
-
-        let stack_arg_count = arg_locations
+        let signature = self
+            .function_call_signature(inst)
+            .expect("function call should reference a checked function signature");
+        let arg_locations = self
+            .target
+            .calling_convention()
+            .assign_args(self.types, 0, signature);
+        let arg_locations = &arg_locations[..*emission.pending_param_count];
+        let arg_types = &signature.params[..*emission.pending_param_count];
+        let stack_arg_count = arg_types
             .iter()
-            .take(pending_param_count)
-            .filter(|abi_location| matches!(abi_location, Location::Stack(_)))
-            .count();
+            .zip(arg_locations.iter())
+            .filter_map(|(ty, location)| {
+                stack_location_offset(location).map(|offset| {
+                    offset
+                        + self
+                            .types
+                            .size_align(*ty, Bitness::_64)
+                            .size
+                            .div_ceil(STACK_ARG_SLOT_BYTES)
+                })
+            })
+            .max()
+            .unwrap_or(0);
+        let indexed_arguments = non_stack_argument_follows_stack_argument(arg_locations);
+        let argument_slot_counts = arg_types
+            .iter()
+            .zip(arg_locations.iter())
+            .map(|(ty, location)| self.staged_argument_slot_count(*ty, location))
+            .collect::<Vec<_>>();
+        let staged_arg_count =
+            usize::from(indexed_arguments) * argument_slot_counts.iter().sum::<usize>();
         let stack_padding = frame.call_stack_padding(
-            stack_arg_count,
+            stack_arg_count + staged_arg_count + usize::from(staged_indirect_target),
             self.target.calling_convention().stack_alignment(),
         );
-        emit_call_stack_padding(lines, stack_arg_count, stack_padding);
-        lines.push(format!("  call {}", inst.function));
-        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
+        if indirect_return {
+            if let Some(destination) = inst
+                .return_target
+                .as_ref()
+                .and_then(|target| aggregate_member_operand(frame, location, target, 0))
+            {
+                lines.push(format!("  lea rdi, {destination}"));
+            }
+        }
+        if indexed_arguments {
+            emit_indexed_call_arguments(
+                lines,
+                arg_locations,
+                &argument_slot_counts,
+                stack_arg_count,
+                stack_padding,
+            );
+        } else {
+            for abi_location in arg_locations {
+                if matches!(abi_location, Location::NoStorage) {
+                    continue;
+                }
+                if let Some((low, high)) = register_pair(abi_location) {
+                    lines.push(format!("  pop {}", register_name(low)));
+                    lines.push(format!("  pop {}", register_name(high)));
+                } else if let Some(register) = outgoing_register(abi_location) {
+                    if is_xmm_register(register) {
+                        lines.push(format!(
+                            "  movss {}, DWORD PTR [rsp]",
+                            register_name(register)
+                        ));
+                        lines.push(String::from("  add rsp, 8"));
+                    } else {
+                        lines.push(format!("  pop {}", register_name(register)));
+                    }
+                }
+            }
+            emit_call_stack_padding(lines, stack_arg_count, stack_padding);
+        }
+        let stack_cleanup = stack_arg_count * STACK_ARG_SLOT_BYTES
+            + stack_padding
+            + staged_arg_count * STACK_ARG_SLOT_BYTES;
+        match &inst.target {
+            FunctionCallTarget::Direct(name) => lines.push(format!("  call {name}")),
+            FunctionCallTarget::Indirect(target) => {
+                if staged_indirect_target {
+                    lines.push(format!("  call QWORD PTR {}", rsp_slot(stack_cleanup)));
+                } else {
+                    load_function_operand(lines, frame, location, target, Register::RAX);
+                    lines.push(String::from("  call rax"));
+                }
+            }
+        }
         if stack_cleanup > 0 {
             lines.push(format!("  add rsp, {stack_cleanup}"));
         }
+        if staged_indirect_target {
+            lines.push(String::from("  add rsp, 8"));
+        }
         if let Some(return_target) = &inst.return_target {
-            store_operand(lines, frame, location, return_target, Register::RAX);
+            let return_register = self
+                .function_call_return_register(inst)
+                .unwrap_or(Register::RAX);
+            if self.operand_is_string_value(function, return_target) {
+                self.store_string_operand(lines, frame, location, return_target);
+            } else if self.operand_is_aggregate(function, return_target) {
+                if indirect_return {
+                    // The callee has written directly to the return target and returns it in RAX.
+                } else if let Some((low, high)) = self.function_call_return_pair(inst) {
+                    self.store_aggregate_pair(
+                        lines,
+                        frame,
+                        function,
+                        location,
+                        return_target,
+                        (low, high),
+                    );
+                } else {
+                    self.store_aggregate_from_register(
+                        lines,
+                        frame,
+                        function,
+                        location,
+                        return_target,
+                        return_register,
+                    );
+                }
+            } else if self.operand_is_reference(function, return_target)
+                || self.operand_is_function(function, return_target)
+            {
+                store_reference_operand(lines, frame, location, return_target, return_register);
+            } else if self.operand_is_f32(function, return_target) {
+                store_float_operand(lines, frame, location, return_target, return_register);
+            } else {
+                store_operand(lines, frame, location, return_target, return_register);
+            }
+        }
+    }
+
+    fn staged_argument_slot_count(&self, ty: Index, location: &Location) -> usize {
+        if self.type_is_aggregate(ty) {
+            self.types
+                .size_align(ty, Bitness::_64)
+                .size
+                .div_ceil(STACK_ARG_SLOT_BYTES)
+        } else {
+            staged_argument_slot_count(location)
         }
     }
 
@@ -1157,10 +2151,56 @@ impl<'a> CodeGeneratorX86<'a> {
         &self,
         lines: &mut Vec<String>,
         frame: &FrameLayout<'_>,
+        function: &str,
         location: CodeLocation,
         operand: &Operand,
     ) {
-        load_operand(lines, frame, location, operand, Register::RAX);
+        if self.operand_is_string_value(function, operand) {
+            lines.push(format!("  sub rsp, {}", 2 * STACK_ARG_SLOT_BYTES));
+            let preserved_rax = preserve_register(lines, frame, location, Register::RAX);
+            let preserved_rdx = preserve_register(lines, frame, location, Register::RDX);
+            self.load_string_operand(lines, frame, function, location, operand);
+            let descriptor_offset =
+                STACK_ARG_SLOT_BYTES * (usize::from(preserved_rax) + usize::from(preserved_rdx));
+            lines.push(format!(
+                "  mov QWORD PTR {}, rax",
+                rsp_slot(descriptor_offset)
+            ));
+            lines.push(format!(
+                "  mov QWORD PTR {}, rdx",
+                rsp_slot(descriptor_offset + STACK_ARG_SLOT_BYTES)
+            ));
+            restore_register(lines, Register::RDX, preserved_rdx);
+            restore_register(lines, Register::RAX, preserved_rax);
+            return;
+        } else if self.operand_is_aggregate(function, operand) {
+            let Some(size) = self.aggregate_size(function, operand) else {
+                return;
+            };
+            let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+                return;
+            };
+            let slots = size.div_ceil(STACK_ARG_SLOT_BYTES);
+            lines.push(format!("  sub rsp, {}", slots * STACK_ARG_SLOT_BYTES));
+            for slot in 0..slots {
+                lines.push(format!(
+                    "  mov QWORD PTR {}, 0",
+                    rsp_slot(slot * STACK_ARG_SLOT_BYTES)
+                ));
+            }
+            emit_memory_copy(lines, &source, "[rsp]", size);
+            return;
+        } else if self.operand_is_f32(function, operand) {
+            stage_float_parameter(lines, frame, location, operand);
+            return;
+        }
+        if self.operand_is_reference(function, operand) {
+            load_reference_operand(lines, frame, location, operand, Register::RAX);
+        } else if self.operand_is_function(function, operand) {
+            load_function_operand(lines, frame, location, operand, Register::RAX);
+        } else {
+            load_operand(lines, frame, location, operand, Register::RAX);
+        }
         lines.push(String::from("  push rax"));
     }
 
@@ -1176,19 +2216,26 @@ impl<'a> CodeGeneratorX86<'a> {
                 .map(|offset| offset.0 + 1)
                 .max()
                 .unwrap_or(0);
-            let spill_bytes = spill_count * 4;
+            let spill_bytes = spill_count * STACK_ARG_SLOT_BYTES;
             let mut home_bytes = align_to(spill_bytes, 8);
+            let function = self.cfg[range.start].label.as_str();
             let home_slots = self
                 .home_slot_names(range)
                 .into_iter()
                 .map(|name| {
-                    home_bytes += 8;
+                    let layout = self.symbol_frame_size_align(function, &name);
+                    home_bytes = layout.align.align(home_bytes);
+                    home_bytes += layout.size;
                     (
                         name,
                         saved_registers.len() * STACK_ARG_SLOT_BYTES + home_bytes,
                     )
                 })
                 .collect();
+            let indirect_return_slot = self.function_return_indirect_size(function).map(|_| {
+                home_bytes += STACK_ARG_SLOT_BYTES;
+                saved_registers.len() * STACK_ARG_SLOT_BYTES + home_bytes
+            });
             let stack_size = align_to(
                 home_bytes,
                 self.target.calling_convention().stack_alignment(),
@@ -1199,11 +2246,19 @@ impl<'a> CodeGeneratorX86<'a> {
                 home_slots,
                 saved_registers,
                 stack_size,
+                indirect_return_slot,
             }
         } else {
             let fallback_slots = self.stack_slots(range);
+            let indirect_return_slot = self
+                .function_return_indirect_size(self.cfg[range.start].label.as_str())
+                .map(|_| {
+                    fallback_slots.values().copied().max().unwrap_or(0) + STACK_ARG_SLOT_BYTES
+                });
             let stack_size = align_to(
-                fallback_slots.values().copied().max().unwrap_or(0),
+                indirect_return_slot
+                    .or_else(|| fallback_slots.values().copied().max())
+                    .unwrap_or(0),
                 self.target.calling_convention().stack_alignment(),
             );
             FrameLayout {
@@ -1212,6 +2267,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 home_slots: BTreeMap::new(),
                 saved_registers: Vec::new(),
                 stack_size,
+                indirect_return_slot,
             }
         }
     }
@@ -1245,13 +2301,114 @@ impl<'a> CodeGeneratorX86<'a> {
                 {
                     continue;
                 }
+                let parameter = Operand::Variable(assigned.interval().variable.clone());
+                let Some(destination) = frame.operand_location(constraint.location(), &parameter)
+                else {
+                    continue;
+                };
+                if self.symbol_is_string_reference(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) {
+                    let Some(destination) =
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0)
+                    else {
+                        continue;
+                    };
+                    if let Some((low, high)) = register_pair(constraint.abi_location()) {
+                        store_aggregate_register(lines, low, &destination, 8);
+                        store_aggregate_register(
+                            lines,
+                            high,
+                            &offset_assembly_operand(&destination, 8),
+                            8,
+                        );
+                    } else if let Some(offset) = stack_location_offset(constraint.abi_location()) {
+                        emit_memory_copy(
+                            lines,
+                            &format!("[rbp+{}]", 16 + offset * STACK_ARG_SLOT_BYTES),
+                            &destination,
+                            16,
+                        );
+                    }
+                    continue;
+                }
+                if self.symbol_is_aggregate(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) {
+                    if let (Some((low, high)), Some(size), Some(destination)) = (
+                        register_pair(constraint.abi_location()),
+                        self.aggregate_size(&self.cfg[range.start].label, &parameter),
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        store_aggregate_register(lines, low, &destination, 8);
+                        store_aggregate_register(
+                            lines,
+                            high,
+                            &offset_assembly_operand(&destination, 8),
+                            size - 8,
+                        );
+                        continue;
+                    }
+                    if let (Some(size), Some(offset), Some(destination)) = (
+                        self.aggregate_size(&self.cfg[range.start].label, &parameter),
+                        stack_location_offset(constraint.abi_location()),
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        emit_memory_copy(
+                            lines,
+                            &format!("[rbp+{}]", 16 + offset * STACK_ARG_SLOT_BYTES),
+                            &destination,
+                            size,
+                        );
+                        continue;
+                    }
+                }
                 let Some(source) = incoming_location(constraint.abi_location()) else {
                     continue;
                 };
-                let Some(destination) = frame.frame_location(assigned.location()) else {
-                    continue;
-                };
-                move_location(lines, source, destination, Register::RAX);
+                if self.symbol_is_f32(&self.cfg[range.start].label, &assigned.interval().variable) {
+                    move_float_location(lines, source, destination, Register::XMM15);
+                } else if self.symbol_is_aggregate(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) {
+                    let parameter = Operand::Variable(assigned.interval().variable.clone());
+                    let size = self.aggregate_size(&self.cfg[range.start].label, &parameter);
+                    if let (Some(size), AssemblyLocation::Register(source)) = (size, source) {
+                        if let Some(destination) =
+                            aggregate_member_operand(frame, constraint.location(), &parameter, 0)
+                        {
+                            store_aggregate_register(lines, source, &destination, size);
+                        }
+                    } else if let (Some(size), Some(destination)) = (
+                        size,
+                        aggregate_member_operand(frame, constraint.location(), &parameter, 0),
+                    ) {
+                        emit_memory_copy(
+                            lines,
+                            &assembly_operand(source).replace("DWORD PTR ", ""),
+                            &destination,
+                            size,
+                        );
+                    }
+                } else if self.symbol_is_reference(
+                    &self.cfg[range.start].label,
+                    &assigned.interval().variable,
+                ) || self
+                    .symbol_is_function(&self.cfg[range.start].label, &assigned.interval().variable)
+                {
+                    let Some(destination) = frame.variable_location(
+                        assigned.interval().variable.as_str(),
+                        assigned.location(),
+                    ) else {
+                        continue;
+                    };
+                    move_location(lines, source, destination, Register::RAX, MoveWidth::Bits64);
+                } else {
+                    move_location(lines, source, destination, Register::RAX, MoveWidth::Bits32);
+                }
             }
         }
     }
@@ -1268,13 +2425,9 @@ impl<'a> CodeGeneratorX86<'a> {
         names
             .into_iter()
             .map(|name| {
-                let size = if self.symbol_is_reference(function, &name) {
-                    8
-                } else {
-                    4
-                };
-                offset = align_to(offset, size);
-                offset += size;
+                let layout = self.symbol_frame_size_align(function, &name);
+                offset = layout.align.align(offset);
+                offset += layout.size;
                 (name, offset)
             })
             .collect()
@@ -1302,6 +2455,7 @@ impl<'a> CodeGeneratorX86<'a> {
                 {
                     if self.symbol_is_reference(function, &name)
                         || self.symbol_is_f32(function, &name)
+                        || self.symbol_is_aggregate(function, &name)
                     {
                         names.insert(name);
                     }
@@ -1322,10 +2476,204 @@ impl<'a> CodeGeneratorX86<'a> {
             })
     }
 
+    fn symbol_is_string_reference(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_string_reference(ty))
+    }
+
+    fn symbol_is_function(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_function(ty))
+    }
+
+    fn symbol_frame_size_align(&self, function: &str, name: &str) -> SizeAlign {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .map(|ty| self.types.frame_size_align(ty, Bitness::_64))
+            .filter(|layout| layout.size > 0)
+            .unwrap_or_else(|| SizeAlign::from_size(4))
+    }
+
     fn symbol_is_f32(&self, function: &str, name: &str) -> bool {
         self.function_symbol_entry(function, name)
             .and_then(|entry| entry.var_type)
             .is_some_and(|ty| is_f32_type(self.types, ty))
+    }
+
+    fn symbol_is_aggregate(&self, function: &str, name: &str) -> bool {
+        self.function_symbol_entry(function, name)
+            .and_then(|entry| entry.var_type)
+            .is_some_and(|ty| self.type_is_aggregate(ty))
+    }
+
+    fn aggregate_size(&self, function: &str, operand: &Operand) -> Option<usize> {
+        self.operand_type(function, operand)
+            .filter(|ty| self.type_is_aggregate(*ty))
+            .map(|ty| self.types.size_align(ty, Bitness::_64).size)
+    }
+
+    fn aggregate_member_ranges(
+        &self,
+        ty: Index,
+        base_offset: usize,
+        ranges: &mut Vec<(usize, usize)>,
+    ) {
+        let ty = self.types.canonicalize(ty);
+        let members = match self.types.get(ty) {
+            Some(Type::TupleType(tuple)) => tuple.types.to_vec(),
+            Some(Type::StructType(struct_)) => {
+                struct_.members.iter().map(|member| member.ty).collect()
+            }
+            _ => {
+                ranges.push((base_offset, self.types.size_align(ty, Bitness::_64).size));
+                return;
+            }
+        };
+        let layout = self.types.memory_layout(ty).unwrap();
+        for (member, member_layout) in members.iter().zip(layout.members()) {
+            self.aggregate_member_ranges(*member, base_offset + member_layout.offset, ranges);
+        }
+    }
+
+    fn load_aggregate_operand(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        register: Register,
+    ) {
+        let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(ty) = self.operand_type(function, operand) else {
+            return;
+        };
+        let mut ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut ranges);
+        load_aggregate_register(lines, &source, register, &ranges);
+    }
+
+    fn store_aggregate_from_register(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        register: Register,
+    ) {
+        let Some(destination) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(size) = self.aggregate_size(function, operand) else {
+            return;
+        };
+        store_aggregate_register(lines, register, &destination, size);
+    }
+
+    fn emit_indirect_aggregate_return(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        location: CodeLocation,
+        operand: &Operand,
+        size: usize,
+    ) {
+        let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(result_slot) = frame.indirect_return_slot else {
+            return;
+        };
+        lines.push(format!("  mov rax, QWORD PTR [rbp-{result_slot}]"));
+        for offset in (0..size).step_by(4) {
+            let width = (size - offset).min(4);
+            let source = offset_assembly_operand(&source, offset);
+            if width == 4 {
+                lines.push(format!("  mov ecx, DWORD PTR {source}"));
+                lines.push(format!("  mov DWORD PTR [rax+{offset}], ecx"));
+            } else {
+                for byte in 0..width {
+                    let source = offset_assembly_operand(&source, byte);
+                    lines.push(format!("  mov cl, BYTE PTR {source}"));
+                    lines.push(format!("  mov BYTE PTR [rax+{}], cl", offset + byte));
+                }
+            }
+        }
+        lines.push(format!("  mov rax, QWORD PTR [rbp-{result_slot}]"));
+    }
+
+    fn load_aggregate_pair(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        registers: (Register, Register),
+    ) {
+        let (low, high) = registers;
+        let Some(source) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(ty) = self.operand_type(function, operand) else {
+            return;
+        };
+        let mut member_ranges = Vec::new();
+        self.aggregate_member_ranges(ty, 0, &mut member_ranges);
+        let low_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let end = (*offset + *size).min(8);
+                (*offset < end).then(|| (*offset, end - *offset))
+            })
+            .collect::<Vec<_>>();
+        let high_ranges = member_ranges
+            .iter()
+            .filter_map(|(offset, size)| {
+                let start = (*offset).max(8);
+                let end = (*offset + *size).min(16);
+                (start < end).then(|| (start - 8, end - start))
+            })
+            .collect::<Vec<_>>();
+
+        // This materialization uses RAX as scratch, so load RDX before the RAX half.
+        load_aggregate_register(
+            lines,
+            &offset_assembly_operand(&source, 8),
+            high,
+            &high_ranges,
+        );
+        load_aggregate_register(lines, &source, low, &low_ranges);
+    }
+
+    fn store_aggregate_pair(
+        &self,
+        lines: &mut Vec<String>,
+        frame: &FrameLayout<'_>,
+        function: &str,
+        location: CodeLocation,
+        operand: &Operand,
+        registers: (Register, Register),
+    ) {
+        let (low, high) = registers;
+        let Some(destination) = aggregate_member_operand(frame, location, operand, 0) else {
+            return;
+        };
+        let Some(size) = self.aggregate_size(function, operand) else {
+            return;
+        };
+        store_aggregate_register(lines, low, &destination, 8);
+        store_aggregate_register(
+            lines,
+            high,
+            &offset_assembly_operand(&destination, 8),
+            size - 8,
+        );
     }
 }
 
@@ -1527,8 +2875,63 @@ fn collect_instruction_operands(instruction: &Instruction, names: &mut BTreeSet<
             }
         }
         Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand(target, names);
+            }
             if let Some(target) = &inst.return_target {
                 collect_operand(target, names);
+            }
+        }
+        Instruction::Jump(_)
+        | Instruction::Function(_)
+        | Instruction::EndFunction(_)
+        | Instruction::Extern(_) => {}
+    }
+}
+
+fn collect_instruction_string_literals(instruction: &Instruction, literals: &mut BTreeSet<String>) {
+    match instruction {
+        Instruction::Borrow(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.target, literals);
+        }
+        Instruction::Load(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.target, literals);
+        }
+        Instruction::Store(inst) => {
+            collect_place_string_literals(&inst.place, literals);
+            collect_operand_string_literal(&inst.value, literals);
+        }
+        Instruction::Assignment(inst) => {
+            collect_operand_string_literal(&inst.target, literals);
+            if let Some(left) = &inst.left {
+                collect_operand_string_literal(left, literals);
+            }
+            collect_operand_string_literal(&inst.right, literals);
+        }
+        Instruction::Copy(inst) => {
+            collect_operand_string_literal(&inst.src, literals);
+            collect_operand_string_literal(&inst.dst, literals);
+        }
+        Instruction::ConditionalJump(inst) => {
+            if let Some(left) = &inst.left {
+                collect_operand_string_literal(left, literals);
+            }
+            collect_operand_string_literal(&inst.right, literals);
+        }
+        Instruction::Parameter(inst) => collect_operand_string_literal(&inst.param, literals),
+        Instruction::Return(inst) => {
+            if let Some(value) = &inst.value {
+                collect_operand_string_literal(value, literals);
+            }
+        }
+        Instruction::FunctionCall(inst) => {
+            if let FunctionCallTarget::Indirect(target) = &inst.target {
+                collect_operand_string_literal(target, literals);
+            }
+            if let Some(target) = &inst.return_target {
+                collect_operand_string_literal(target, literals);
             }
         }
         Instruction::Jump(_)
@@ -1549,6 +2952,19 @@ fn collect_place_operands(place: &Place, names: &mut BTreeSet<String>) {
     }
 }
 
+fn collect_place_string_literals(place: &Place, literals: &mut BTreeSet<String>) {
+    match place {
+        Place::Direct(value) | Place::Dereference(value) => {
+            collect_operand_string_literal(value, literals)
+        }
+        Place::Member { base, .. } => collect_place_string_literals(base, literals),
+        Place::Index { base, index } => {
+            collect_place_string_literals(base, literals);
+            collect_operand_string_literal(index, literals);
+        }
+    }
+}
+
 fn collect_operand(operand: &Operand, names: &mut BTreeSet<String>) {
     match operand {
         Operand::Variable(name) => {
@@ -1558,6 +2974,12 @@ fn collect_operand(operand: &Operand, names: &mut BTreeSet<String>) {
             names.insert(label.to_string());
         }
         Operand::Literal(_) | Operand::Label(_) | Operand::Placeholder => {}
+    }
+}
+
+fn collect_operand_string_literal(operand: &Operand, literals: &mut BTreeSet<String>) {
+    if let Operand::Literal(Lit::String(value)) = operand {
+        literals.insert(value.clone());
     }
 }
 
@@ -1596,9 +3018,23 @@ struct FrameLayout<'a> {
     home_slots: BTreeMap<String, usize>,
     saved_registers: Vec<Register>,
     stack_size: usize,
+    indirect_return_slot: Option<usize>,
+}
+
+struct InstructionEmission<'a> {
+    location: CodeLocation,
+    pending_param_count: &'a mut usize,
+    staged_indirect_target: bool,
 }
 
 impl<'a> FrameLayout<'a> {
+    fn variable_location(&self, name: &str, allocated: &Location) -> Option<AssemblyLocation> {
+        self.home_slots
+            .get(name)
+            .map(|offset| AssemblyLocation::FrameStack { offset: *offset })
+            .or_else(|| self.frame_location(allocated))
+    }
+
     fn operand_location(
         &self,
         location: CodeLocation,
@@ -1630,18 +3066,21 @@ impl<'a> FrameLayout<'a> {
                 offset: self.frame_stack_offset(*offset),
             }),
             Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
-            Location::Indirect { .. } | Location::Pair { .. } => None,
+            Location::NoStorage | Location::Indirect { .. } | Location::Pair { .. } => None,
         }
     }
 
     fn frame_stack_offset(&self, offset: StackOffset) -> usize {
-        self.saved_registers.len() * 8 + (offset.0 + 1) * 4
+        self.saved_registers.len() * STACK_ARG_SLOT_BYTES + (offset.0 + 1) * STACK_ARG_SLOT_BYTES
     }
 
     fn register_occupied(&self, location: CodeLocation, register: Register) -> bool {
         self.allocations.is_some_and(|allocations| {
             allocations.iter().any(|assigned| {
-                assigned.interval().span.start <= location
+                !self
+                    .home_slots
+                    .contains_key(assigned.interval().variable.as_str())
+                    && assigned.interval().span.start <= location
                     && location < assigned.interval().span.end
                     && self.frame_location(assigned.location())
                         == Some(AssemblyLocation::Register(register))
@@ -1716,6 +3155,25 @@ fn operand_register(
         .and_then(|location| location.register())
 }
 
+fn preserve_register(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    register: Register,
+) -> bool {
+    let preserve = frame.register_occupied(location, register);
+    if preserve {
+        lines.push(format!("  push {}", register_name(register)));
+    }
+    preserve
+}
+
+fn restore_register(lines: &mut Vec<String>, register: Register, restore: bool) {
+    if restore {
+        lines.push(format!("  pop {}", register_name(register)));
+    }
+}
+
 fn load_operand(
     lines: &mut Vec<String>,
     frame: &FrameLayout<'_>,
@@ -1748,6 +3206,25 @@ fn load_operand(
             register_name_32(register)
         )),
         Operand::Label(_) => lines.push(format!("  lea {}, [{operand}]", register_name(register))),
+    }
+}
+
+fn load_function_operand(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    register: Register,
+) {
+    match operand {
+        Operand::Label(name) => lines.push(format!("  lea {}, [{name}]", register_name(register))),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            load_reference_operand(lines, frame, location, operand, register)
+        }
+        Operand::Placeholder => lines.push(format!("  xor {0}, {0}", register_name(register))),
+        Operand::Literal(_) => {
+            unreachable!("function values must be stored or declared functions")
+        }
     }
 }
 
@@ -1785,6 +3262,39 @@ fn load_float_operand(
     }
 }
 
+fn stage_float_parameter(
+    lines: &mut Vec<String>,
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+) {
+    lines.push(String::from("  sub rsp, 8"));
+    match operand {
+        Operand::Literal(Lit::Float(value)) => lines.push(format!(
+            "  mov DWORD PTR [rsp], {}",
+            float_literal_bits(*value)
+        )),
+        Operand::Variable(_) | Operand::Temporary(_) => {
+            let Some(source) = frame.operand_location(location, operand) else {
+                return;
+            };
+            if let AssemblyLocation::Register(register) = source {
+                lines.push(format!(
+                    "  movss DWORD PTR [rsp], {}",
+                    register_name(register)
+                ));
+            } else {
+                lines.push(format!("  movss xmm15, {}", float_assembly_operand(source)));
+                lines.push(String::from("  movss DWORD PTR [rsp], xmm15"));
+            }
+        }
+        Operand::Placeholder => lines.push(String::from("  mov DWORD PTR [rsp], 0")),
+        Operand::Literal(_) | Operand::Label(_) => {
+            unreachable!("f32 values must be literals, variables, or temporaries")
+        }
+    }
+}
+
 fn store_operand(
     lines: &mut Vec<String>,
     frame: &FrameLayout<'_>,
@@ -1800,6 +3310,7 @@ fn store_operand(
         AssemblyLocation::Register(register),
         destination,
         Register::RAX,
+        MoveWidth::Bits32,
     );
 }
 
@@ -1875,6 +3386,86 @@ fn operand_value(frame: &FrameLayout<'_>, location: CodeLocation, operand: &Oper
     }
 }
 
+fn aggregate_member_operand(
+    frame: &FrameLayout<'_>,
+    location: CodeLocation,
+    operand: &Operand,
+    member_offset: usize,
+) -> Option<String> {
+    let AssemblyLocation::FrameStack { offset } = frame.operand_location(location, operand)? else {
+        return None;
+    };
+    let displacement = offset.checked_sub(member_offset)?;
+    Some(if displacement == 0 {
+        String::from("[rbp]")
+    } else {
+        format!("[rbp-{displacement}]")
+    })
+}
+
+fn offset_assembly_operand(operand: &str, offset: usize) -> String {
+    if offset == 0 {
+        return operand.to_string();
+    }
+    let inner = operand.trim_start_matches('[').trim_end_matches(']');
+    format!("[{inner}+{offset}]")
+}
+
+fn emit_memory_copy(lines: &mut Vec<String>, source: &str, destination: &str, size: usize) {
+    for offset in (0..size).step_by(4) {
+        let width = (size - offset).min(4);
+        let source = offset_assembly_operand(source, offset);
+        let destination = offset_assembly_operand(destination, offset);
+        if width == 4 {
+            lines.push(format!("  mov eax, DWORD PTR {source}"));
+            lines.push(format!("  mov DWORD PTR {destination}, eax"));
+        } else {
+            for byte in 0..width {
+                let source = offset_assembly_operand(&source, byte);
+                let destination = offset_assembly_operand(&destination, byte);
+                lines.push(format!("  mov al, BYTE PTR {source}"));
+                lines.push(format!("  mov BYTE PTR {destination}, al"));
+            }
+        }
+    }
+}
+
+/// Materialize initialized aggregate members while leaving ABI padding zeroed.
+fn load_aggregate_register(
+    lines: &mut Vec<String>,
+    source: &str,
+    register: Register,
+    member_ranges: &[(usize, usize)],
+) {
+    lines.push(String::from("  sub rsp, 8"));
+    lines.push(String::from("  mov QWORD PTR [rsp], 0"));
+    for (offset, size) in member_ranges {
+        emit_memory_copy(
+            lines,
+            &offset_assembly_operand(source, *offset),
+            &offset_assembly_operand("[rsp]", *offset),
+            *size,
+        );
+    }
+    lines.push(format!(
+        "  mov {}, QWORD PTR [rsp]",
+        register_name(register)
+    ));
+    lines.push(String::from("  add rsp, 8"));
+}
+
+/// Store only the aggregate's initialized bytes so adjacent frame values remain intact.
+fn store_aggregate_register(
+    lines: &mut Vec<String>,
+    register: Register,
+    destination: &str,
+    size: usize,
+) {
+    lines.push(format!("  push {}", register_name(register)));
+    emit_memory_copy(lines, "[rsp]", destination, size);
+    lines.push(String::from("  add rsp, 8"));
+}
+
 fn float_operand_value(
     lines: &mut Vec<String>,
     frame: &FrameLayout<'_>,
@@ -1909,6 +3500,90 @@ fn emit_call_stack_padding(lines: &mut Vec<String>, stack_arg_count: usize, stac
         let destination = index * STACK_ARG_SLOT_BYTES;
         lines.push(format!("  mov rax, QWORD PTR {}", rsp_slot(source)));
         lines.push(format!("  mov QWORD PTR {}, rax", rsp_slot(destination)));
+    }
+}
+
+fn non_stack_argument_follows_stack_argument(arg_locations: &[Location]) -> bool {
+    let mut saw_stack_argument = false;
+    arg_locations.iter().any(|location| {
+        if stack_location_offset(location).is_some() {
+            saw_stack_argument = true;
+            return false;
+        }
+        saw_stack_argument
+    })
+}
+
+fn emit_indexed_call_arguments(
+    lines: &mut Vec<String>,
+    arg_locations: &[Location],
+    argument_slot_counts: &[usize],
+    stack_arg_count: usize,
+    stack_padding: usize,
+) {
+    for (index, location) in arg_locations.iter().enumerate() {
+        let source_offset =
+            argument_slot_counts[..index].iter().sum::<usize>() * STACK_ARG_SLOT_BYTES;
+        if let Some((low, high)) = register_pair(location) {
+            let low_source = rsp_slot(source_offset);
+            let high_source = rsp_slot(source_offset + STACK_ARG_SLOT_BYTES);
+            lines.push(format!(
+                "  mov {}, QWORD PTR {low_source}",
+                register_name(low)
+            ));
+            lines.push(format!(
+                "  mov {}, QWORD PTR {high_source}",
+                register_name(high)
+            ));
+            continue;
+        }
+        let Some(register) = outgoing_register(location) else {
+            continue;
+        };
+        let source = rsp_slot(source_offset);
+        if is_xmm_register(register) {
+            lines.push(format!(
+                "  movss {}, DWORD PTR {source}",
+                register_name(register)
+            ));
+        } else {
+            lines.push(format!(
+                "  mov {}, QWORD PTR {source}",
+                register_name(register)
+            ));
+        }
+    }
+
+    let outgoing_bytes = stack_arg_count * STACK_ARG_SLOT_BYTES + stack_padding;
+    if outgoing_bytes == 0 {
+        return;
+    }
+    lines.push(format!("  sub rsp, {outgoing_bytes}"));
+    for (index, location) in arg_locations.iter().enumerate() {
+        let Some(offset) = stack_location_offset(location) else {
+            continue;
+        };
+        let source_offset =
+            argument_slot_counts[..index].iter().sum::<usize>() * STACK_ARG_SLOT_BYTES;
+        for slot in 0..argument_slot_counts[index] {
+            let source = rsp_slot(outgoing_bytes + source_offset + slot * STACK_ARG_SLOT_BYTES);
+            let destination = rsp_slot((offset + slot) * STACK_ARG_SLOT_BYTES);
+            lines.push(format!("  mov rax, QWORD PTR {source}"));
+            lines.push(format!("  mov QWORD PTR {destination}, rax"));
+        }
+    }
+}
+
+fn staged_argument_slot_count(location: &Location) -> usize {
+    match location {
+        Location::Pair { low, high } => {
+            staged_argument_slot_count(low) + staged_argument_slot_count(high)
+        }
+        Location::NoStorage
+        | Location::Register(_)
+        | Location::Stack(_)
+        | Location::RegisterAndStack(_, _)
+        | Location::Indirect { .. } => 1,
     }
 }
 
@@ -2022,7 +3697,76 @@ fn swapped_comparison_operator(operator: &'static str) -> &'static str {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MoveWidth {
+    Bits32,
+    Bits64,
+}
+
+impl MoveWidth {
+    fn register_name(self, register: Register) -> String {
+        match self {
+            MoveWidth::Bits32 => register_name_32(register),
+            MoveWidth::Bits64 => register_name(register),
+        }
+    }
+
+    fn assembly_operand(self, location: AssemblyLocation) -> String {
+        match self {
+            MoveWidth::Bits32 => assembly_operand(location),
+            MoveWidth::Bits64 => assembly_operand_64(location),
+        }
+    }
+}
+
 fn move_location(
+    lines: &mut Vec<String>,
+    source: AssemblyLocation,
+    destination: AssemblyLocation,
+    scratch: Register,
+    width: MoveWidth,
+) {
+    if source == destination {
+        return;
+    }
+    match (source, destination) {
+        (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                width.register_name(dst),
+                width.register_name(src)
+            ));
+        }
+        (AssemblyLocation::Register(src), dst) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                width.assembly_operand(dst),
+                width.register_name(src)
+            ));
+        }
+        (src, AssemblyLocation::Register(dst)) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                width.register_name(dst),
+                width.assembly_operand(src)
+            ));
+        }
+        (src, dst) => {
+            lines.push(format!(
+                "  mov {}, {}",
+                width.register_name(scratch),
+                width.assembly_operand(src)
+            ));
+            lines.push(format!(
+                "  mov {}, {}",
+                width.assembly_operand(dst),
+                width.register_name(scratch)
+            ));
+        }
+    }
+}
+
+fn move_float_location(
     lines: &mut Vec<String>,
     source: AssemblyLocation,
     destination: AssemblyLocation,
@@ -2034,35 +3778,35 @@ fn move_location(
     match (source, destination) {
         (AssemblyLocation::Register(src), AssemblyLocation::Register(dst)) => {
             lines.push(format!(
-                "  mov {}, {}",
-                register_name_32(dst),
-                register_name_32(src)
+                "  movss {}, {}",
+                register_name(dst),
+                register_name(src)
             ));
         }
         (AssemblyLocation::Register(src), dst) => {
             lines.push(format!(
-                "  mov {}, {}",
-                assembly_operand(dst),
-                register_name_32(src)
+                "  movss {}, {}",
+                float_assembly_operand(dst),
+                register_name(src)
             ));
         }
         (src, AssemblyLocation::Register(dst)) => {
             lines.push(format!(
-                "  mov {}, {}",
-                register_name_32(dst),
-                assembly_operand(src)
+                "  movss {}, {}",
+                register_name(dst),
+                float_assembly_operand(src)
             ));
         }
         (src, dst) => {
             lines.push(format!(
-                "  mov {}, {}",
-                register_name_32(scratch),
-                assembly_operand(src)
+                "  movss {}, {}",
+                register_name(scratch),
+                float_assembly_operand(src)
             ));
             lines.push(format!(
-                "  mov {}, {}",
-                assembly_operand(dst),
-                register_name_32(scratch)
+                "  movss {}, {}",
+                float_assembly_operand(dst),
+                register_name(scratch)
             ));
         }
     }
@@ -2099,14 +3843,33 @@ fn incoming_location(location: &Location) -> Option<AssemblyLocation> {
             offset: 16 + offset.0 * 8,
         }),
         Location::RegisterAndStack(register, _) => Some(AssemblyLocation::Register(*register)),
-        Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage | Location::Indirect { .. } | Location::Pair { .. } => None,
     }
 }
 
 fn outgoing_register(location: &Location) -> Option<Register> {
     match location {
         Location::Register(register) | Location::RegisterAndStack(register, _) => Some(*register),
-        Location::Stack(_) | Location::Indirect { .. } | Location::Pair { .. } => None,
+        Location::NoStorage
+        | Location::Stack(_)
+        | Location::Indirect { .. }
+        | Location::Pair { .. } => None,
+    }
+}
+
+fn register_pair(location: &Location) -> Option<(Register, Register)> {
+    let Location::Pair { low, high } = location else {
+        return None;
+    };
+    Some((outgoing_register(low)?, outgoing_register(high)?))
+}
+
+fn stack_location_offset(location: &Location) -> Option<usize> {
+    match location {
+        Location::Stack(offset) => Some(offset.0),
+        Location::RegisterAndStack(_, offset) => Some(offset.0),
+        Location::Pair { low, .. } => stack_location_offset(low),
+        Location::NoStorage | Location::Register(_) | Location::Indirect { .. } => None,
     }
 }
 
@@ -2173,6 +3936,59 @@ fn is_xmm_register(register: Register) -> bool {
     )
 }
 
+fn string_literal_data(value: &str) -> Vec<u8> {
+    let content = if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    };
+    let mut bytes = Vec::new();
+    let mut chars = content.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            let mut encoded = [0; 4];
+            bytes.extend(character.encode_utf8(&mut encoded).as_bytes());
+            continue;
+        }
+        let escaped = chars.next().unwrap_or('\\');
+        match escaped {
+            '0' => bytes.push(0),
+            'n' => bytes.push(b'\n'),
+            'r' => bytes.push(b'\r'),
+            't' => bytes.push(b'\t'),
+            other => {
+                let mut encoded = [0; 4];
+                bytes.extend(other.encode_utf8(&mut encoded).as_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+fn string_literal_label(value: &[u8]) -> String {
+    let suffix = if value.is_empty() {
+        String::from("empty")
+    } else {
+        value.iter().map(|byte| format!("{byte:02x}")).collect()
+    };
+    format!(".Lstr_{suffix}")
+}
+
+fn string_literal_bytes(value: &[u8]) -> String {
+    if value.is_empty() {
+        String::from("0")
+    } else {
+        value
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 fn literal_value(operand: &Operand) -> String {
     match operand {
         Operand::Literal(Lit::Integer(value)) => value.to_string(),
@@ -2209,5 +4025,83 @@ fn align_to(value: usize, align: usize) -> usize {
         0
     } else {
         value.div_ceil(align) * align
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::LexionDiagnosticList;
+    use crate::generators::tac::instructions::{CodeSpan, LivenessInterval};
+    use crate::generators::x86::LinearRegisterAllocator;
+    use std::collections::HashMap;
+
+    fn allocated_frame(variable: &str) -> (FrameLayout<'static>, CodeLocation) {
+        let mut cfg = Box::new(ControlFlowGraph::new());
+        let block = cfg.block(String::from("test"), true);
+        let range = cfg.functions[0];
+        let location = CodeLocation::new(block, 0);
+        let intervals = HashMap::from([(
+            range,
+            vec![LivenessInterval {
+                variable: String::from(variable),
+                span: CodeSpan::new(location, CodeLocation::new(block, 1)),
+                uses: vec![],
+            }],
+        )]);
+        let mut diagnostics = LexionDiagnosticList::default();
+        let mut allocations = LinearRegisterAllocator::new((&cfg, vec![Register::RAX]))
+            .exec(&mut diagnostics, intervals)
+            .unwrap();
+        let allocations = allocations.remove(&range).unwrap();
+
+        (
+            FrameLayout {
+                allocations: Some(Box::leak(allocations.into_boxed_slice())),
+                fallback_slots: BTreeMap::new(),
+                home_slots: BTreeMap::from_iter(
+                    [(String::from("value"), 16)]
+                        .into_iter()
+                        .chain((variable != "reference").then(|| (String::from("reference"), 8))),
+                ),
+                saved_registers: Vec::new(),
+                stack_size: 0,
+                indirect_return_slot: None,
+            },
+            location,
+        )
+    }
+
+    #[test]
+    fn aggregate_borrow_preserves_live_rax_unless_target_owns_it() {
+        let mut lines = Vec::new();
+        let borrow = BorrowInstruction {
+            target: Operand::Variable(String::from("reference")),
+            place: Place::Direct(Operand::Variable(String::from("value"))),
+        };
+        let generator = CodeGeneratorX86 {
+            cfg: Box::leak(Box::new(ControlFlowGraph::new())),
+            types: Box::leak(Box::new(TypeCollection::default())),
+            symbols: Box::leak(Box::new(SymbolTableGraph::default())),
+            target: X86Target::system_v64(),
+            allocations: None,
+        };
+        let (live_frame, location) = allocated_frame("live");
+
+        generator.emit_borrow(&mut lines, &live_frame, "main", location, &borrow);
+        assert_eq!(
+            lines,
+            [
+                "  push rax",
+                "  lea rax, [rbp-16]",
+                "  mov QWORD PTR [rbp-8], rax",
+                "  pop rax"
+            ]
+        );
+
+        lines.clear();
+        let (target_frame, location) = allocated_frame("reference");
+        generator.emit_borrow(&mut lines, &target_frame, "main", location, &borrow);
+        assert_eq!(lines, ["  lea rax, [rbp-16]"]);
     }
 }

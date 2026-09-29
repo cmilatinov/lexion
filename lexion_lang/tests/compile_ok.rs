@@ -45,6 +45,16 @@ fn test_functions() {
 }
 
 #[test]
+fn test_function_value_types() {
+    common::assert_compiles("backend/x86_function_values.lex");
+}
+
+#[test]
+fn test_function_value_call_order_and_returns() {
+    common::assert_compiles("backend/x86_function_value_returns.lex");
+}
+
+#[test]
 fn test_control_flow() {
     common::assert_compiles("control_flow/if_else_returns.lex");
 }
@@ -74,6 +84,44 @@ fn test_cast_expression_parses() {
     assert!(parser
         .parse_from_string(Arc::new("fn main() -> i32 { return -1 as i32; }".into()))
         .is_ok());
+}
+
+#[test]
+fn test_empty_tuple_expression_parses() {
+    use lexion_lang::parser::ParserLexion;
+    use lexion_lib::Parser;
+    use std::sync::Arc;
+
+    let mut parser = ParserLexion::new();
+    assert!(parser
+        .parse_from_string(Arc::new("fn main() { let value = (); }".into()))
+        .is_ok());
+}
+
+#[test]
+fn test_aggregate_expression_syntax_parses() {
+    use lexion_lang::parser::ParserLexion;
+    use lexion_lib::Parser;
+    use std::sync::Arc;
+
+    let mut parser = ParserLexion::new();
+    assert!(parser
+        .parse_from_string(Arc::new(
+            "struct Point { x: i32, y: i32 }
+             fn main() {
+                 let empty = ();
+                 let single = (1,);
+                 let pair = (1, 2);
+                 let point = Point { y: 2, x: 1 };
+             }"
+            .into()
+        ))
+        .is_ok());
+}
+
+#[test]
+fn test_ternary_false_arm_named_struct_literal() {
+    common::assert_compiles("backend/ternary_struct_literal.lex");
 }
 
 #[test]

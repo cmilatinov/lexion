@@ -2,16 +2,18 @@ use crate::ast::types::TypeCollection;
 use crate::ast::visitor::{AstNode, AstVisitor, AstVisitorAction, NodeType, TraversalType};
 use crate::ast::{
     Ast, BlockExpr, CallExpr, CastExpr, Expr, ExprStmt, FuncDeclStmt, IdentExpr, IndexExpr, Lit,
-    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, TypedExpr, VarDeclStmt, WhileStmt,
+    LitExpr, MemberExpr, ReturnStmt, Sourced, SourcedExpr, Stmt, StructExpr, TupleExpr, TypedExpr,
+    VarDeclStmt, WhileStmt,
 };
 use crate::diagnostic::DiagnosticConsumer;
 use crate::generators::label::{Label, LabelGenerator};
 use crate::generators::tac::instructions::{
     AssignmentInstruction, BaseInstruction, BorrowInstruction, CodeLocation, CodeSpan,
     ConditionalJumpInstruction, ControlFlowGraph, CopyInstruction, EndFunctionInstruction,
-    ExternInstruction, FunctionCallInstruction, FunctionInstruction, FunctionRange, Instruction,
-    InstructionBlock, InstructionInstance, JumpInstruction, LivenessInterval, LoadInstruction,
-    Operand, ParameterInstruction, Place, ReturnInstruction, StoreInstruction,
+    ExternInstruction, FunctionCallInstruction, FunctionCallTarget, FunctionInstruction,
+    FunctionRange, Instruction, InstructionBlock, InstructionInstance, JumpInstruction,
+    LivenessInterval, LoadInstruction, Operand, ParameterInstruction, Place, ReturnInstruction,
+    StoreInstruction,
 };
 use crate::operators;
 use crate::pipeline::PipelineStage;
@@ -202,9 +204,8 @@ impl<'a> CodeGeneratorTac<'a> {
 
     fn call(
         &mut self,
-        function: String,
+        target: FunctionCallTarget,
         function_type: Option<Index>,
-        is_direct_function: bool,
         return_target: Option<Operand>,
         source_span: SourceSpan,
     ) -> CodeLocation {
@@ -212,9 +213,8 @@ impl<'a> CodeGeneratorTac<'a> {
             live: Default::default(),
             source_span: Some(source_span),
             instruction: Instruction::FunctionCall(FunctionCallInstruction {
-                function,
+                target,
                 function_type,
-                is_direct_function,
                 return_target,
             }),
         })
@@ -506,6 +506,22 @@ impl<'a> CodeGeneratorTac<'a> {
             Sourced {
                 value:
                     TypedExpr {
+                        expr: Expr::StructExpr(_),
+                        ..
+                    },
+                ..
+            } => self.struct_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
+                        expr: Expr::TupleExpr(_),
+                        ..
+                    },
+                ..
+            } => self.tuple_expr(expr),
+            Sourced {
+                value:
+                    TypedExpr {
                         expr: Expr::IfExpr(_),
                         ..
                     },
@@ -527,7 +543,11 @@ impl<'a> CodeGeneratorTac<'a> {
     }
 
     fn ident_expr(&mut self, expr: &IdentExpr) -> Operand {
-        Operand::Variable(expr.ident.clone())
+        self.symbols
+            .lookup(self.scope, expr.ident.as_str())
+            .filter(|(_, _, entry)| entry.ty == SymbolTableEntryType::Function)
+            .map(|_| Operand::Label(expr.ident.clone()))
+            .unwrap_or_else(|| Operand::Variable(expr.ident.clone()))
     }
 
     fn operator_expr(&mut self, expr: &SourcedExpr) -> Operand {
@@ -753,6 +773,52 @@ impl<'a> CodeGeneratorTac<'a> {
         self.load_expr(expr)
     }
 
+    fn tuple_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let TypedExpr {
+            expr: Expr::TupleExpr(TupleExpr { values }),
+            ty,
+        } = &expr.value
+        else {
+            unreachable!()
+        };
+        let target = self.alloc_temp(*ty, expr.span);
+        for (index, value) in values.iter().enumerate() {
+            let value = self.expr(value);
+            self.store(
+                Place::Member {
+                    base: Box::new(Place::Direct(target.clone())),
+                    member: index.to_string(),
+                },
+                value,
+                Some(expr.span),
+            );
+        }
+        target
+    }
+
+    fn struct_expr(&mut self, expr: &SourcedExpr) -> Operand {
+        let TypedExpr {
+            expr: Expr::StructExpr(StructExpr { fields, .. }),
+            ty,
+        } = &expr.value
+        else {
+            unreachable!()
+        };
+        let target = self.alloc_temp(*ty, expr.span);
+        for field in fields {
+            let value = self.expr(&field.value.expr);
+            self.store(
+                Place::Member {
+                    base: Box::new(Place::Direct(target.clone())),
+                    member: field.value.name.value.clone(),
+                },
+                value,
+                Some(field.value.expr.span),
+            );
+        }
+        target
+    }
+
     fn call_expr(&mut self, expr: &SourcedExpr) -> Option<Operand> {
         let Sourced {
             value:
@@ -766,22 +832,12 @@ impl<'a> CodeGeneratorTac<'a> {
         else {
             return None;
         };
-        let Sourced {
-            value:
-                TypedExpr {
-                    expr: Expr::IdentExpr(ident),
-                    ..
-                },
-            ..
-        } = expr.as_ref()
-        else {
-            return None;
-        };
         let return_value = if !self.types.eq(expr.ty, self.types.unit()) {
             Some(self.alloc_temp(*ty, *span))
         } else {
             None
         };
+        let function = self.expr(expr);
         let args = args
             .iter()
             .map(|arg| self.expr(arg))
@@ -790,18 +846,11 @@ impl<'a> CodeGeneratorTac<'a> {
         for arg in args {
             self.param(arg, Some(*span));
         }
-        let (function_type, is_direct_function) = self
-            .symbols
-            .lookup(self.scope, ident.ident.as_str())
-            .map(|(_, _, entry)| (entry.var_type, entry.ty == SymbolTableEntryType::Function))
-            .unwrap_or((None, false));
-        self.call(
-            ident.ident.clone(),
-            function_type,
-            is_direct_function,
-            return_value.clone(),
-            *span,
-        );
+        let target = match function {
+            Operand::Label(name) => FunctionCallTarget::Direct(name),
+            operand => FunctionCallTarget::Indirect(operand),
+        };
+        self.call(target, Some(expr.ty), return_value.clone(), *span);
         return_value
     }
 

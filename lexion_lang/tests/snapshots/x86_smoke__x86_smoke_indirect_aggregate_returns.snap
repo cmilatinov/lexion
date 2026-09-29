@@ -1,0 +1,151 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_indirect_aggregate_returns.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global make_large
+make_large:
+# fn make_large(base: i32, extra: i32) -> Large {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+  mov QWORD PTR [rbp-28], rdi
+#         first: base,
+  mov DWORD PTR [rbp-20], esi
+#         second: base + 1,
+  mov edi, esi
+  add edi, 1
+  mov DWORD PTR [rbp-16], edi
+#         third: base + 2,
+  mov edi, esi
+  add edi, 2
+  mov DWORD PTR [rbp-12], edi
+#         fourth: base + 3,
+  mov edi, esi
+  add edi, 3
+  mov DWORD PTR [rbp-8], edi
+#         fifth: extra
+  mov DWORD PTR [rbp-4], edx
+#     return Large {
+#         first: base,
+#         second: base + 1,
+#         third: base + 2,
+#         fourth: base + 3,
+#         fifth: extra
+#     };
+  mov rax, QWORD PTR [rbp-28]
+  mov ecx, DWORD PTR [rbp-20]
+  mov DWORD PTR [rax+0], ecx
+  mov ecx, DWORD PTR [rbp-20+4]
+  mov DWORD PTR [rax+4], ecx
+  mov ecx, DWORD PTR [rbp-20+8]
+  mov DWORD PTR [rax+8], ecx
+  mov ecx, DWORD PTR [rbp-20+12]
+  mov DWORD PTR [rax+12], ecx
+  mov ecx, DWORD PTR [rbp-20+16]
+  mov DWORD PTR [rax+16], ecx
+  mov rax, QWORD PTR [rbp-28]
+  add rsp, 32
+  pop rbp
+  ret
+.global make_tuple
+make_tuple:
+# fn make_tuple(base: i32, extra: i32) -> (i32, i32, i32, i32, i32) {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+  mov QWORD PTR [rbp-28], rdi
+#     return (base, base + 1, base + 2, base + 3, extra);
+  mov DWORD PTR [rbp-20], esi
+  mov edi, esi
+  add edi, 1
+  mov DWORD PTR [rbp-16], edi
+  mov edi, esi
+  add edi, 2
+  mov DWORD PTR [rbp-12], edi
+  mov edi, esi
+  add edi, 3
+  mov DWORD PTR [rbp-8], edi
+  mov DWORD PTR [rbp-4], edx
+  mov rax, QWORD PTR [rbp-28]
+  mov ecx, DWORD PTR [rbp-20]
+  mov DWORD PTR [rax+0], ecx
+  mov ecx, DWORD PTR [rbp-20+4]
+  mov DWORD PTR [rax+4], ecx
+  mov ecx, DWORD PTR [rbp-20+8]
+  mov DWORD PTR [rax+8], ecx
+  mov ecx, DWORD PTR [rbp-20+12]
+  mov DWORD PTR [rax+12], ecx
+  mov ecx, DWORD PTR [rbp-20+16]
+  mov DWORD PTR [rax+16], ecx
+  mov rax, QWORD PTR [rbp-28]
+  add rsp, 32
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  push rbx
+  sub rsp, 96
+#     let large = make_large(10, 20);
+  mov eax, 20
+  push rax
+  mov eax, 10
+  push rax
+  lea rdi, [rbp-36]
+  pop rsi
+  pop rdx
+  sub rsp, 8
+  call make_large
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-36]
+  mov DWORD PTR [rbp-76], eax
+  mov eax, DWORD PTR [rbp-36+4]
+  mov DWORD PTR [rbp-76+4], eax
+  mov eax, DWORD PTR [rbp-36+8]
+  mov DWORD PTR [rbp-76+8], eax
+  mov eax, DWORD PTR [rbp-36+12]
+  mov DWORD PTR [rbp-76+12], eax
+  mov eax, DWORD PTR [rbp-36+16]
+  mov DWORD PTR [rbp-76+16], eax
+#     let tuple = make_tuple(30, 40);
+  mov eax, 40
+  push rax
+  mov eax, 30
+  push rax
+  lea rdi, [rbp-56]
+  pop rsi
+  pop rdx
+  sub rsp, 8
+  call make_tuple
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-56]
+  mov DWORD PTR [rbp-96], eax
+  mov eax, DWORD PTR [rbp-56+4]
+  mov DWORD PTR [rbp-96+4], eax
+  mov eax, DWORD PTR [rbp-56+8]
+  mov DWORD PTR [rbp-96+8], eax
+  mov eax, DWORD PTR [rbp-56+12]
+  mov DWORD PTR [rbp-96+12], eax
+  mov eax, DWORD PTR [rbp-56+16]
+  mov DWORD PTR [rbp-96+16], eax
+#     return large.first + large.fifth + tuple.0 + tuple.4;
+  mov eax, DWORD PTR [rbp-76]
+  mov esi, DWORD PTR [rbp-60]
+  mov edx, eax
+  add edx, esi
+  mov eax, DWORD PTR [rbp-96]
+  mov esi, edx
+  add esi, eax
+  mov eax, DWORD PTR [rbp-80]
+  mov DWORD PTR [rbp-16], eax
+  mov eax, esi
+  add eax, DWORD PTR [rbp-16]
+  add rsp, 96
+  pop rbx
+  pop rbp
+  ret

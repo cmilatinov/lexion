@@ -1,0 +1,65 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_function_value_member_return.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov eax, edi
+  add eax, 1
+  pop rbp
+  ret
+.global get_callback
+get_callback:
+# fn get_callback(holder: Holder) -> fn(i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+  push rdi
+  mov eax, DWORD PTR [rsp]
+  mov DWORD PTR [rbp-8], eax
+  mov eax, DWORD PTR [rsp+4]
+  mov DWORD PTR [rbp-8+4], eax
+  add rsp, 8
+#     return holder.callback;
+  mov rax, QWORD PTR [rbp-8]
+  add rsp, 16
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 16
+#     return get_callback(Holder { callback: add_one })(4);
+  lea rax, [add_one]
+  mov QWORD PTR [rbp-16], rax
+  sub rsp, 8
+  mov QWORD PTR [rsp], 0
+  mov eax, DWORD PTR [rbp-16]
+  mov DWORD PTR [rsp], eax
+  mov eax, DWORD PTR [rbp-16+4]
+  mov DWORD PTR [rsp+4], eax
+  pop rdi
+  call get_callback
+  mov QWORD PTR [rbp-8], rax
+  push rax
+  mov rax, QWORD PTR [rbp-8]
+  xchg QWORD PTR [rsp], rax
+  mov eax, 4
+  push rax
+  pop rdi
+  sub rsp, 8
+  call QWORD PTR [rsp+8]
+  add rsp, 8
+  add rsp, 8
+  add rsp, 16
+  pop rbp
+  ret
