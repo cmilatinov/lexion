@@ -37,6 +37,24 @@ fn test_call_argument_type_mismatch() {
 }
 
 #[test]
+fn test_struct_literal_field_validation() {
+    let errors = common::assert_fails("errors/semantics/invalid_struct_literal_fields.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_positional_struct_call_is_not_construction() {
+    let errors = common::assert_fails("errors/semantics/positional_struct_call.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_struct_declaration_is_not_a_value() {
+    let errors = common::assert_fails("errors/semantics/struct_declaration_value.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
 fn test_invalid_cast() {
     let errors = common::assert_fails("errors/semantics/invalid_cast.lex");
     insta::assert_snapshot!(errors.join("\n"));
@@ -69,6 +87,18 @@ fn test_invalid_member() {
 #[test]
 fn test_borrow_is_not_assignment_target() {
     let errors = common::assert_fails("errors/semantics/invalid_borrow_assignment.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_function_declaration_is_not_assignment_target() {
+    let errors = common::assert_fails("errors/semantics/function_assignment.lex");
+    insta::assert_snapshot!(errors.join("\n"));
+}
+
+#[test]
+fn test_function_declaration_cannot_be_borrowed() {
+    let errors = common::assert_fails("errors/semantics/function_declaration_borrow.lex");
     insta::assert_snapshot!(errors.join("\n"));
 }
 

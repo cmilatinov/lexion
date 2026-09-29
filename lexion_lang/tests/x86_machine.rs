@@ -2,7 +2,7 @@ use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
 use lexion_lang::diagnostic::LexionDiagnosticList;
 use lexion_lang::generators::tac::CodeGeneratorTac;
 use lexion_lang::generators::x86::{
-    CodeGeneratorX86Machine, X86MachineCode, X86MachineCodeOptions,
+    Bitness, CMemoryLayoutBuilder, CodeGeneratorX86Machine, X86MachineCode, X86MachineCodeOptions,
 };
 use lexion_lang::parser::ParserLexion;
 use lexion_lang::pipeline::PipelineStage;
@@ -26,6 +26,7 @@ fn compile_machine_code(fixture: &str) -> X86MachineCode {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -50,6 +51,7 @@ fn compile_machine_code_error(fixture: &str) -> Vec<String> {
     TypeChecker::new((source, &mut symbols, &mut types))
         .exec(&mut diagnostics, &mut ast)
         .unwrap_or_else(|| panic!("{}", diagnostics_string(&diagnostics)));
+    types.compute_memory_layouts::<CMemoryLayoutBuilder>(Bitness::_64);
 
     let (cfg, _) = CodeGeneratorTac::new((&ast, &mut symbols, &types))
         .exec(&mut diagnostics, ())
@@ -86,6 +88,20 @@ fn machine_snapshot(code: &X86MachineCode) -> String {
             .join("\n"),
         hex_bytes(code.as_bytes()),
         disassemble(code.as_bytes(), code.symbols())
+    )
+}
+
+fn string_machine_snapshot(code: &X86MachineCode) -> String {
+    format!(
+        "symbols:\n{}\n\ncode bytes:\n{}\n\ndata bytes:\n{}\n\ndisassembly:\n{}",
+        code.symbols()
+            .iter()
+            .map(|(name, offset)| format!("{name}=0x{offset:04X}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        hex_bytes(&code.as_bytes()[..code.data_offset()]),
+        hex_bytes(&code.as_bytes()[code.data_offset()..]),
+        disassemble(&code.as_bytes()[..code.data_offset()], code.symbols())
     )
 }
 
@@ -146,6 +162,13 @@ fn x86_machine_code_f32_arithmetic_and_comparisons() {
 }
 
 #[test]
+fn x86_machine_code_f32_function_calls() {
+    let code = compile_machine_code("backend/x86_f32_function_calls.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_ternary_expression() {
     let code = compile_machine_code("backend/ternary_expression.lex");
 
@@ -188,6 +211,88 @@ fn x86_machine_code_char_values() {
 }
 
 #[test]
+fn x86_machine_code_local_aggregate_values() {
+    let code = compile_machine_code("backend/x86_local_aggregates.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_one_eightbyte_aggregate_abi_values() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_aggregate_abi.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_one_eightbyte_aggregate_abi_padding() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_aggregate_abi_padding.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_nested_reference_aggregate_abi_values() {
+    compile_machine_code("backend/x86_nested_reference_aggregate_abi.lex");
+}
+
+#[test]
+fn x86_machine_code_register_pair_aggregate_abi_values() {
+    let snapshot = machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregates.lex",
+    ));
+    let shift_quad = snapshot
+        .split_once("shift_quad:\n")
+        .and_then(|(_, disassembly)| disassembly.split_once("shift_tuple:\n"))
+        .map(|(disassembly, _)| disassembly)
+        .expect("missing shift_quad disassembly");
+    let high_load = shift_quad
+        .find("mov rdx,[rsp]")
+        .expect("missing RDX return-half load");
+    let low_load = shift_quad
+        .find("mov rax,[rsp]")
+        .expect("missing RAX return-half load");
+    assert!(
+        high_load < low_load,
+        "register-pair return must load RDX before RAX scratch clobbers it:\n{shift_quad}"
+    );
+    insta::assert_snapshot!(snapshot);
+}
+
+#[test]
+fn x86_machine_code_register_pair_aggregate_abi_padding() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_register_pair_aggregate_padding.lex",
+    )));
+}
+
+#[test]
+fn x86_machine_code_indexed_register_pair_call_arguments() {
+    compile_machine_code("backend/x86_indexed_register_pair_call.lex");
+}
+
+#[test]
+fn x86_machine_code_indirect_aggregate_returns() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_indirect_aggregate_returns.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_stack_aggregate_arguments() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_stack_aggregate_arguments.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_aggregate_member_values() {
+    let code = compile_machine_code("backend/x86_aggregate_members.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
 fn x86_machine_code_if_else_returns() {
     let code = compile_machine_code("backend/x86_if_expression.lex");
 
@@ -209,32 +314,53 @@ fn x86_machine_code_stack_arguments() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_string_values() {
+fn x86_machine_code_unit_arguments() {
+    let code = compile_machine_code("backend/x86_unit_arguments.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_string_literals() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_literals.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_empty_string_literal() {
+    let code = compile_machine_code("backend/x86_empty_string_literal.lex");
+
+    assert_eq!(&code.as_bytes()[code.data_offset()..], b"\0");
+    insta::assert_snapshot!(string_machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_string_parameters() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_string_parameter.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_code_string_register_arguments() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_abi_registers.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_string_stack_arguments() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_abi_stack.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_nested_string_references() {
     insta::assert_snapshot!(
         compile_machine_code_error("backend/x86_unsupported_string.lex").join("\n")
-    );
-}
-
-#[test]
-fn x86_machine_reports_unsupported_call_string_arg() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_call_string_arg.lex"
-    )
-    .join("\n"));
-}
-
-#[test]
-fn x86_machine_reports_unsupported_call_float_arg() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_call_float_arg.lex"
-    )
-    .join("\n"));
-}
-
-#[test]
-fn x86_machine_reports_unsupported_float_operations() {
-    insta::assert_snapshot!(
-        compile_machine_code_error("backend/x86_unsupported_float_ops.lex").join("\n")
     );
 }
 
@@ -242,6 +368,21 @@ fn x86_machine_reports_unsupported_float_operations() {
 fn x86_machine_reports_unsupported_call_tuple_arg() {
     insta::assert_snapshot!(compile_machine_code_error(
         "backend/x86_unsupported_call_tuple_arg.lex"
+    )
+    .join("\n"));
+}
+
+#[test]
+fn x86_machine_code_string_returns() {
+    insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
+        "backend/x86_string_return.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_reports_unsupported_indirect_float_aggregates() {
+    insta::assert_snapshot!(compile_machine_code_error(
+        "backend/x86_unsupported_indirect_float_aggregate.lex"
     )
     .join("\n"));
 }
@@ -255,11 +396,25 @@ fn x86_machine_reports_unsupported_call_struct_arg() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_call_reference_arg() {
+fn x86_machine_reports_unsupported_aggregate_members() {
     insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_call_reference_arg.lex"
+        "backend/x86_unsupported_aggregate_members.lex"
     )
     .join("\n"));
+}
+
+#[test]
+fn x86_machine_code_reference_call() {
+    let code = compile_machine_code("backend/x86_reference_call.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_reference_stack_arguments() {
+    let code = compile_machine_code("backend/x86_reference_stack_arguments.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
 }
 
 #[test]
@@ -274,6 +429,50 @@ fn x86_machine_code_reference_dereference() {
     let code = compile_machine_code("backend/x86_reference_dereference.lex");
 
     insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_narrow_reference_dereference() {
+    let code = compile_machine_code("backend/x86_narrow_reference_dereference.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_aggregate_reference_places() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_aggregate_reference_places.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_projected_aggregate_references() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_projected_aggregate_references.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_borrows_indexed_string_elements() {
+    let code = compile_machine_code("backend/x86_indexed_string_borrow.lex");
+
+    assert!(!code.as_bytes().is_empty());
+}
+
+#[test]
+fn x86_machine_code_loads_string_indexes() {
+    let code = compile_machine_code("backend/x86_string_index.lex");
+
+    assert!(!code.as_bytes().is_empty());
+}
+
+#[test]
+fn x86_machine_rejects_literal_index_borrows() {
+    assert!(
+        compile_machine_code_error("backend/x86_unsupported_literal_index_borrow.lex")
+            .join("\n")
+            .contains("x86 machine-code backend does not support references to indexed places yet")
+    );
 }
 
 #[test]
@@ -320,17 +519,50 @@ fn x86_machine_reports_unsupported_zero_fixed_vararg_calls() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_function_values() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_function_value.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_function_values() {
+    let code = compile_machine_code("backend/x86_function_values.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
 }
 
 #[test]
-fn x86_machine_reports_unsupported_shadowed_function_value_calls() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_shadowed_function_value.lex"
-    )
-    .join("\n"));
+fn x86_machine_code_function_value_returns() {
+    let code = compile_machine_code("backend/x86_function_value_returns.lex");
+
+    insta::assert_snapshot!(machine_snapshot(&code));
+}
+
+#[test]
+fn x86_machine_code_function_value_members() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_members.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_function_value_dereference_store() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_dereference_store.lex",
+    )));
+}
+
+#[test]
+fn x86_machine_code_function_value_dereference() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_dereference.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_function_value_aggregate_abi() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_function_value_aggregate_abi.lex"
+    )));
+}
+
+#[test]
+fn x86_machine_code_nested_function_value_argument() {
+    insta::assert_snapshot!(machine_snapshot(&compile_machine_code(
+        "backend/x86_nested_function_value.lex"
+    )));
 }

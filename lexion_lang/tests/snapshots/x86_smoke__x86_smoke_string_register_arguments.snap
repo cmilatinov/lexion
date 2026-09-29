@@ -1,0 +1,35 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86(\"backend/x86_string_abi_registers.lex\")"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global accept
+accept:
+# fn accept(value: &str) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return 0;
+  mov eax, 0
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return accept("hello");
+  sub rsp, 16
+  lea rax, [rip + .Lstr_68656c6c6f]
+  mov rdx, 5
+  mov QWORD PTR [rsp], rax
+  mov QWORD PTR [rsp+8], rdx
+  pop rdi
+  pop rsi
+  call accept
+  pop rbp
+  ret
+.section .rodata
+.Lstr_68656c6c6f:
+  .byte 104, 101, 108, 108, 111

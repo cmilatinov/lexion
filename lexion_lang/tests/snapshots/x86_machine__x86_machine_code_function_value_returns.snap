@@ -1,0 +1,85 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: machine_snapshot(&code)
+snapshot_kind: text
+---
+symbols:
+add_one=0x0000
+apply_zero=0x003C
+main=0x0059
+make_adder=0x001E
+zero=0x002E
+
+bytes:
+55 48 89 E5 48 83 EC 10 89 7D F8 8B 45 F8 05 01 00 00 00 89 45 FC 8B 45 FC 48 89 EC 5D C3 55 48 89 E5 48 8D 05 D7 FF FF FF 48 89 EC 5D C3 55 48 89 E5 B8 00 00 00 00 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 48 89 7D F0 48 8B 45 F0 FF D0 89 45 FC 8B 45 FC 48 89 EC 5D C3 55 48 89 E5 48 83 EC 30 E8 B8 FF FF FF 48 89 45 F8 48 8B 45 F8 48 89 45 D0 E8 A7 FF FF FF 48 89 45 E8 BF 04 00 00 00 48 8B 45 E8 FF D0 89 45 F4 BF 01 00 00 00 48 8B 45 D0 FF D0 89 45 E4 8B 45 F4 03 45 E4 89 45 E0 48 8D 3D 87 FF FF FF E8 90 FF FF FF 89 45 DC 8B 45 E0 03 45 DC 89 45 D8 8B 45 D8 48 89 EC 5D C3
+
+disassembly:
+add_one:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,10h
+0008: mov [rbp-8],edi
+000B: mov eax,[rbp-8]
+000E: add eax,1
+0013: mov [rbp-4],eax
+0016: mov eax,[rbp-4]
+0019: mov rsp,rbp
+001C: pop rbp
+001D: ret
+make_adder:
+001E: push rbp
+001F: mov rbp,rsp
+0022: lea rax,[0]
+0029: mov rsp,rbp
+002C: pop rbp
+002D: ret
+zero:
+002E: push rbp
+002F: mov rbp,rsp
+0032: mov eax,0
+0037: mov rsp,rbp
+003A: pop rbp
+003B: ret
+apply_zero:
+003C: push rbp
+003D: mov rbp,rsp
+0040: sub rsp,10h
+0044: mov [rbp-10h],rdi
+0048: mov rax,[rbp-10h]
+004C: call rax <add_one>
+004E: mov [rbp-4],eax
+0051: mov eax,[rbp-4]
+0054: mov rsp,rbp
+0057: pop rbp
+0058: ret
+main:
+0059: push rbp
+005A: mov rbp,rsp
+005D: sub rsp,30h
+0061: call 000000000000001Eh <make_adder>
+0066: mov [rbp-8],rax
+006A: mov rax,[rbp-8]
+006E: mov [rbp-30h],rax
+0072: call 000000000000001Eh <make_adder>
+0077: mov [rbp-18h],rax
+007B: mov edi,4
+0080: mov rax,[rbp-18h]
+0084: call rax <add_one>
+0086: mov [rbp-0Ch],eax
+0089: mov edi,1
+008E: mov rax,[rbp-30h]
+0092: call rax <add_one>
+0094: mov [rbp-1Ch],eax
+0097: mov eax,[rbp-0Ch]
+009A: add eax,[rbp-1Ch]
+009D: mov [rbp-20h],eax
+00A0: lea rdi,[2Eh]
+00A7: call 000000000000003Ch <apply_zero>
+00AC: mov [rbp-24h],eax
+00AF: mov eax,[rbp-20h]
+00B2: add eax,[rbp-24h]
+00B5: mov [rbp-28h],eax
+00B8: mov eax,[rbp-28h]
+00BB: mov rsp,rbp
+00BE: pop rbp
+00BF: ret

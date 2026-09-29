@@ -1,0 +1,85 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_with_registers(\"backend/x86_zero_arg_indirect_aggregate_return.lex\",\nvec![Register::RDI],)"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global make_large
+make_large:
+# fn make_large() -> Large {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+  mov QWORD PTR [rbp-28], rdi
+#         first: 1,
+  mov eax, 1
+  mov DWORD PTR [rbp-20], eax
+#         second: 2,
+  mov eax, 2
+  mov DWORD PTR [rbp-16], eax
+#         third: 3,
+  mov eax, 3
+  mov DWORD PTR [rbp-12], eax
+#         fourth: 4,
+  mov eax, 4
+  mov DWORD PTR [rbp-8], eax
+#         fifth: 5
+  mov eax, 5
+  mov DWORD PTR [rbp-4], eax
+#     return Large {
+#         first: 1,
+#         second: 2,
+#         third: 3,
+#         fourth: 4,
+#         fifth: 5
+#     };
+  mov rax, QWORD PTR [rbp-28]
+  mov ecx, DWORD PTR [rbp-20]
+  mov DWORD PTR [rax+0], ecx
+  mov ecx, DWORD PTR [rbp-20+4]
+  mov DWORD PTR [rax+4], ecx
+  mov ecx, DWORD PTR [rbp-20+8]
+  mov DWORD PTR [rax+8], ecx
+  mov ecx, DWORD PTR [rbp-20+12]
+  mov DWORD PTR [rax+12], ecx
+  mov ecx, DWORD PTR [rbp-20+16]
+  mov DWORD PTR [rax+16], ecx
+  mov rax, QWORD PTR [rbp-28]
+  add rsp, 32
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+#     let callback = make_large;
+  lea rdi, [make_large]
+#     let value = callback();
+  push rax
+  mov rax, rdi
+  xchg QWORD PTR [rsp], rax
+  lea rdi, [rbp-36]
+  sub rsp, 8
+  call QWORD PTR [rsp+8]
+  add rsp, 8
+  add rsp, 8
+  mov eax, DWORD PTR [rbp-36]
+  mov DWORD PTR [rbp-56], eax
+  mov eax, DWORD PTR [rbp-36+4]
+  mov DWORD PTR [rbp-56+4], eax
+  mov eax, DWORD PTR [rbp-36+8]
+  mov DWORD PTR [rbp-56+8], eax
+  mov eax, DWORD PTR [rbp-36+12]
+  mov DWORD PTR [rbp-56+12], eax
+  mov eax, DWORD PTR [rbp-36+16]
+  mov DWORD PTR [rbp-56+16], eax
+#     return value.fifth;
+  mov eax, DWORD PTR [rbp-40]
+  mov DWORD PTR [rbp-16], eax
+  mov eax, DWORD PTR [rbp-16]
+  add rsp, 64
+  pop rbp
+  ret

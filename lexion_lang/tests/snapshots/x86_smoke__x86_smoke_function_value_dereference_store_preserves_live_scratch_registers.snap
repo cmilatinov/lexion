@@ -1,0 +1,49 @@
+---
+source: lexion_lang/tests/x86_smoke.rs
+expression: "compile_x86_with_registers(\"backend/x86_function_value_dereference_store_live_scratch.lex\",\nvec![Register::RAX, Register::RCX],)"
+snapshot_kind: text
+---
+.intel_syntax noprefix
+.text
+.global add_one
+add_one:
+# fn add_one(value: i32) -> i32 {
+  push rbp
+  mov rbp, rsp
+#     return value + 1;
+  mov ecx, eax
+  add ecx, 1
+  mov eax, ecx
+  pop rbp
+  ret
+.global main
+main:
+# fn main() -> i32 {
+  push rbp
+  mov rbp, rsp
+  sub rsp, 32
+#     let callback = add_one;
+  lea rax, [add_one]
+  mov QWORD PTR [rbp-24], rax
+#     let callback_ref = &callback;
+  lea rax, [rbp-24]
+  mov QWORD PTR [rbp-16], rax
+  mov rax, QWORD PTR [rbp-16]
+  mov QWORD PTR [rbp-32], rax
+#     let left = 40;
+  mov ecx, 40
+#     let right = 2;
+  mov eax, 2
+  mov DWORD PTR [rbp-8], eax
+#     *callback_ref = add_one;
+  push rcx
+  lea rcx, [add_one]
+  mov rax, QWORD PTR [rbp-32]
+  mov QWORD PTR [rax], rcx
+  pop rcx
+#     return right + left;
+  mov eax, DWORD PTR [rbp-8]
+  add eax, ecx
+  add rsp, 32
+  pop rbp
+  ret

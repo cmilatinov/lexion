@@ -8,7 +8,7 @@ combine=0x0000
 main=0x0037
 
 bytes:
-55 48 89 E5 48 83 EC 20 89 7D F4 8B 45 10 89 45 F0 8B 45 18 89 45 EC 8B 45 F0 03 45 EC 89 45 FC 8B 45 FC 89 45 E8 8B 45 E8 03 45 F4 89 45 F8 8B 45 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 B8 08 00 00 00 50 B8 07 00 00 00 50 BF 01 00 00 00 BE 02 00 00 00 BA 03 00 00 00 B9 04 00 00 00 41 B8 05 00 00 00 41 B9 06 00 00 00 E8 90 FF FF FF 48 83 C4 10 89 45 FC 8B 45 FC 48 89 EC 5D C3
+55 48 89 E5 48 83 EC 20 89 7D F4 8B 45 10 89 45 F0 8B 45 18 89 45 EC 8B 45 F0 03 45 EC 89 45 FC 8B 45 FC 89 45 E8 8B 45 E8 03 45 F4 89 45 F8 8B 45 F8 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 48 83 EC 10 B8 07 00 00 00 48 89 04 24 B8 08 00 00 00 48 89 44 24 08 BF 01 00 00 00 BE 02 00 00 00 BA 03 00 00 00 B9 04 00 00 00 41 B8 05 00 00 00 41 B9 06 00 00 00 E8 85 FF FF FF 48 83 C4 10 89 45 FC 8B 45 FC 48 89 EC 5D C3
 
 disassembly:
 combine:
@@ -36,20 +36,21 @@ main:
 0037: push rbp
 0038: mov rbp,rsp
 003B: sub rsp,10h
-003F: mov eax,8
-0044: push rax
-0045: mov eax,7
-004A: push rax
-004B: mov edi,1
-0050: mov esi,2
-0055: mov edx,3
-005A: mov ecx,4
-005F: mov r8d,5
-0065: mov r9d,6
-006B: call 0 <combine>
-0070: add rsp,10h
-0074: mov [rbp-4],eax
-0077: mov eax,[rbp-4]
-007A: mov rsp,rbp
-007D: pop rbp
-007E: ret
+003F: sub rsp,10h
+0043: mov eax,7
+0048: mov [rsp],rax
+004C: mov eax,8
+0051: mov [rsp+8],rax
+0056: mov edi,1
+005B: mov esi,2
+0060: mov edx,3
+0065: mov ecx,4
+006A: mov r8d,5
+0070: mov r9d,6
+0076: call 0 <combine>
+007B: add rsp,10h
+007F: mov [rbp-4],eax
+0082: mov eax,[rbp-4]
+0085: mov rsp,rbp
+0088: pop rbp
+0089: ret

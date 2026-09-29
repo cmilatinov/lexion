@@ -1,0 +1,53 @@
+---
+source: lexion_lang/tests/x86_machine.rs
+expression: "machine_snapshot(&compile_machine_code(\"backend/x86_nested_function_value.lex\"))"
+---
+symbols:
+add_one=0x002C
+apply=0x0000
+main=0x0023
+
+bytes:
+55 48 89 E5 48 83 EC 20 48 89 7D F0 89 75 EC 8B 7D EC 48 8B 45 F0 FF D0 89 45 FC 8B 45 FC 48 89 EC 5D C3 55 48 89 E5 48 89 EC 5D C3 55 48 89 E5 48 83 EC 10 89 7D F4 8B 45 F4 05 01 00 00 00 89 45 FC 8B 45 FC 48 89 EC 5D C3 48 8D 3D DB FF FF FF BE 04 00 00 00 E8 A5 FF FF FF 89 45 F8 8B 45 F8 48 89 EC 5D C3
+
+disassembly:
+apply:
+0000: push rbp
+0001: mov rbp,rsp
+0004: sub rsp,20h
+0008: mov [rbp-10h],rdi
+000C: mov [rbp-14h],esi
+000F: mov edi,[rbp-14h]
+0012: mov rax,[rbp-10h]
+0016: call rax <apply>
+0018: mov [rbp-4],eax
+001B: mov eax,[rbp-4]
+001E: mov rsp,rbp
+0021: pop rbp
+0022: ret
+main:
+0023: push rbp
+0024: mov rbp,rsp
+0027: mov rsp,rbp
+002A: pop rbp
+002B: ret
+add_one:
+002C: push rbp
+002D: mov rbp,rsp
+0030: sub rsp,10h
+0034: mov [rbp-0Ch],edi
+0037: mov eax,[rbp-0Ch]
+003A: add eax,1
+003F: mov [rbp-4],eax
+0042: mov eax,[rbp-4]
+0045: mov rsp,rbp
+0048: pop rbp
+0049: ret
+004A: lea rdi,[2Ch]
+0051: mov esi,4
+0056: call 0 <apply>
+005B: mov [rbp-8],eax
+005E: mov eax,[rbp-8]
+0061: mov rsp,rbp
+0064: pop rbp
+0065: ret
