@@ -21,11 +21,11 @@ main:
 # fn main() -> i32 {
   push rbp
   mov rbp, rsp
-#     let callback = add_one;
+#     let handler = add_one;
   lea rax, [add_one]
 #     let value = 4;
   mov r11d, 4
-#     return callback(value);
+#     return handler(value);
   push rax
   xchg QWORD PTR [rsp], rax
   mov eax, r11d
