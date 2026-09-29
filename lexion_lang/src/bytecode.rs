@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub const BYTECODE_VERSION: u16 = 1;
+pub const DEFAULT_HOST_API_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BytecodeValue {
@@ -85,6 +86,7 @@ impl BytecodeOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BytecodeProgram {
     version: u16,
+    required_host_api_version: u16,
     operations: Vec<BytecodeOperation>,
     callbacks: BTreeMap<String, Callback>,
 }
@@ -105,6 +107,13 @@ enum Instruction {
 
 impl BytecodeProgram {
     pub fn compile(source: impl Into<String>) -> Result<Self, BytecodeError> {
+        Self::compile_for_host_api(source, DEFAULT_HOST_API_VERSION)
+    }
+
+    pub fn compile_for_host_api(
+        source: impl Into<String>,
+        required_host_api_version: u16,
+    ) -> Result<Self, BytecodeError> {
         let source = Arc::new(source.into());
         let mut parser = ParserLexion::new();
         let ast = parser
@@ -177,6 +186,7 @@ impl BytecodeProgram {
         }
         Ok(Self {
             version: BYTECODE_VERSION,
+            required_host_api_version,
             operations,
             callbacks,
         })
@@ -184,6 +194,10 @@ impl BytecodeProgram {
 
     pub fn version(&self) -> u16 {
         self.version
+    }
+
+    pub fn required_host_api_version(&self) -> u16 {
+        self.required_host_api_version
     }
 
     pub fn callback_names(&self) -> impl Iterator<Item = &str> {
@@ -637,10 +651,12 @@ mod tests {
         assert_eq!(program.operations().next().unwrap().name(), "record");
         assert_eq!(program.version(), BYTECODE_VERSION);
     }
-<<<<<<< HEAD
     #[test]
     fn versioned_manifest_dispatches_a_command() {
-        let program = BytecodeProgram::compile("callback fn tick() -> () { record(7); }").unwrap();
+        let program = BytecodeProgram::compile(
+            "extern fn record(value: i32); callback fn tick() -> () { record(7); }",
+        )
+        .unwrap();
         let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
         let target = seen.clone();
         let mut manifest = HostManifest::new(1);
@@ -648,16 +664,15 @@ mod tests {
             .register(
                 "record",
                 vec![HostValueType::I32],
-                HostValueType::Unit,
                 move |args| {
                     target.lock().unwrap().extend_from_slice(args);
-                    Ok(BytecodeValue::Unit)
+                    Ok(())
                 },
             )
             .unwrap();
         manifest.invoke(&program, "tick").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
-=======
+    }
 
     #[test]
     fn rejects_unknown_or_mismatched_host_calls() {
@@ -714,6 +729,5 @@ mod tests {
         let error = program.invoke("tick", &mut FailingHost).unwrap_err();
         assert_eq!(error.message, "host failed");
         assert_ne!(error.span, SourceSpan::from(0));
->>>>>>> eb38074 (fix: validate bytecode host calls)
     }
 }
