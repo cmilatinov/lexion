@@ -381,6 +381,10 @@ pub struct HostManifest {
     dispatching: Arc<AtomicBool>,
 }
 
+type StatelessHostHandler = dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send;
+type StatefulHostHandler =
+    dyn FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<BytecodeValue, String> + Send;
+
 pub struct HostOperation {
     pub arguments: Vec<HostValueType>,
     result: Option<HostValueType>,
@@ -388,12 +392,8 @@ pub struct HostOperation {
 }
 
 enum HostHandler {
-    Stateless(Box<dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send>),
-    Stateful(
-        Box<
-            dyn FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<BytecodeValue, String> + Send,
-        >,
-    ),
+    Stateless(Box<StatelessHostHandler>),
+    Stateful(Box<StatefulHostHandler>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -469,12 +469,24 @@ impl HostManifest {
             + Send
             + 'static,
     ) -> Result<(), String> {
-        self.register_stateful_query(name, arguments, None, move |state, arguments| {
+        self.register_stateful_operation(name, arguments, None, move |state, arguments| {
             handler(state, arguments).map(|()| BytecodeValue::Unit)
         })
     }
 
-    fn register_stateful_query(
+    pub fn register_query_with_state(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        result: HostValueType,
+        handler: impl FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<BytecodeValue, String>
+            + Send
+            + 'static,
+    ) -> Result<(), String> {
+        self.register_stateful_operation(name, arguments, Some(result), handler)
+    }
+
+    fn register_stateful_operation(
         &mut self,
         name: impl Into<String>,
         arguments: Vec<HostValueType>,
@@ -512,6 +524,7 @@ impl HostManifest {
         callback: &str,
         state: &mut BehaviorState,
     ) -> Result<(), BytecodeError> {
+        let _state_execution = state.begin_invoke()?;
         let _execution = self.begin_invoke(program)?;
         program.invoke_with_state(callback, self, state)
     }
@@ -737,9 +750,10 @@ struct BehaviorModuleDefinition {
     defaults: BTreeMap<String, BytecodeValue>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BehaviorState {
     values: BTreeMap<String, BytecodeValue>,
+    executing: Arc<AtomicBool>,
 }
 
 impl BehaviorState {
@@ -757,6 +771,27 @@ impl BehaviorState {
         }
         self.values.insert(name.into(), value);
         Ok(())
+    }
+
+    fn begin_invoke(&self) -> Result<BehaviorExecutionGuard, BytecodeError> {
+        if self.executing.swap(true, Ordering::AcqRel) {
+            return Err(BytecodeError {
+                message: "same behavior instance synchronous reentry is not allowed".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        Ok(BehaviorExecutionGuard {
+            executing: Arc::clone(&self.executing),
+        })
+    }
+}
+
+impl Clone for BehaviorState {
+    fn clone(&self) -> Self {
+        Self {
+            values: self.values.clone(),
+            executing: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -804,7 +839,10 @@ impl BehaviorModule {
         }
         Ok(BehaviorInstance {
             module: self.clone(),
-            state: BehaviorState { values: state },
+            state: BehaviorState {
+                values: state,
+                executing: Arc::new(AtomicBool::new(false)),
+            },
         })
     }
 }
@@ -835,6 +873,16 @@ impl BehaviorInstance {
 struct ExecutionGuard {
     executing: Arc<AtomicBool>,
     dispatching: Arc<AtomicBool>,
+}
+
+struct BehaviorExecutionGuard {
+    executing: Arc<AtomicBool>,
+}
+
+impl Drop for BehaviorExecutionGuard {
+    fn drop(&mut self) {
+        self.executing.store(false, Ordering::Release);
+    }
 }
 
 impl Drop for ExecutionGuard {
@@ -1331,6 +1379,85 @@ mod tests {
 
         assert_eq!(left.state("health"), Some(&BytecodeValue::I32(11)));
         assert_eq!(right.state("health"), Some(&BytecodeValue::I32(21)));
+    }
+
+    #[test]
+    fn stateful_queries_can_bind_instance_values() {
+        let program = BytecodeProgram::compile(
+            "extern fn read_health() -> i32; extern fn observe(value: i32); callback fn update() -> () { let health = read_health(); observe(health); }",
+        )
+        .unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut instance = module
+            .create_instance(BTreeMap::from([("health".into(), BytecodeValue::I32(25))]))
+            .unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(vec![]));
+        let target = Arc::clone(&seen);
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register_query_with_state("read_health", vec![], HostValueType::I32, |state, _| {
+                state
+                    .get("health")
+                    .cloned()
+                    .ok_or_else(|| "missing health state".into())
+            })
+            .unwrap();
+        manifest
+            .register("observe", vec![HostValueType::I32], move |arguments| {
+                target.lock().unwrap().extend_from_slice(arguments);
+                Ok(())
+            })
+            .unwrap();
+
+        instance.invoke("update", &mut manifest).unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(25)]);
+    }
+
+    #[test]
+    fn stateful_callbacks_reject_reentry_through_another_manifest() {
+        let program = BytecodeProgram::compile(
+            "extern fn reenter(); callback fn tick() -> () { reenter(); }",
+        )
+        .unwrap();
+        let module = BehaviorModule::new(
+            program.clone(),
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut instance = module.create_instance(BTreeMap::new()).unwrap();
+        let nested_manifest = Arc::new(std::sync::Mutex::new(HostManifest::new(
+            DEFAULT_HOST_API_VERSION,
+        )));
+        nested_manifest
+            .lock()
+            .unwrap()
+            .register_with_state("reenter", vec![], |_, _| Ok(()))
+            .unwrap();
+        let nested_target = Arc::clone(&nested_manifest);
+        let nested_program = program.clone();
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register_with_state("reenter", vec![], move |state, _| {
+                nested_target
+                    .lock()
+                    .unwrap()
+                    .invoke_with_state(&nested_program, "tick", state)
+                    .map_err(|error| error.message)
+            })
+            .unwrap();
+
+        let error = instance.invoke("tick", &mut manifest).unwrap_err();
+
+        assert_eq!(
+            error.message,
+            "same behavior instance synchronous reentry is not allowed"
+        );
+        assert_eq!(instance.state("health"), Some(&BytecodeValue::I32(10)));
     }
 
     #[test]

@@ -177,7 +177,7 @@ impl TypeCollection {
         types.join(", ")
     }
 
-    pub fn to_string_index(&self, ty: Index) -> Cow<str> {
+    pub fn to_string_index(&self, ty: Index) -> Cow<'_, str> {
         match self.arena.get(ty) {
             Some(ty) => self.to_string_type(ty),
             None => "".into(),

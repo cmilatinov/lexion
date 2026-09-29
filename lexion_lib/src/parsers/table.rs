@@ -202,7 +202,7 @@ impl ParseTableLR {
             .flat_map(|(symbol, states)| states.iter().map(move |(s, a)| (*s, symbol.as_str(), a)))
     }
 
-    pub fn get_action(&self, state_index: usize, symbol: &str) -> Cow<ParseTableAction> {
+    pub fn get_action(&self, state_index: usize, symbol: &str) -> Cow<'_, ParseTableAction> {
         match self.table.get(symbol) {
             Some(v) => match v.get(&state_index) {
                 Some(ParseTableAction::Conflict(actions)) => {
