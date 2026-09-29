@@ -1,5 +1,7 @@
 //! Deterministic, deliberately small bytecode for embedding Lexion callbacks.
-use crate::ast::{Expr, FuncDeclStmt, FunctionQualifier, Lit, Sourced, SourcedExpr, Stmt, Type};
+use crate::ast::{
+    Expr, FuncDeclStmt, FunctionQualifier, Lit, Sourced, SourcedExpr, Stmt, StructDeclStmt, Type,
+};
 use crate::parser::ParserLexion;
 use lexion_lib::error::ParseError;
 use lexion_lib::miette::SourceSpan;
@@ -17,6 +19,9 @@ pub enum BytecodeValue {
     I32(i32),
     Bool(bool),
     String(String),
+    Record {
+        fields: BTreeMap<String, BytecodeValue>,
+    },
 }
 
 impl BytecodeValue {
@@ -26,16 +31,23 @@ impl BytecodeValue {
             Self::I32(_) => BytecodeValueType::I32,
             Self::Bool(_) => BytecodeValueType::Bool,
             Self::String(_) => BytecodeValueType::String,
+            Self::Record { fields } => BytecodeValueType::Record(
+                fields
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.value_type()))
+                    .collect(),
+            ),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BytecodeValueType {
     Unit,
     I32,
     Bool,
     String,
+    Record(BTreeMap<String, BytecodeValueType>),
 }
 
 impl std::fmt::Display for BytecodeValueType {
@@ -45,6 +57,13 @@ impl std::fmt::Display for BytecodeValueType {
             Self::I32 => "i32",
             Self::Bool => "bool",
             Self::String => "str",
+            Self::Record(fields) => {
+                return write!(
+                    f,
+                    "{{{}}}",
+                    fields.keys().cloned().collect::<Vec<_>>().join(", ")
+                )
+            }
         };
         write!(f, "{value}")
     }
@@ -69,6 +88,7 @@ pub struct BytecodeOperation {
     id: u16,
     name: String,
     arguments: Vec<BytecodeValueType>,
+    result: BytecodeValueType,
 }
 
 impl BytecodeOperation {
@@ -82,6 +102,10 @@ impl BytecodeOperation {
 
     pub fn arguments(&self) -> &[BytecodeValueType] {
         &self.arguments
+    }
+
+    pub fn result(&self) -> &BytecodeValueType {
+        &self.result
     }
 }
 
@@ -102,9 +126,16 @@ struct Callback {
 enum Instruction {
     CallHost {
         operation: u16,
-        arguments: Vec<BytecodeValue>,
+        arguments: Vec<BytecodeOperand>,
+        result: Option<String>,
         span: SourceSpan,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BytecodeOperand {
+    Value(BytecodeValue),
+    Local(String),
 }
 
 impl BytecodeProgram {
@@ -129,17 +160,33 @@ impl BytecodeProgram {
             }
         })?;
 
+        let mut struct_declarations = BTreeMap::new();
         let mut host_declarations = BTreeMap::new();
         let mut callback_declarations = Vec::new();
         let mut declaration_names = BTreeMap::new();
         for statement in &ast {
+            if let Stmt::StructDeclStmt(declaration) = &statement.value {
+                if struct_declarations
+                    .insert(declaration.name.value.as_str(), declaration)
+                    .is_some()
+                {
+                    return Err(BytecodeError {
+                        message: format!(
+                            "duplicate record declaration `{}`",
+                            declaration.name.value
+                        ),
+                        span: declaration.name.span,
+                    });
+                }
+                continue;
+            }
             let Sourced {
                 value: Stmt::FuncDeclStmt(function),
                 span,
             } = statement
             else {
                 return Err(BytecodeError {
-                    message: "bytecode programs only support extern host declarations and callback functions".into(),
+                    message: "bytecode programs only support record declarations, extern host declarations, and callback functions".into(),
                     span: statement.span,
                 });
             };
@@ -180,7 +227,13 @@ impl BytecodeProgram {
                 message: "bytecode programs support at most 65536 host operations".into(),
                 span,
             })?;
-            operations.push(compile_host_operation(id, name, function, span)?);
+            operations.push(compile_host_operation(
+                id,
+                name,
+                function,
+                span,
+                &struct_declarations,
+            )?);
         }
         let operations_by_name = operations
             .iter()
@@ -229,11 +282,13 @@ impl BytecodeProgram {
             message: format!("unknown callback `{name}`"),
             span: SourceSpan::from(0),
         })?;
+        let mut locals = BTreeMap::new();
         for instruction in &callback.code {
             match instruction {
                 Instruction::CallHost {
                     operation,
                     arguments,
+                    result,
                     span,
                 } => {
                     let operation =
@@ -243,11 +298,36 @@ impl BytecodeProgram {
                                 message: "invalid bytecode operation".into(),
                                 span: *span,
                             })?;
-                    host.call(operation, arguments)
-                        .map_err(|message| BytecodeError {
-                            message,
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            BytecodeOperand::Value(value) => Ok(value.clone()),
+                            BytecodeOperand::Local(name) => {
+                                locals.get(name).cloned().ok_or_else(|| BytecodeError {
+                                    message: format!("unknown bytecode local `{name}`"),
+                                    span: *span,
+                                })
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let value =
+                        host.call(operation, &arguments)
+                            .map_err(|message| BytecodeError {
+                                message,
+                                span: *span,
+                            })?;
+                    if value.value_type() != *operation.result() {
+                        return Err(BytecodeError {
+                            message: format!(
+                                "host operation `{}` returned an incompatible value",
+                                operation.name()
+                            ),
                             span: *span,
-                        })?;
+                        });
+                    }
+                    if let Some(name) = result {
+                        locals.insert(name.clone(), value);
+                    }
                 }
             }
         }
@@ -260,7 +340,7 @@ pub trait BytecodeHost {
         &mut self,
         operation: &BytecodeOperation,
         arguments: &[BytecodeValue],
-    ) -> Result<(), String>;
+    ) -> Result<BytecodeValue, String>;
 }
 
 /// A versioned, owned-value host boundary.  It deliberately exposes neither VM
@@ -272,9 +352,12 @@ pub struct HostManifest {
     dispatching: Arc<AtomicBool>,
 }
 
+type HostHandler = dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send;
+
 pub struct HostOperation {
     pub arguments: Vec<HostValueType>,
-    handler: Box<dyn FnMut(&[BytecodeValue]) -> Result<(), String> + Send>,
+    result: Option<HostValueType>,
+    handler: Box<HostHandler>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,6 +365,7 @@ pub enum HostValueType {
     I32,
     Bool,
     String,
+    Record(BTreeMap<String, HostValueType>),
 }
 
 impl HostManifest {
@@ -300,7 +384,7 @@ impl HostManifest {
         &mut self,
         name: impl Into<String>,
         arguments: Vec<HostValueType>,
-        handler: impl FnMut(&[BytecodeValue]) -> Result<(), String> + Send + 'static,
+        mut handler: impl FnMut(&[BytecodeValue]) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
         let name = name.into();
         if self.operations.contains_key(&name) {
@@ -310,6 +394,31 @@ impl HostManifest {
             name,
             HostOperation {
                 arguments,
+                result: None,
+                handler: Box::new(move |arguments| {
+                    handler(arguments).map(|()| BytecodeValue::Unit)
+                }),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn register_query(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        result: HostValueType,
+        handler: impl FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send + 'static,
+    ) -> Result<(), String> {
+        let name = name.into();
+        if self.operations.contains_key(&name) {
+            return Err(format!("host operation `{name}` is already registered"));
+        }
+        self.operations.insert(
+            name,
+            HostOperation {
+                arguments,
+                result: Some(result),
                 handler: Box::new(handler),
             },
         );
@@ -357,7 +466,7 @@ impl HostManifest {
                 .arguments()
                 .iter()
                 .map(|value| {
-                    HostValueType::from_bytecode(*value).ok_or_else(|| BytecodeError {
+                    HostValueType::from_bytecode(value.clone()).ok_or_else(|| BytecodeError {
                         message: format!(
                             "host manifest cannot invoke `{}` with an unsupported {} argument",
                             operation.name(),
@@ -368,6 +477,28 @@ impl HostManifest {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if entry.arguments != expected {
+                return Err(BytecodeError {
+                    message: format!(
+                        "host manifest v{} has an incompatible `{}` operation signature",
+                        self.version,
+                        operation.name()
+                    ),
+                    span: SourceSpan::from(0),
+                });
+            }
+            let expected_result = match operation.result() {
+                BytecodeValueType::Unit => None,
+                value => Some(HostValueType::from_bytecode(value.clone()).ok_or_else(|| {
+                    BytecodeError {
+                        message: format!(
+                            "host manifest cannot invoke `{}` with an unsupported result",
+                            operation.name()
+                        ),
+                        span: SourceSpan::from(0),
+                    }
+                })?),
+            };
+            if entry.result != expected_result {
                 return Err(BytecodeError {
                     message: format!(
                         "host manifest v{} has an incompatible `{}` operation signature",
@@ -398,7 +529,7 @@ impl BytecodeHost for HostManifest {
         &mut self,
         operation: &BytecodeOperation,
         arguments: &[BytecodeValue],
-    ) -> Result<(), String> {
+    ) -> Result<BytecodeValue, String> {
         if !self.dispatching.load(Ordering::Acquire) {
             return Err("host manifest calls must be invoked through HostManifest::invoke".into());
         }
@@ -425,17 +556,41 @@ impl BytecodeHost for HostManifest {
                 ));
             }
         }
-        (entry.handler)(arguments)
+        let value = (entry.handler)(arguments)?;
+        match &entry.result {
+            Some(expected) if !matches_type(expected, &value) => {
+                return Err(format!(
+                    "host operation `{}` returned an incompatible value",
+                    operation.name()
+                ));
+            }
+            None if value != BytecodeValue::Unit => {
+                return Err(format!(
+                    "host operation `{}` returned an incompatible value",
+                    operation.name()
+                ));
+            }
+            _ => {}
+        }
+        Ok(value)
     }
 }
 
 fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
-    matches!(
-        (expected, value),
+    match (expected, value) {
         (HostValueType::I32, BytecodeValue::I32(_))
-            | (HostValueType::Bool, BytecodeValue::Bool(_))
-            | (HostValueType::String, BytecodeValue::String(_))
-    )
+        | (HostValueType::Bool, BytecodeValue::Bool(_))
+        | (HostValueType::String, BytecodeValue::String(_)) => true,
+        (HostValueType::Record(expected), BytecodeValue::Record { fields }) => {
+            expected.len() == fields.len()
+                && expected.iter().all(|(name, expected)| {
+                    fields
+                        .get(name)
+                        .is_some_and(|value| matches_type(expected, value))
+                })
+        }
+        _ => false,
+    }
 }
 
 struct ExecutionGuard {
@@ -457,6 +612,12 @@ impl HostValueType {
             BytecodeValueType::I32 => Some(Self::I32),
             BytecodeValueType::Bool => Some(Self::Bool),
             BytecodeValueType::String => Some(Self::String),
+            BytecodeValueType::Record(fields) => Some(Self::Record(
+                fields
+                    .into_iter()
+                    .map(|(name, value)| Some((name, Self::from_bytecode(value)?)))
+                    .collect::<Option<BTreeMap<_, _>>>()?,
+            )),
         }
     }
 }
@@ -466,6 +627,7 @@ fn compile_host_operation(
     name: &str,
     function: &FuncDeclStmt,
     span: SourceSpan,
+    records: &BTreeMap<&str, &StructDeclStmt>,
 ) -> Result<BytecodeOperation, BytecodeError> {
     if function.body.is_some() {
         return Err(BytecodeError {
@@ -482,24 +644,21 @@ fn compile_host_operation(
     let arguments = function
         .params
         .iter()
-        .map(|parameter| bytecode_parameter_type(&parameter.value.ty.value, parameter.span))
+        .map(|parameter| {
+            bytecode_parameter_type(&parameter.value.ty.value, parameter.span, records)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let result = function
         .ty
         .as_ref()
         .map_or(Ok(BytecodeValueType::Unit), |ty| {
-            bytecode_type(&ty.value, ty.span)
+            bytecode_type(&ty.value, ty.span, records)
         })?;
-    if result != BytecodeValueType::Unit {
-        return Err(BytecodeError {
-            message: "bytecode host operations must return `()`".into(),
-            span: function.ty.as_ref().unwrap().span,
-        });
-    }
     Ok(BytecodeOperation {
         id,
         name: name.into(),
         arguments,
+        result,
     })
 }
 
@@ -518,7 +677,7 @@ fn compile_callback(
         .ty
         .as_ref()
         .map_or(Ok(BytecodeValueType::Unit), |ty| {
-            bytecode_type(&ty.value, ty.span)
+            bytecode_type(&ty.value, ty.span, &BTreeMap::new())
         })?;
     if result != BytecodeValueType::Unit {
         return Err(BytecodeError {
@@ -534,14 +693,47 @@ fn compile_callback(
         unreachable!()
     };
     let mut code = Vec::new();
+    let mut locals = BTreeMap::new();
     for statement in &block.stmts {
-        let Stmt::ExprStmt(expr) = &statement.value else {
-            return Err(BytecodeError {
-                message: "only host calls are supported in bytecode callbacks".into(),
-                span: statement.span,
-            });
-        };
-        code.push(compile_call(&expr.expr, operations)?);
+        match &statement.value {
+            Stmt::ExprStmt(expr) => code.push(compile_call(&expr.expr, operations, &locals, None)?),
+            Stmt::VarDeclStmt(declaration) => {
+                let init = declaration
+                    .decl
+                    .value
+                    .init
+                    .as_ref()
+                    .ok_or_else(|| BytecodeError {
+                        message: "bytecode locals must be initialized by a host query".into(),
+                        span: declaration.decl.span,
+                    })?;
+                let name = declaration.decl.value.name.value.clone();
+                let instruction = compile_call(init, operations, &locals, Some(name.clone()))?;
+                let Instruction::CallHost { operation, .. } = &instruction;
+                let result = operations
+                    .values()
+                    .find(|candidate| candidate.id == *operation)
+                    .expect("compiled instruction references a known operation")
+                    .result()
+                    .clone();
+                if result == BytecodeValueType::Unit {
+                    return Err(BytecodeError {
+                        message: "bytecode locals must be initialized by a host query".into(),
+                        span: declaration.decl.span,
+                    });
+                }
+                locals.insert(name, result);
+                code.push(instruction);
+            }
+            _ => {
+                return Err(BytecodeError {
+                    message:
+                        "only host calls and query bindings are supported in bytecode callbacks"
+                            .into(),
+                    span: statement.span,
+                })
+            }
+        }
     }
     if block.expr.is_some() {
         return Err(BytecodeError {
@@ -555,6 +747,8 @@ fn compile_callback(
 fn compile_call(
     expr: &SourcedExpr,
     operations: &BTreeMap<&str, &BytecodeOperation>,
+    locals: &BTreeMap<String, BytecodeValueType>,
+    result: Option<String>,
 ) -> Result<Instruction, BytecodeError> {
     let Expr::CallExpr(call) = &expr.expr else {
         return Err(BytecodeError {
@@ -587,10 +781,10 @@ fn compile_call(
     }
     let mut arguments = Vec::with_capacity(call.args.len());
     for (index, argument) in call.args.iter().enumerate() {
-        let value = bytecode_value(argument)?;
-        let actual = value.value_type();
-        let expected = operation.arguments[index];
-        if actual != expected {
+        let value = bytecode_value(argument, locals)?;
+        let actual = value.value_type(locals)?;
+        let expected = &operation.arguments[index];
+        if actual != *expected {
             return Err(BytecodeError {
                 message: format!(
                     "host operation `{}` argument {} expects {}, got {}",
@@ -607,19 +801,37 @@ fn compile_call(
     Ok(Instruction::CallHost {
         operation: operation.id,
         arguments,
+        result,
         span: expr.span,
     })
 }
 
-fn bytecode_value(argument: &SourcedExpr) -> Result<BytecodeValue, BytecodeError> {
+impl BytecodeOperand {
+    fn value_type(
+        &self,
+        locals: &BTreeMap<String, BytecodeValueType>,
+    ) -> Result<BytecodeValueType, BytecodeError> {
+        match self {
+            Self::Value(value) => Ok(value.value_type()),
+            Self::Local(name) => locals.get(name).cloned().ok_or_else(|| BytecodeError {
+                message: format!("unknown bytecode local `{name}`"),
+                span: SourceSpan::from(0),
+            }),
+        }
+    }
+}
+
+fn bytecode_value(
+    argument: &SourcedExpr,
+    locals: &BTreeMap<String, BytecodeValueType>,
+) -> Result<BytecodeOperand, BytecodeError> {
     match &argument.expr {
         Expr::LitExpr(literal) => match &literal.lit {
-            Lit::Integer(value) => bytecode_i32(*value, argument.span),
-            Lit::Boolean(value) => Ok(BytecodeValue::Bool(*value)),
-            Lit::String(value) => Ok(BytecodeValue::String(decode_string_literal(
-                value,
-                argument.span,
-            )?)),
+            Lit::Integer(value) => bytecode_i32(*value, argument.span).map(BytecodeOperand::Value),
+            Lit::Boolean(value) => Ok(BytecodeOperand::Value(BytecodeValue::Bool(*value))),
+            Lit::String(value) => Ok(BytecodeOperand::Value(BytecodeValue::String(
+                decode_string_literal(value, argument.span)?,
+            ))),
             Lit::Float(_) => Err(BytecodeError {
                 message: "bytecode does not support floating-point host arguments".into(),
                 span: argument.span,
@@ -645,6 +857,10 @@ fn bytecode_value(argument: &SourcedExpr) -> Result<BytecodeValue, BytecodeError
                 })?,
                 argument.span,
             )
+            .map(BytecodeOperand::Value)
+        }
+        Expr::IdentExpr(ident) if locals.contains_key(&ident.ident) => {
+            Ok(BytecodeOperand::Local(ident.ident.clone()))
         }
         _ => Err(BytecodeError {
             message: "bytecode host arguments must be literals".into(),
@@ -703,6 +919,7 @@ fn decode_string_literal(value: &str, span: SourceSpan) -> Result<String, Byteco
 fn bytecode_parameter_type(
     ty: &Type,
     span: SourceSpan,
+    records: &BTreeMap<&str, &StructDeclStmt>,
 ) -> Result<BytecodeValueType, BytecodeError> {
     if matches!(ty, Type::Path(path) if path.path.segments.len() == 1 && path.path.segments[0].value == "str")
     {
@@ -711,7 +928,7 @@ fn bytecode_parameter_type(
             span,
         });
     }
-    let value_type = bytecode_type(ty, span)?;
+    let value_type = bytecode_type(ty, span, records)?;
     if value_type == BytecodeValueType::Unit {
         return Err(BytecodeError {
             message: "bytecode host operation parameters must not use `()`".into(),
@@ -721,7 +938,11 @@ fn bytecode_parameter_type(
     Ok(value_type)
 }
 
-fn bytecode_type(ty: &Type, span: SourceSpan) -> Result<BytecodeValueType, BytecodeError> {
+fn bytecode_type(
+    ty: &Type,
+    span: SourceSpan,
+    records: &BTreeMap<&str, &StructDeclStmt>,
+) -> Result<BytecodeValueType, BytecodeError> {
     let result = match ty {
         Type::Tuple(tuple) if tuple.types.is_empty() => Some(BytecodeValueType::Unit),
         Type::Path(path) if path.path.segments.len() == 1 => {
@@ -729,7 +950,22 @@ fn bytecode_type(ty: &Type, span: SourceSpan) -> Result<BytecodeValueType, Bytec
                 "i32" => Some(BytecodeValueType::I32),
                 "bool" => Some(BytecodeValueType::Bool),
                 "str" => Some(BytecodeValueType::String),
-                _ => None,
+                name => records
+                    .get(name)
+                    .map(|record| {
+                        record
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                Ok((
+                                    field.value.name.value.clone(),
+                                    bytecode_type(&field.value.ty.value, field.span, records)?,
+                                ))
+                            })
+                            .collect::<Result<BTreeMap<_, _>, BytecodeError>>()
+                            .map(BytecodeValueType::Record)
+                    })
+                    .transpose()?,
             }
         }
         Type::Reference(reference) => match &reference.to.value {
@@ -760,9 +996,9 @@ mod tests {
             &mut self,
             operation: &BytecodeOperation,
             arguments: &[BytecodeValue],
-        ) -> Result<(), String> {
+        ) -> Result<BytecodeValue, String> {
             self.0.push((operation.id(), arguments.to_vec()));
-            Ok(())
+            Ok(BytecodeValue::Unit)
         }
     }
 
@@ -936,10 +1172,10 @@ mod tests {
             "bytecode programs only support extern host declarations and callback functions"
         );
 
-        let return_type = BytecodeProgram::compile("extern fn record() -> i32;").unwrap_err();
+        let return_type = BytecodeProgram::compile("extern fn record() -> u32;").unwrap_err();
         assert_eq!(
             return_type.message,
-            "bytecode host operations must return `()`"
+            "bytecode host operations only support i32, bool, str, and () values"
         );
 
         let unit_parameter = BytecodeProgram::compile("extern fn record(value: ());").unwrap_err();
@@ -973,7 +1209,11 @@ mod tests {
     fn preserves_host_failures_at_the_call_span() {
         struct FailingHost;
         impl BytecodeHost for FailingHost {
-            fn call(&mut self, _: &BytecodeOperation, _: &[BytecodeValue]) -> Result<(), String> {
+            fn call(
+                &mut self,
+                _: &BytecodeOperation,
+                _: &[BytecodeValue],
+            ) -> Result<BytecodeValue, String> {
                 Err("host failed".into())
             }
         }
@@ -985,5 +1225,69 @@ mod tests {
         let error = program.invoke("tick", &mut FailingHost).unwrap_err();
         assert_eq!(error.message, "host failed");
         assert_ne!(error.span, SourceSpan::from(0));
+    }
+
+    #[test]
+    fn query_results_can_flow_to_typed_record_commands() {
+        let program = BytecodeProgram::compile(
+            "struct Reading { value: i32 }\n\
+             extern fn query() -> Reading;\n\
+             extern fn emit(reading: Reading);\n\
+             callback fn tick() { let reading = query(); emit(reading); }",
+        )
+        .unwrap();
+        let reading_type =
+            HostValueType::Record([("value".into(), HostValueType::I32)].into_iter().collect());
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let target = Arc::clone(&seen);
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register_query("query", vec![], reading_type.clone(), |_| {
+                Ok(BytecodeValue::Record {
+                    fields: [("value".into(), BytecodeValue::I32(42))]
+                        .into_iter()
+                        .collect(),
+                })
+            })
+            .unwrap();
+        manifest
+            .register("emit", vec![reading_type], move |arguments| {
+                *target.lock().unwrap() = Some(arguments[0].clone());
+                Ok(())
+            })
+            .unwrap();
+
+        manifest.invoke(&program, "tick").unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some(BytecodeValue::Record {
+                fields: [("value".into(), BytecodeValue::I32(42))]
+                    .into_iter()
+                    .collect(),
+            })
+        );
+
+        let incompatible_type = HostValueType::Record(
+            [("value".into(), HostValueType::Bool)]
+                .into_iter()
+                .collect(),
+        );
+        let mut incompatible = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        incompatible
+            .register_query("query", vec![], incompatible_type.clone(), |_| {
+                Ok(BytecodeValue::Record {
+                    fields: [("value".into(), BytecodeValue::Bool(true))]
+                        .into_iter()
+                        .collect(),
+                })
+            })
+            .unwrap();
+        incompatible
+            .register("emit", vec![incompatible_type], |_| Ok(()))
+            .unwrap();
+        assert_eq!(
+            incompatible.invoke(&program, "tick").unwrap_err().message,
+            "host manifest v1 has an incompatible `emit` operation signature"
+        );
     }
 }
