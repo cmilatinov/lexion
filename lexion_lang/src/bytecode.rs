@@ -277,7 +277,6 @@ pub struct HostOperation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostValueType {
-    Unit,
     I32,
     Bool,
     String,
@@ -354,9 +353,17 @@ impl HostManifest {
             let expected = operation
                 .arguments()
                 .iter()
-                .copied()
-                .map(HostValueType::from)
-                .collect::<Vec<_>>();
+                .map(|value| {
+                    HostValueType::from_bytecode(*value).ok_or_else(|| BytecodeError {
+                        message: format!(
+                            "host manifest cannot invoke `{}` with an unsupported {} argument",
+                            operation.name(),
+                            value
+                        ),
+                        span: SourceSpan::from(0),
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             if entry.arguments != expected {
                 return Err(BytecodeError {
                     message: format!(
@@ -411,20 +418,19 @@ impl BytecodeHost for HostManifest {
 fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
     matches!(
         (expected, value),
-        (HostValueType::Unit, BytecodeValue::Unit)
-            | (HostValueType::I32, BytecodeValue::I32(_))
+        (HostValueType::I32, BytecodeValue::I32(_))
             | (HostValueType::Bool, BytecodeValue::Bool(_))
             | (HostValueType::String, BytecodeValue::String(_))
     )
 }
 
-impl From<BytecodeValueType> for HostValueType {
-    fn from(value: BytecodeValueType) -> Self {
+impl HostValueType {
+    fn from_bytecode(value: BytecodeValueType) -> Option<Self> {
         match value {
-            BytecodeValueType::Unit => Self::Unit,
-            BytecodeValueType::I32 => Self::I32,
-            BytecodeValueType::Bool => Self::Bool,
-            BytecodeValueType::String => Self::String,
+            BytecodeValueType::Unit => None,
+            BytecodeValueType::I32 => Some(Self::I32),
+            BytecodeValueType::Bool => Some(Self::Bool),
+            BytecodeValueType::String => Some(Self::String),
         }
     }
 }
