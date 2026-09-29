@@ -121,6 +121,7 @@ impl BytecodeProgram {
 
         let mut host_declarations = BTreeMap::new();
         let mut callback_declarations = Vec::new();
+        let mut declaration_names = BTreeMap::new();
         for statement in &ast {
             let Sourced {
                 value: Stmt::FuncDeclStmt(function),
@@ -132,6 +133,15 @@ impl BytecodeProgram {
                     span: statement.span,
                 });
             };
+            if declaration_names
+                .insert(function.name.value.as_str(), function.name.span)
+                .is_some()
+            {
+                return Err(BytecodeError {
+                    message: format!("duplicate function declaration `{}`", function.name.value),
+                    span: function.name.span,
+                });
+            }
             match function.qualifier {
                 FunctionQualifier::Extern => {
                     if host_declarations
@@ -618,6 +628,14 @@ mod tests {
         assert_eq!(
             unit_parameter.message,
             "bytecode host operation parameters must not use `()`"
+        );
+
+        let duplicate_name =
+            BytecodeProgram::compile("extern fn tick(); callback fn tick() { tick(); }")
+                .unwrap_err();
+        assert_eq!(
+            duplicate_name.message,
+            "duplicate function declaration `tick`"
         );
     }
 
