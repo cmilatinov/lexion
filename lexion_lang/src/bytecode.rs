@@ -491,6 +491,13 @@ fn bytecode_parameter_type(
     ty: &Type,
     span: SourceSpan,
 ) -> Result<BytecodeValueType, BytecodeError> {
+    if matches!(ty, Type::Path(path) if path.path.segments.len() == 1 && path.path.segments[0].value == "str")
+    {
+        return Err(BytecodeError {
+            message: "bytecode host operation string parameters must use `&str`".into(),
+            span,
+        });
+    }
     let value_type = bytecode_type(ty, span)?;
     if value_type == BytecodeValueType::Unit {
         return Err(BytecodeError {
@@ -628,6 +635,12 @@ mod tests {
         assert_eq!(
             unit_parameter.message,
             "bytecode host operation parameters must not use `()`"
+        );
+
+        let bare_string = BytecodeProgram::compile("extern fn record(value: str);").unwrap_err();
+        assert_eq!(
+            bare_string.message,
+            "bytecode host operation string parameters must use `&str`"
         );
 
         let duplicate_name =
