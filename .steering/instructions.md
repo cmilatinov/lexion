@@ -20,6 +20,7 @@ These are the default operating instructions for work in `lexion`.
 1. Inspect `git status --short`.
 2. Read the relevant steering files:
    - This file for branch, commit, and PR rules.
+   - `.steering/planning.md` for task selection, Project status, and issue references.
    - `.steering/architecture.md` for crate boundaries and pipeline ownership.
    - `.steering/conventions.md` for local Rust and test conventions.
 3. Locate the smallest relevant code surface.
@@ -30,6 +31,7 @@ These are the default operating instructions for work in `lexion`.
 ## Git And Pull Request Workflow
 
 - `main` is the default integration branch and pull request base. Never commit directly to `main`.
+- Fetch the current `origin/main` before creating a work branch. If the existing checkout has unrelated changes, create a separate worktree from `origin/main`.
 - Create a separate work branch with one of: `fix/`, `feature/`, `chore/`, `docs/`, `refactor/`, or `perf/`.
 - When work depends on an unmerged feature, branch from that feature and target its pull request. Use a dedicated worktree when practical; leave unrelated changes in other worktrees untouched.
 - Use conventional commit and pull request title prefixes: `fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, or `perf:`. Do not use agent-identifying tags.
