@@ -278,6 +278,24 @@ impl BytecodeProgram {
     }
 
     pub fn invoke(&self, name: &str, host: &mut dyn BytecodeHost) -> Result<(), BytecodeError> {
+        self.invoke_inner(name, host, None)
+    }
+
+    pub fn invoke_with_state(
+        &self,
+        name: &str,
+        host: &mut dyn BytecodeHost,
+        state: &mut BehaviorState,
+    ) -> Result<(), BytecodeError> {
+        self.invoke_inner(name, host, Some(state))
+    }
+
+    fn invoke_inner(
+        &self,
+        name: &str,
+        host: &mut dyn BytecodeHost,
+        mut state: Option<&mut BehaviorState>,
+    ) -> Result<(), BytecodeError> {
         let callback = self.callbacks.get(name).ok_or_else(|| BytecodeError {
             message: format!("unknown callback `{name}`"),
             span: SourceSpan::from(0),
@@ -310,12 +328,14 @@ impl BytecodeProgram {
                             }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let value =
-                        host.call(operation, &arguments)
-                            .map_err(|message| BytecodeError {
-                                message,
-                                span: *span,
-                            })?;
+                    let value = match state.as_deref_mut() {
+                        Some(state) => host.call_with_state(operation, &arguments, state),
+                        None => host.call(operation, &arguments),
+                    }
+                    .map_err(|message| BytecodeError {
+                        message,
+                        span: *span,
+                    })?;
                     if value.value_type() != *operation.result() {
                         return Err(BytecodeError {
                             message: format!(
@@ -341,6 +361,15 @@ pub trait BytecodeHost {
         operation: &BytecodeOperation,
         arguments: &[BytecodeValue],
     ) -> Result<BytecodeValue, String>;
+
+    fn call_with_state(
+        &mut self,
+        operation: &BytecodeOperation,
+        arguments: &[BytecodeValue],
+        _: &mut BehaviorState,
+    ) -> Result<BytecodeValue, String> {
+        self.call(operation, arguments)
+    }
 }
 
 /// A versioned, owned-value host boundary.  It deliberately exposes neither VM
@@ -352,12 +381,19 @@ pub struct HostManifest {
     dispatching: Arc<AtomicBool>,
 }
 
-type HostHandler = dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send;
+type StatelessHostHandler = dyn FnMut(&[BytecodeValue]) -> Result<BytecodeValue, String> + Send;
+type StatefulHostHandler =
+    dyn FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<BytecodeValue, String> + Send;
 
 pub struct HostOperation {
     pub arguments: Vec<HostValueType>,
     result: Option<HostValueType>,
-    handler: Box<HostHandler>,
+    handler: HostHandler,
+}
+
+enum HostHandler {
+    Stateless(Box<StatelessHostHandler>),
+    Stateful(Box<StatefulHostHandler>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,9 +431,9 @@ impl HostManifest {
             HostOperation {
                 arguments,
                 result: None,
-                handler: Box::new(move |arguments| {
+                handler: HostHandler::Stateless(Box::new(move |arguments| {
                     handler(arguments).map(|()| BytecodeValue::Unit)
-                }),
+                })),
             },
         );
         Ok(())
@@ -419,7 +455,56 @@ impl HostManifest {
             HostOperation {
                 arguments,
                 result: Some(result),
-                handler: Box::new(handler),
+                handler: HostHandler::Stateless(Box::new(handler)),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn register_with_state(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        mut handler: impl FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<(), String>
+            + Send
+            + 'static,
+    ) -> Result<(), String> {
+        self.register_stateful_operation(name, arguments, None, move |state, arguments| {
+            handler(state, arguments).map(|()| BytecodeValue::Unit)
+        })
+    }
+
+    pub fn register_query_with_state(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        result: HostValueType,
+        handler: impl FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<BytecodeValue, String>
+            + Send
+            + 'static,
+    ) -> Result<(), String> {
+        self.register_stateful_operation(name, arguments, Some(result), handler)
+    }
+
+    fn register_stateful_operation(
+        &mut self,
+        name: impl Into<String>,
+        arguments: Vec<HostValueType>,
+        result: Option<HostValueType>,
+        handler: impl FnMut(&mut BehaviorState, &[BytecodeValue]) -> Result<BytecodeValue, String>
+            + Send
+            + 'static,
+    ) -> Result<(), String> {
+        let name = name.into();
+        if self.operations.contains_key(&name) {
+            return Err(format!("host operation `{name}` is already registered"));
+        }
+        self.operations.insert(
+            name,
+            HostOperation {
+                arguments,
+                result,
+                handler: HostHandler::Stateful(Box::new(handler)),
             },
         );
         Ok(())
@@ -429,6 +514,22 @@ impl HostManifest {
         program: &BytecodeProgram,
         callback: &str,
     ) -> Result<(), BytecodeError> {
+        let _execution = self.begin_invoke(program)?;
+        program.invoke(callback, self)
+    }
+
+    pub fn invoke_with_state(
+        &mut self,
+        program: &BytecodeProgram,
+        callback: &str,
+        state: &mut BehaviorState,
+    ) -> Result<(), BytecodeError> {
+        let _state_execution = state.begin_invoke()?;
+        let _execution = self.begin_invoke(program)?;
+        program.invoke_with_state(callback, self, state)
+    }
+
+    fn begin_invoke(&self, program: &BytecodeProgram) -> Result<ExecutionGuard, BytecodeError> {
         if self.executing.load(Ordering::Acquire) {
             return Err(BytecodeError {
                 message: "same-instance synchronous reentry is not allowed".into(),
@@ -516,11 +617,10 @@ impl HostManifest {
             });
         }
         self.dispatching.store(true, Ordering::Release);
-        let _execution = ExecutionGuard {
+        Ok(ExecutionGuard {
             executing: Arc::clone(&self.executing),
             dispatching: Arc::clone(&self.dispatching),
-        };
-        program.invoke(callback, self)
+        })
     }
 }
 
@@ -540,40 +640,66 @@ impl BytecodeHost for HostManifest {
                 self.version
             )
         })?;
-        if entry.arguments.len() != arguments.len() {
-            return Err(format!(
-                "host operation `{}` expects {} argument(s), got {}",
-                operation.name(),
-                entry.arguments.len(),
-                arguments.len()
-            ));
-        }
-        for (expected, actual) in entry.arguments.iter().zip(arguments) {
-            if !matches_type(expected, actual) {
-                return Err(format!(
-                    "host operation `{}` received an incompatible argument",
-                    operation.name()
-                ));
-            }
-        }
-        let value = (entry.handler)(arguments)?;
-        match &entry.result {
-            Some(expected) if !matches_type(expected, &value) => {
-                return Err(format!(
-                    "host operation `{}` returned an incompatible value",
-                    operation.name()
-                ));
-            }
-            None if value != BytecodeValue::Unit => {
-                return Err(format!(
-                    "host operation `{}` returned an incompatible value",
-                    operation.name()
-                ));
-            }
-            _ => {}
-        }
+        validate_host_arguments(operation, &entry.arguments, arguments)?;
+        let value = match &mut entry.handler {
+            HostHandler::Stateless(handler) => handler(arguments),
+            HostHandler::Stateful(_) => Err(format!(
+                "host operation `{}` requires behavior state",
+                operation.name()
+            )),
+        }?;
+        validate_host_result(operation, entry.result.as_ref(), &value)?;
         Ok(value)
     }
+
+    fn call_with_state(
+        &mut self,
+        operation: &BytecodeOperation,
+        arguments: &[BytecodeValue],
+        state: &mut BehaviorState,
+    ) -> Result<BytecodeValue, String> {
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("host manifest calls must be invoked through HostManifest::invoke".into());
+        }
+        let entry = self.operations.get_mut(operation.name()).ok_or_else(|| {
+            format!(
+                "host manifest v{} has no `{}` operation",
+                operation.name(),
+                self.version
+            )
+        })?;
+        validate_host_arguments(operation, &entry.arguments, arguments)?;
+        let value = match &mut entry.handler {
+            HostHandler::Stateless(handler) => handler(arguments),
+            HostHandler::Stateful(handler) => handler(state, arguments),
+        }?;
+        validate_host_result(operation, entry.result.as_ref(), &value)?;
+        Ok(value)
+    }
+}
+
+fn validate_host_arguments(
+    operation: &BytecodeOperation,
+    expected_arguments: &[HostValueType],
+    arguments: &[BytecodeValue],
+) -> Result<(), String> {
+    if expected_arguments.len() != arguments.len() {
+        return Err(format!(
+            "host operation `{}` expects {} argument(s), got {}",
+            operation.name(),
+            expected_arguments.len(),
+            arguments.len()
+        ));
+    }
+    for (expected, actual) in expected_arguments.iter().zip(arguments) {
+        if !matches_type(expected, actual) {
+            return Err(format!(
+                "host operation `{}` received an incompatible argument",
+                operation.name()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
@@ -593,9 +719,170 @@ fn matches_type(expected: &HostValueType, value: &BytecodeValue) -> bool {
     }
 }
 
+fn validate_host_result(
+    operation: &BytecodeOperation,
+    expected: Option<&HostValueType>,
+    value: &BytecodeValue,
+) -> Result<(), String> {
+    match expected {
+        Some(expected) if !matches_type(expected, value) => Err(format!(
+            "host operation `{}` returned an incompatible value",
+            operation.name()
+        )),
+        None if value != &BytecodeValue::Unit => Err(format!(
+            "host operation `{}` returned an incompatible value",
+            operation.name()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Definition-time state for an entity-owned behavior module. Instances clone
+/// these defaults, so no state is shared accidentally between entities.
+#[derive(Debug, Clone)]
+pub struct BehaviorModule {
+    definition: Arc<BehaviorModuleDefinition>,
+}
+
+#[derive(Debug)]
+struct BehaviorModuleDefinition {
+    program: BytecodeProgram,
+    defaults: BTreeMap<String, BytecodeValue>,
+}
+
+#[derive(Debug)]
+pub struct BehaviorState {
+    values: BTreeMap<String, BytecodeValue>,
+    executing: Arc<AtomicBool>,
+}
+
+impl BehaviorState {
+    pub fn get(&self, name: &str) -> Option<&BytecodeValue> {
+        self.values.get(name)
+    }
+
+    pub fn set(&mut self, name: &str, value: BytecodeValue) -> Result<(), String> {
+        let previous = self
+            .values
+            .get(name)
+            .ok_or_else(|| format!("unknown behavior state `{name}`"))?;
+        if previous.value_type() != value.value_type() {
+            return Err(format!("behavior state `{name}` has an incompatible type"));
+        }
+        self.values.insert(name.into(), value);
+        Ok(())
+    }
+
+    fn begin_invoke(&self) -> Result<BehaviorExecutionGuard, BytecodeError> {
+        if self.executing.swap(true, Ordering::AcqRel) {
+            return Err(BytecodeError {
+                message: "same behavior instance synchronous reentry is not allowed".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        Ok(BehaviorExecutionGuard {
+            executing: Arc::clone(&self.executing),
+        })
+    }
+}
+
+impl Clone for BehaviorState {
+    fn clone(&self) -> Self {
+        Self {
+            values: self.values.clone(),
+            executing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BehaviorInstance {
+    module: BehaviorModule,
+    state: BehaviorState,
+}
+
+impl BehaviorModule {
+    pub fn new(
+        program: BytecodeProgram,
+        defaults: BTreeMap<String, BytecodeValue>,
+    ) -> Result<Self, BytecodeError> {
+        if defaults
+            .values()
+            .any(|value| matches!(value, BytecodeValue::Unit))
+        {
+            return Err(BytecodeError {
+                message: "behavior state defaults cannot be unit values".into(),
+                span: SourceSpan::from(0),
+            });
+        }
+        Ok(Self {
+            definition: Arc::new(BehaviorModuleDefinition { program, defaults }),
+        })
+    }
+    pub fn create_instance(
+        &self,
+        overrides: BTreeMap<String, BytecodeValue>,
+    ) -> Result<BehaviorInstance, BytecodeError> {
+        let mut state = self.definition.defaults.clone();
+        for (name, value) in overrides {
+            let default = state.get(&name).ok_or_else(|| BytecodeError {
+                message: format!("unknown behavior state override `{name}`"),
+                span: SourceSpan::from(0),
+            })?;
+            if default.value_type() != value.value_type() {
+                return Err(BytecodeError {
+                    message: format!("behavior state override `{name}` has an incompatible type"),
+                    span: SourceSpan::from(0),
+                });
+            }
+            state.insert(name, value);
+        }
+        Ok(BehaviorInstance {
+            module: self.clone(),
+            state: BehaviorState {
+                values: state,
+                executing: Arc::new(AtomicBool::new(false)),
+            },
+        })
+    }
+}
+
+impl BehaviorInstance {
+    pub fn state(&self, name: &str) -> Option<&BytecodeValue> {
+        self.state.get(name)
+    }
+    pub fn set_state(&mut self, name: &str, value: BytecodeValue) -> Result<(), BytecodeError> {
+        self.state
+            .set(name, value)
+            .map_err(|message| BytecodeError {
+                message,
+                span: SourceSpan::from(0),
+            })
+    }
+    /// Rust owns scheduling: scripts can only run a named callback when this
+    /// method is called by the host's update thread.
+    pub fn invoke(
+        &mut self,
+        callback: &str,
+        manifest: &mut HostManifest,
+    ) -> Result<(), BytecodeError> {
+        manifest.invoke_with_state(&self.module.definition.program, callback, &mut self.state)
+    }
+}
+
 struct ExecutionGuard {
     executing: Arc<AtomicBool>,
     dispatching: Arc<AtomicBool>,
+}
+
+struct BehaviorExecutionGuard {
+    executing: Arc<AtomicBool>,
+}
+
+impl Drop for BehaviorExecutionGuard {
+    fn drop(&mut self) {
+        self.executing.store(false, Ordering::Release);
+    }
 }
 
 impl Drop for ExecutionGuard {
@@ -1042,6 +1329,136 @@ mod tests {
         manifest.invoke(&program, "tick").unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(7)]);
     }
+    #[test]
+    fn behavior_instances_keep_independent_state() {
+        let program = BytecodeProgram::compile("callback fn update() -> () { }").unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut left = module.create_instance(BTreeMap::new()).unwrap();
+        let right = module
+            .create_instance(BTreeMap::from([("health".into(), BytecodeValue::I32(20))]))
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &left.module.definition,
+            &right.module.definition
+        ));
+        left.set_state("health", BytecodeValue::I32(5)).unwrap();
+        assert_eq!(left.state("health"), Some(&BytecodeValue::I32(5)));
+        assert_eq!(right.state("health"), Some(&BytecodeValue::I32(20)));
+    }
+
+    #[test]
+    fn behavior_callbacks_receive_their_instance_state() {
+        let program =
+            BytecodeProgram::compile("extern fn heal(); callback fn update() -> () { heal(); }")
+                .unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut left = module.create_instance(BTreeMap::new()).unwrap();
+        let mut right = module
+            .create_instance(BTreeMap::from([("health".into(), BytecodeValue::I32(20))]))
+            .unwrap();
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register_with_state("heal", vec![], |state, _| {
+                let BytecodeValue::I32(health) = state.get("health").unwrap() else {
+                    return Err("health must be i32".into());
+                };
+                state.set("health", BytecodeValue::I32(health + 1))
+            })
+            .unwrap();
+
+        left.invoke("update", &mut manifest).unwrap();
+        right.invoke("update", &mut manifest).unwrap();
+
+        assert_eq!(left.state("health"), Some(&BytecodeValue::I32(11)));
+        assert_eq!(right.state("health"), Some(&BytecodeValue::I32(21)));
+    }
+
+    #[test]
+    fn stateful_queries_can_bind_instance_values() {
+        let program = BytecodeProgram::compile(
+            "extern fn read_health() -> i32; extern fn observe(value: i32); callback fn update() -> () { let health = read_health(); observe(health); }",
+        )
+        .unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut instance = module
+            .create_instance(BTreeMap::from([("health".into(), BytecodeValue::I32(25))]))
+            .unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(vec![]));
+        let target = Arc::clone(&seen);
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register_query_with_state("read_health", vec![], HostValueType::I32, |state, _| {
+                state
+                    .get("health")
+                    .cloned()
+                    .ok_or_else(|| "missing health state".into())
+            })
+            .unwrap();
+        manifest
+            .register("observe", vec![HostValueType::I32], move |arguments| {
+                target.lock().unwrap().extend_from_slice(arguments);
+                Ok(())
+            })
+            .unwrap();
+
+        instance.invoke("update", &mut manifest).unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), vec![BytecodeValue::I32(25)]);
+    }
+
+    #[test]
+    fn stateful_callbacks_reject_reentry_through_another_manifest() {
+        let program = BytecodeProgram::compile(
+            "extern fn reenter(); callback fn tick() -> () { reenter(); }",
+        )
+        .unwrap();
+        let module = BehaviorModule::new(
+            program.clone(),
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut instance = module.create_instance(BTreeMap::new()).unwrap();
+        let nested_manifest = Arc::new(std::sync::Mutex::new(HostManifest::new(
+            DEFAULT_HOST_API_VERSION,
+        )));
+        nested_manifest
+            .lock()
+            .unwrap()
+            .register_with_state("reenter", vec![], |_, _| Ok(()))
+            .unwrap();
+        let nested_target = Arc::clone(&nested_manifest);
+        let nested_program = program.clone();
+        let mut manifest = HostManifest::new(DEFAULT_HOST_API_VERSION);
+        manifest
+            .register_with_state("reenter", vec![], move |state, _| {
+                nested_target
+                    .lock()
+                    .unwrap()
+                    .invoke_with_state(&nested_program, "tick", state)
+                    .map_err(|error| error.message)
+            })
+            .unwrap();
+
+        let error = instance.invoke("tick", &mut manifest).unwrap_err();
+
+        assert_eq!(
+            error.message,
+            "same behavior instance synchronous reentry is not allowed"
+        );
+        assert_eq!(instance.state("health"), Some(&BytecodeValue::I32(10)));
+    }
 
     #[test]
     fn direct_program_invocation_cannot_bypass_manifest_validation() {
@@ -1059,6 +1476,44 @@ mod tests {
             "host manifest calls must be invoked through HostManifest::invoke"
         );
         let error = manifest.invoke(&program, "tick").unwrap_err();
+        assert_eq!(
+            error.message,
+            "bytecode requires host API version 2, but manifest provides version 1"
+        );
+    }
+
+    #[test]
+    fn direct_stateful_program_invocation_cannot_bypass_manifest_validation() {
+        let program = BytecodeProgram::compile_for_host_api(
+            "extern fn heal(); callback fn tick() -> () { heal(); }",
+            2,
+        )
+        .unwrap();
+        let module = BehaviorModule::new(
+            program,
+            BTreeMap::from([("health".into(), BytecodeValue::I32(10))]),
+        )
+        .unwrap();
+        let mut instance = module.create_instance(BTreeMap::new()).unwrap();
+        let mut manifest = HostManifest::new(1);
+        manifest
+            .register_with_state("heal", vec![], |state, _| {
+                state.set("health", BytecodeValue::I32(0))
+            })
+            .unwrap();
+
+        let error = module
+            .definition
+            .program
+            .invoke_with_state("tick", &mut manifest, &mut instance.state)
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "host manifest calls must be invoked through HostManifest::invoke"
+        );
+        assert_eq!(instance.state("health"), Some(&BytecodeValue::I32(10)));
+
+        let error = instance.invoke("tick", &mut manifest).unwrap_err();
         assert_eq!(
             error.message,
             "bytecode requires host API version 2, but manifest provides version 1"
