@@ -3,7 +3,7 @@
 Use the steering files in this repository as standing project instructions:
 
 - [.steering/instructions.md](.steering/instructions.md) - general repository workflow, validation defaults, and task discipline.
-- [.steering/planning.md](.steering/planning.md) - GitHub Issues and Project planning, task selection, and PR references.
+- [.steering/planning.md](.steering/planning.md) - GitHub Projects tracking, linked issue requirements, task selection, and PR references.
 - [.steering/code-review.md](.steering/code-review.md) - senior-developer review checklist, severity levels, and finding format.
 - [.steering/architecture.md](.steering/architecture.md) - workspace structure, compiler pipeline, design patterns, and testing strategy.
 - [.steering/conventions.md](.steering/conventions.md) - Rust coding conventions, diagnostics, parser grammar style, and validation tools.
@@ -11,6 +11,8 @@ Use the steering files in this repository as standing project instructions:
 - [.steering/compilers.md](.steering/compilers.md) - compiler stages, AST production, semantic validation, IR, CFG, liveness, and backend notes.
 
 When making repository changes, follow the branch, commit, and pull request rules in `.steering/instructions.md`. Commit titles must start with exactly one of `refactor:`, `feat:`, `fix:`, `perf:`, `chore:`, or `docs:`.
+
+Start new work from current `main` and target `main` with pull requests unless the user explicitly selects another base or an unmerged dependency requires it.
 
 When editing steering docs, keep every `.steering/*.md` file under 200 lines.
 
