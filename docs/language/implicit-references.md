@@ -30,6 +30,8 @@ Assignment to a name replaces the value in that binding. Assignment to a field o
 
 Bindings may be reassigned to another value of the same type, regardless of the access qualifier. Reassigning a read-only binding changes its local slot, not the referenced object. A write to `root.child.field` or `root.items[i]` requires mutable access at every reference-bearing step of the path. Reading through a mutable view may be passed to a read-only parameter. A read-only view cannot be passed to a mutable parameter, stored as mutable access, cast to it, or returned as mutable access. Type inference retains the source view's permission; it cannot invent `mut` from an unqualified alias. A conditional or match join uses the least permissive access of its alternatives. A nullable reference, when narrowed, retains its original access.
 
+Storing a reference in a mutable object must preserve that permission: every reference that becomes reachable through the mutable path must already have mutable access. This applies to struct field initialization and replacement, collection insertion and replacement, nested tuple/enum/nullable payloads, source defaults, and host overrides before the object is published. A read-only view cannot be inserted even when another alias to the same object is mutable; the source view itself must grant access. There are no per-field or per-element permissions that a later read could recover. The frontend rejects a known read-only source at the insertion site; the VM checks host-supplied values and globally frozen objects before storing them. `copy(read_only_child)` supplies a fresh mutable object when an independent child is intended. Copying a host handle does not change its host permissions.
+
 Multiple mutable aliases to one object are legal. They are capabilities checked by Lexion, not exclusive Rust `&mut` borrows. Writes through one alias are visible through the others in program order. The VM executes callbacks on the host's update thread and rejects same-instance synchronous reentry. Rust must not hold an exclusive borrow into an object while invoking script that could alias it. Host APIs expose controlled operations or owned values instead of raw Rust pointers, Rust references, or engine objects.
 
 `const` is a read-only *view*, not a global freeze: another valid mutable alias may change the object. A host-loaded **data root** is different: the host marks its entire reachable mutable object graph immutable. No mutable alias may be created from it through a field, collection, nullable narrowing, return, or host operation. A deep copy of the data graph may be used as independent mutable instance state if the new binding is declared `mut`; the copied objects are outside the frozen graph. An immutable string cannot be mutated through either route.
@@ -40,7 +42,7 @@ References are managed object identities, not addresses into another object's mo
 
 An ordinary module contains declarations and exports selected by name. `export struct EnemyState { ... }` is the proposed exported struct spelling; `export fn` exports a function. There are no behavior, data, or library module role keywords and no designated state declaration. Rust chooses an exported struct as a data root or as per-instance state and validates that selection against the compiled schema. Ambiguous, missing, inaccessible, or incompatible exports fail before constructing an instance.
 
-Fields may have a source default (`health: i32 = 100`) or be required. A constructor or host override supplies every required field and must match the declared type; duplicate, missing, and unknown fields are errors. Defaults are evaluated as deterministic, side-effect-free constructor expressions: literals, tuples, and struct/enum/collection constructors with pure arguments. They cannot call arbitrary functions, query the host, read ambient state, or depend on another field's initialization order. The frontend checks defaults once against the schema; each construction evaluates or deep-copies them into an independent graph. Nested mutable defaults in two instances never alias. A host override replaces its selected field after type checking and before publication of the completed instance. Failed construction publishes nothing.
+Fields may have a source default (`health: i32 = 100`) or be required. A constructor or host override supplies every required field and must match the declared type; duplicate, missing, and unknown fields are errors. Defaults are evaluated as deterministic, side-effect-free constructor expressions: literals, tuples, and struct/enum/collection constructors with pure arguments. They cannot call arbitrary functions, query the host, read ambient state, or depend on another field's initialization order. The frontend checks defaults once against the schema; each construction evaluates or deep-copies them into an independent graph. Nested mutable defaults in two instances never alias. A host override replaces its selected field after type checking and before publication of the completed instance. An owned host record override is copied into a fresh VM graph before insertion into mutable instance state; a borrowed or frozen host object cannot become a writable alias. Failed construction publishes nothing.
 
 The host owns instance lifetime and chooses when to invoke a `callback fn` with explicit typed arguments, including `state: mut EnemyState`. Callbacks return `()`. The host validates names, result, qualifiers, types, and source spans against the compiled signature before invocation. The script cannot schedule its own callback. Instance state is one host-selected exported struct graph; data roots are separately owned immutable graphs. Qualified imports expose ordinary declarations under #108 without changing these access rules.
 
@@ -76,6 +78,19 @@ fn borrow_bad(state: EnemyState) -> () { require_mut(state); } // error: mut arg
 A `const EnemyState` view can be passed to `observe`; `observe` may see changes made through a separate mutable alias on a later call. A nullable `EnemyState?` must be narrowed before reading `health`; narrowing never grants mutable access. A host data root passed to `update` fails validation before callback side effects. `copy(data)` can initialize a separate mutable state graph when bound as `mut EnemyState`.
 
 ```lexion
+export struct Child { value: i32 = 0 }
+export struct Container { child: Child }
+
+fn rejected(child: const Child) -> () {
+    let box: mut Container = Container { child: child }; // error: read-only child in mutable field
+}
+fn accepted(child: const Child) -> () {
+    let box: mut Container = Container { child: copy(child) };
+    box.child.value = 1; // the original child is unchanged
+}
+```
+
+```lexion
 let a: i32 = 1;
 let b: i32 = a;
 a = 2;                 // b remains 1
@@ -97,6 +112,9 @@ The current grammar accepts explicit `&T`, unary `&`, and unary `*`; the native 
 | Return a newly constructed struct or a child of live instance state | Result remains rooted and usable after the callee returns. |
 | Reassign a read-only binding | Local name changes target; neither old nor new target is mutated. |
 | Pass `const` or unqualified struct to `mut` parameter | Source-located type error before invocation. |
+| Initialize or replace a mutable struct field with a read-only child | Source-located insertion error, even if the container is freshly constructed. |
+| Insert a tuple, enum, or nullable value holding a read-only child into a mutable collection | Source-located insertion error; wrapping does not grant access. |
+| Insert `copy(read_only_child)` into a mutable container | Accepted; the new child is writable and does not alias the original. |
 | Narrow read-only `T?`, then mutate nested field | Source-located read-only error. |
 | Read through `const` after another legal mutable alias writes | New value is visible; `const` is a view, not a snapshot. |
 | Put an alias of a data root in mutable instance state, then write | Mutation is rejected because the target object is frozen. |
@@ -108,8 +126,8 @@ The current grammar accepts explicit `&T`, unary `&`, and unary `*`; the native 
 
 | Area | Contract checks for implementing task |
 | --- | --- |
-| Frontend (#124) | Parse all qualifier spellings and exported defaults; preserve spans and qualifiers in signatures; reject read-only writes, escalation, invalid defaults, old reference syntax, and mutation through a nested or narrowed read-only path. |
-| VM (#125, #104) | Preserve object identity for struct/collection aliases; root returned/local objects; deep copy without losing cycles or internal sharing; enforce global data-root freeze and mutable path checks. |
+| Frontend (#124) | Parse all qualifier spellings and exported defaults; preserve spans and qualifiers in signatures; reject read-only writes, escalation through insertion, invalid defaults, old reference syntax, and mutation through a nested or narrowed read-only path. |
+| VM (#125, #104) | Preserve object identity for struct/collection aliases; root returned/local objects; deep copy without losing cycles or internal sharing; check host-supplied insertions and enforce global data-root freeze and mutable path checks. |
 | Host bindings (#125, #102, #103) | Validate callback qualifiers and result before invocation; create independent instance graphs; copy plain records at manifest boundary; reject invalid handle generations and reentry without exposing Rust pointers. |
 | Native migration (#125) | Update supported reference, aggregate, and string fixtures to direct access; preserve scalar copy and struct alias semantics for accepted code, or produce a clear unsupported-feature diagnostic. |
 | Serialization (#110, #111) | Round-trip sharing, cycles, defaults, nullable/enum tags, and schema identity; migrate atomically and reject incompatible or invalid handle restoration without publishing a partial graph. |
