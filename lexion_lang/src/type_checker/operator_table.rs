@@ -77,7 +77,7 @@ impl OperatorTable {
             for res in rule_defs {
                 match res {
                     Ok(defs) => {
-                        result.extend(defs.into_iter());
+                        result.extend(defs);
                     }
                     Err(err) => {
                         return Err(err);

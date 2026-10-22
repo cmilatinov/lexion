@@ -33,7 +33,7 @@ impl<'a> Tokenizer<'a> {
         })
     }
 
-    pub fn from_string(input: Arc<String>, token_types: &[TokenType]) -> Tokenizer {
+    pub fn from_string(input: Arc<String>, token_types: &[TokenType]) -> Tokenizer<'_> {
         Tokenizer {
             file: "inline",
             string: input,
