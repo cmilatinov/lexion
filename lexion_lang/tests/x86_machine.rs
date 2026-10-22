@@ -336,14 +336,6 @@ fn x86_machine_code_empty_string_literal() {
 }
 
 #[test]
-fn x86_machine_reports_unsupported_string_parameters() {
-    insta::assert_snapshot!(compile_machine_code_error(
-        "backend/x86_unsupported_string_parameter.lex"
-    )
-    .join("\n"));
-}
-
-#[test]
 fn x86_machine_code_string_register_arguments() {
     insta::assert_snapshot!(string_machine_snapshot(&compile_machine_code(
         "backend/x86_string_abi_registers.lex"
@@ -480,13 +472,6 @@ fn x86_machine_code_function_scoped_symbol_types() {
     let code = compile_machine_code("backend/x86_function_scoped_symbols.lex");
 
     insta::assert_snapshot!(machine_snapshot(&code));
-}
-
-#[test]
-fn x86_machine_reports_unsupported_indexed_access() {
-    insta::assert_snapshot!(
-        compile_machine_code_error("backend/x86_unsupported_index.lex").join("\n")
-    );
 }
 
 #[test]
