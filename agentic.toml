@@ -12,7 +12,7 @@ on = ["commit", "validate"]
 
 [[check]]
 name = "lint"
-run = ["cargo", "clippy", "--workspace", "--all-targets"]
+run = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
 on = ["commit", "validate"]
 
 [[check]]
