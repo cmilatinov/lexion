@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "agentic@corebit-instruments": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(agentic show *)",
+      "Bash(agentic local *)",
+      "Bash(agentic remote *)",
+      "Bash(agentic doctor *)"
+    ]
+  }
+}

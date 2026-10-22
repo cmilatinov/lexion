@@ -63,8 +63,8 @@ The language compiler supports dump flags such as `parse_table`, `parse_trace`, 
 ## Task And PR Discipline
 
 - Use the GitHub Project `Lexion` as the planning source of truth and repository issues as the Engineering Task requirements.
-- Use the available `github-projects-workflow` and `github-issues-workflow` skills for task selection, status updates, issue creation, and PR references.
+- Use the `agentic:engineering-tasks` skill and the `agentic` CLI for task selection, status updates, issue creation, and PR references.
 - Do not create Engineering Tasks for documentation- or process-only changes unless explicitly requested.
 - Keep one PR to one coherent parser, compiler, grammar, or documentation change.
 - Do not mix unrelated cleanup with behavior fixes.
-- Keep linked Project items `In Progress` through review. Mark them `Done` only after merge and only when the issue's acceptance criteria are satisfied.
+- `agentic remote et-start` moves an Engineering Task to `In Progress` and `agentic remote et-pr` moves it to `In Review`; merging its PR closes it as `Done`.
