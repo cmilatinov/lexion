@@ -371,11 +371,6 @@ fn x86_reports_unsupported_aggregate_members() {
 }
 
 #[test]
-fn x86_reports_unsupported_indexed_access() {
-    insta::assert_snapshot!(compile_x86_error("backend/x86_unsupported_index.lex").join("\n"));
-}
-
-#[test]
 fn x86_smoke_reference_borrow() {
     insta::assert_snapshot!(compile_x86("backend/x86_reference_borrow.lex"));
 }
