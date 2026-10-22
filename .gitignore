@@ -1,4 +1,5 @@
 /.idea
 **/target
 /dump
-/docs/.worktrees
+/docs
+/.worktrees
