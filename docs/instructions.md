@@ -13,16 +13,16 @@ These are the default operating instructions for work in `lexion`.
 - Keep changes scoped to the requested compiler stage, parser algorithm, grammar rule, or workflow document.
 - Protect existing work in the tree. If files have uncommitted changes that are not part of the current task, leave them untouched.
 - Use `rg` and `rg --files` for code search.
-- Do not silently broaden grammar or language behavior. Document any syntax or semantic change in tests and, when useful, in `.steering/parsers.md` or `.steering/compilers.md`.
+- Do not silently broaden grammar or language behavior. Document any syntax or semantic change in tests and, when useful, in `docs/parsers.md` or `docs/compilers.md`.
 
 ## Standard Change Flow
 
 1. Inspect `git status --short`.
 2. Read the relevant steering files:
    - This file for branch, commit, and PR rules.
-   - `.steering/planning.md` for task selection, Project status, and issue references.
-   - `.steering/architecture.md` for crate boundaries and pipeline ownership.
-   - `.steering/conventions.md` for local Rust and test conventions.
+   - `docs/planning.md` for task selection, Project status, and issue references.
+   - `docs/architecture.md` for crate boundaries and pipeline ownership.
+   - `docs/conventions.md` for local Rust and test conventions.
 3. Locate the smallest relevant code surface.
 4. Make focused edits.
 5. Run formatting and validation appropriate to the change.
@@ -42,7 +42,7 @@ These are the default operating instructions for work in `lexion`.
 
 ## Steering File Maintenance
 
-- Keep every `.steering/*.md` file under 200 lines. If a steering file approaches the limit, tighten wording or split only when the new file has a clear, distinct purpose.
+- Keep every `docs/*.md` file under 200 lines. If a steering file approaches the limit, tighten wording or split only when the new file has a clear, distinct purpose.
 
 ## Validation Defaults
 

@@ -30,5 +30,5 @@ Use issues and the codebase together when reporting what is implemented. A Proje
 - Add new implementation issues to the Lexion Project, using its existing fields and Epic relationships.
 - Keep a PR to at most three related Engineering Tasks. Documentation-only and process-only PRs need no new issue.
 - For PRs targeting the default branch `main`, use `Closes #<number>` only when the PR fully satisfies that issue's acceptance criteria; use plain references for partial work or another target branch. Human acceptance issues remain open until the required person accepts and closes them.
-- Move Project items through `In Progress` and `In Review` as specified in `.steering/instructions.md`. Record blockers or remaining work on the linked issue and align Project status with that evidence.
+- Move Project items through `In Progress` and `In Review` as specified in `docs/instructions.md`. Record blockers or remaining work on the linked issue and align Project status with that evidence.
 - After merge, close an issue only when its acceptance criteria are satisfied; otherwise record the remaining work on the issue.
