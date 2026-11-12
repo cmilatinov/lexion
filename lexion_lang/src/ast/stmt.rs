@@ -52,14 +52,7 @@ pub struct FuncDeclStmt {
     pub ty: Option<Sourced<Type>>,
     pub body: Option<SourcedExpr>,
     pub is_vararg: bool,
-    pub qualifier: FunctionQualifier,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FunctionQualifier {
-    None,
-    Extern,
-    Callback,
+    pub is_extern: bool,
 }
 
 #[derive(Debug)]
