@@ -6,7 +6,6 @@ use std::str::FromStr;
 use thiserror::Error;
 
 pub mod ast;
-pub mod bytecode;
 pub mod compiler;
 pub mod diagnostic;
 pub mod generators;
